@@ -2,11 +2,23 @@ import os
 import time
 import json
 import threading
+import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import requests
 from openai import OpenAI
 from openai import APIConnectionError, AuthenticationError, RateLimitError, BadRequestError, APIError
+
+
+# =========================
+# Logging
+# =========================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+log = logging.getLogger("bot")
+
 
 # =========================
 # ENV
@@ -14,19 +26,24 @@ from openai import APIConnectionError, AuthenticationError, RateLimitError, BadR
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()  # можно менять в Render ENV
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
 
 HTTP_TIMEOUT = 25
 TG_LONGPOLL_TIMEOUT = 45
-TG_RETRIES = 3
+TG_RETRIES = 4
 
 if not TELEGRAM_BOT_TOKEN:
     raise SystemExit("Missing ENV: TELEGRAM_BOT_TOKEN (BotFather token)")
 
-# OpenAI клиент создаём даже без ключа — бот не должен падать
-openai_client = None
-if OPENAI_API_KEY:
-    openai_client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
+openai_client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL) if OPENAI_API_KEY else None
+
+
+# =========================
+# Requests session (faster + stabler)
+# =========================
+SESSION = requests.Session()
+SESSION.headers.update({"User-Agent": "render-telegram-bot/1.0"})
+
 
 # =========================
 # Data (in-memory)
@@ -34,6 +51,7 @@ if OPENAI_API_KEY:
 USER_PROFILE = {}  # chat_id -> dict
 USER_MEMORY = {}   # chat_id -> list[{role, content}]
 MEMORY_MAX_TURNS = 8
+
 
 # =========================
 # Knowledge base
@@ -141,41 +159,77 @@ SYSTEM_PROMPT = (
     "Всегда: 1 ключевая ошибка + 1–2 действия + мини-дрилл."
 )
 
+
 # =========================
 # Telegram helpers
 # =========================
 def tg_request(method: str, *, params=None, payload=None, is_post=False, retries=TG_RETRIES):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
     last = None
+
     for i in range(retries):
         try:
             if is_post:
-                r = requests.post(url, json=payload, timeout=HTTP_TIMEOUT)
+                r = SESSION.post(url, json=payload, timeout=HTTP_TIMEOUT)
             else:
-                r = requests.get(url, params=params, timeout=HTTP_TIMEOUT)
-            data = r.json()
+                r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
+
+            # Telegram почти всегда JSON, но при сетевых глюках бывает не-JSON
+            try:
+                data = r.json()
+            except Exception:
+                raise RuntimeError(f"Telegram returned non-JSON (HTTP {r.status_code}): {r.text[:200]}")
+
             if r.status_code == 200 and data.get("ok"):
                 return data
-            last = RuntimeError(data.get("description", f"Telegram HTTP {r.status_code}"))
+
+            desc = data.get("description", f"Telegram HTTP {r.status_code}")
+            last = RuntimeError(desc)
+
         except Exception as e:
             last = e
-        time.sleep(1.2 * (i + 1))
+
+        time.sleep(0.8 * (i + 1))
+
     raise last
 
+
 def send_message(chat_id: int, text: str, reply_markup=None):
-    chunks = [text[i:i+3900] for i in range(0, len(text), 3900)] or [""]
+    chunks = [text[i:i + 3900] for i in range(0, len(text), 3900)] or [""]
     for ch in chunks:
-        tg_request("sendMessage", payload={"chat_id": chat_id, "text": ch, "reply_markup": reply_markup}, is_post=True)
+        tg_request(
+            "sendMessage",
+            payload={"chat_id": chat_id, "text": ch, "reply_markup": reply_markup},
+            is_post=True
+        )
+
 
 def edit_message(chat_id: int, message_id: int, text: str, reply_markup=None):
-    tg_request("editMessageText", payload={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": reply_markup}, is_post=True)
+    tg_request(
+        "editMessageText",
+        payload={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": reply_markup},
+        is_post=True
+    )
+
 
 def answer_callback(callback_id: str):
     tg_request("answerCallbackQuery", payload={"callback_query_id": callback_id}, is_post=True)
 
+
 # =========================
 # UI
 # =========================
+def ensure_profile(chat_id: int) -> dict:
+    default_coach = bool(OPENAI_API_KEY)
+    return USER_PROFILE.setdefault(chat_id, {
+        "game": "warzone",
+        "platform": "",
+        "style": "",
+        "goal": "",
+        "coach": default_coach,
+    })
+
+
 def kb_main(chat_id: int):
     p = ensure_profile(chat_id)
     coach_on = "🧠 Coach: ON" if p.get("coach", True) else "🧠 Coach: OFF"
@@ -194,6 +248,7 @@ def kb_main(chat_id: int):
         ]
     }
 
+
 def kb_drills():
     return {
         "inline_keyboard": [
@@ -204,20 +259,10 @@ def kb_drills():
         ]
     }
 
+
 # =========================
 # Profile / memory
 # =========================
-def ensure_profile(chat_id: int) -> dict:
-    # coach по умолчанию включаем ТОЛЬКО если есть ключ
-    default_coach = bool(OPENAI_API_KEY)
-    return USER_PROFILE.setdefault(chat_id, {
-        "game": "warzone",
-        "platform": "",
-        "style": "",
-        "goal": "",
-        "coach": default_coach,
-    })
-
 def profile_text(chat_id: int) -> str:
     p = ensure_profile(chat_id)
     return (
@@ -228,6 +273,7 @@ def profile_text(chat_id: int) -> str:
         f"Цель: {p.get('goal') or '—'}\n"
         f"Coach: {'ON' if p.get('coach') else 'OFF'}\n"
     )
+
 
 def parse_profile_line(text: str):
     t = text.lower()
@@ -255,51 +301,59 @@ def parse_profile_line(text: str):
 
     return platform, style, goal
 
+
 def update_memory(chat_id: int, role: str, content: str):
     mem = USER_MEMORY.setdefault(chat_id, [])
     mem.append({"role": role, "content": content})
     if len(mem) > MEMORY_MAX_TURNS * 2:
-        USER_MEMORY[chat_id] = mem[-MEMORY_MAX_TURNS*2:]
+        USER_MEMORY[chat_id] = mem[-MEMORY_MAX_TURNS * 2:]
+
 
 # =========================
-# OpenAI (safe)
+# OpenAI (safe + small retry)
 # =========================
 def openai_reply_safe(chat_id: int, user_text: str) -> str:
     if not OPENAI_API_KEY or openai_client is None:
-        return "⚠️ AI выключен: нет OPENAI_API_KEY. Открой Render → Environment Variables и добавь ключ, затем Redeploy."
+        return "⚠️ AI выключен: нет OPENAI_API_KEY. Render → Environment Variables → add → Redeploy."
 
     p = ensure_profile(chat_id)
     kb = GAME_KB[p["game"]]
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "system", "content": f"Текущая игра: {kb['name']}. {kb.get('pillars','')}"},
+        {"role": "system", "content": f"Текущая игра: {kb['name']}. {kb.get('pillars', '')}"},
         {"role": "system", "content": f"Профиль: {json.dumps(p, ensure_ascii=False)}"},
     ]
     messages.extend(USER_MEMORY.get(chat_id, []))
     messages.append({"role": "user", "content": user_text})
 
-    try:
-        resp = openai_client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=messages,
-            max_completion_tokens=450,
-        )
-        out = (resp.choices[0].message.content or "").strip()
-        return out or "Не получил ответ. Напиши ещё раз 🙌"
+    for attempt in range(2):  # маленький retry от сетевых глюков
+        try:
+            resp = openai_client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=messages,
+                max_completion_tokens=450,
+            )
+            out = (resp.choices[0].message.content or "").strip()
+            return out or "Не получил ответ. Напиши ещё раз 🙌"
 
-    except AuthenticationError:
-        return "❌ AI: неверный ключ (AuthenticationError). Проверь OPENAI_API_KEY в Render и сделай Redeploy."
-    except RateLimitError:
-        return "⏳ AI: лимит/перегруз (RateLimitError). Подожди 20–60 сек и попробуй снова."
-    except BadRequestError as e:
-        return f"❌ AI: bad request. Часто это модель/параметры. Модель сейчас: {OPENAI_MODEL}."
-    except APIConnectionError:
-        return "⚠️ AI: проблема соединения (APIConnectionError). Это сеть/Render. Попробуй ещё раз через минуту."
-    except APIError:
-        return "⚠️ AI: временная ошибка OpenAI. Попробуй ещё раз через минуту."
-    except Exception:
-        return "⚠️ AI: неизвестная ошибка. Напиши /status — посмотрим конфиг."
+        except APIConnectionError:
+            if attempt == 0:
+                time.sleep(0.8)
+                continue
+            return "⚠️ AI: проблема соединения (APIConnectionError). Это сеть/Render. Попробуй ещё раз через минуту."
+        except AuthenticationError:
+            return "❌ AI: неверный ключ (AuthenticationError). Проверь OPENAI_API_KEY в Render и сделай Redeploy."
+        except RateLimitError:
+            return "⏳ AI: лимит/перегруз (RateLimitError). Подожди 20–60 сек и попробуй снова."
+        except BadRequestError:
+            return f"❌ AI: bad request. Часто это модель/параметры. Модель сейчас: {OPENAI_MODEL}."
+        except APIError:
+            return "⚠️ AI: временная ошибка OpenAI. Попробуй ещё раз через минуту."
+        except Exception as e:
+            log.exception("OpenAI unknown error")
+            return "⚠️ AI: неизвестная ошибка. Напиши /status — посмотрим конфиг."
+
 
 # =========================
 # Actions
@@ -313,6 +367,7 @@ def render_menu_text(chat_id: int) -> str:
         "Жми кнопки ниже 👇"
     )
 
+
 def set_game(chat_id: int, game_key: str) -> str:
     p = ensure_profile(chat_id)
     if game_key not in GAME_KB:
@@ -320,22 +375,27 @@ def set_game(chat_id: int, game_key: str) -> str:
     p["game"] = game_key
     return f"✅ Игра: {GAME_KB[game_key]['name']}"
 
+
 def get_settings(chat_id: int) -> str:
     p = ensure_profile(chat_id)
     return GAME_KB[p["game"]]["settings"]
+
 
 def get_plan(chat_id: int) -> str:
     p = ensure_profile(chat_id)
     return GAME_KB[p["game"]]["plan"]
 
+
 def get_vod(chat_id: int) -> str:
     p = ensure_profile(chat_id)
     return GAME_KB[p["game"]]["vod"]
+
 
 def get_drill(chat_id: int, kind: str) -> str:
     p = ensure_profile(chat_id)
     drills = GAME_KB[p["game"]]["drills"]
     return drills.get(kind, "Доступно: aim / recoil / movement")
+
 
 def status_text() -> str:
     ok_key = "✅" if bool(OPENAI_API_KEY) else "❌"
@@ -345,9 +405,9 @@ def status_text() -> str:
         f"TELEGRAM_BOT_TOKEN: {ok_tg}\n"
         f"OPENAI_API_KEY: {ok_key}\n"
         f"OPENAI_BASE_URL: {OPENAI_BASE_URL}\n"
-        f"OPENAI_MODEL: {OPENAI_MODEL}\n\n"
-        "Если OPENAI_API_KEY: ❌ → Render → Environment Variables → add → Redeploy."
+        f"OPENAI_MODEL: {OPENAI_MODEL}\n"
     )
+
 
 def ai_test() -> str:
     if not OPENAI_API_KEY or openai_client is None:
@@ -366,6 +426,7 @@ def ai_test() -> str:
         return "⚠️ /ai_test: APIConnectionError (сеть/Render)."
     except Exception as e:
         return f"⚠️ /ai_test: ошибка: {type(e).__name__}"
+
 
 # =========================
 # Telegram handlers
@@ -421,7 +482,6 @@ def handle_message(chat_id: int, text: str):
         send_message(chat_id, "Выбери дрилл:", reply_markup=kb_drills())
         return
 
-    # 1) профиль одной строкой
     platform, style, goal = parse_profile_line(text)
     if platform or style or goal:
         if platform:
@@ -433,21 +493,20 @@ def handle_message(chat_id: int, text: str):
         send_message(chat_id, "✅ Профиль обновлён.\n\n" + profile_text(chat_id), reply_markup=kb_main(chat_id))
         return
 
-    # 2) Coach OFF -> подсказка, что включить
     if not p.get("coach", True):
         send_message(
             chat_id,
-            "🧠 Coach сейчас OFF. Нажми кнопку **Coach** в меню чтобы включить.\n"
+            "🧠 Coach сейчас OFF. Нажми кнопку Coach в меню чтобы включить.\n"
             "А пока используй кнопки Settings/Drills/Plan/VOD.",
             reply_markup=kb_main(chat_id),
         )
         return
 
-    # 3) AI ответ
     update_memory(chat_id, "user", text)
     reply = openai_reply_safe(chat_id, text)
     update_memory(chat_id, "assistant", reply)
     send_message(chat_id, reply, reply_markup=kb_main(chat_id))
+
 
 def handle_callback(cb: dict):
     cb_id = cb["id"]
@@ -502,8 +561,9 @@ def handle_callback(cb: dict):
     finally:
         answer_callback(cb_id)
 
+
 def run_telegram_bot():
-    print("Telegram bot started (long polling)")
+    log.info("Telegram bot started (long polling)")
     offset = 0
     while True:
         try:
@@ -523,33 +583,51 @@ def run_telegram_bot():
 
                 try:
                     handle_message(chat_id, text)
-                except Exception as e:
-                    print("Message error:", repr(e))
+                except Exception:
+                    log.exception("Message handling error")
                     send_message(chat_id, "Ошибка 😅 Попробуй ещё раз.", reply_markup=kb_main(chat_id))
 
         except Exception as e:
-            print("Loop error:", repr(e))
-            time.sleep(3)
+            log.warning("Loop error: %r", e)
+            time.sleep(2)
+
 
 # =========================
 # Render health endpoint
 # =========================
 class HealthHandler(BaseHTTPRequestHandler):
+    # чтобы не спамить логи Render'а
+    def log_message(self, format, *args):
+        return
+
+    def _ok(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+
+    def do_HEAD(self):
+        # Render иногда стучится HEAD
+        if self.path in ("/", "/healthz"):
+            self._ok()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
     def do_GET(self):
         if self.path in ("/", "/healthz"):
-            self.send_response(200)
-            self.send_header("Content-type", "text/plain; charset=utf-8")
-            self.end_headers()
+            self._ok()
             self.wfile.write(b"OK")
         else:
             self.send_response(404)
             self.end_headers()
 
+
 def run_http_server():
     port = int(os.environ.get("PORT", "10000"))
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    print(f"HTTP server listening on :{port}")
+    log.info("HTTP server listening on :%s", port)
     server.serve_forever()
+
 
 if __name__ == "__main__":
     threading.Thread(target=run_telegram_bot, daemon=True).start()
