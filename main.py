@@ -1,244 +1,219 @@
 import os
-import time
 import json
-import threading
-import requests
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import time
+import logging
+from typing import Dict, List, Any, Tuple
+
+from telegram import Update
+from telegram.constants import ParseMode
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, filters
+)
+
 from openai import OpenAI
 
 # =========================
 # ENV
 # =========================
-def _env(*names, default=""):
-    for n in names:
-        v = os.getenv(n)
-        if v is not None and str(v).strip() != "":
-            return str(v).strip()
-    return default
-
-TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
-OPENAI_API_KEY = _env("OPENAI_API_KEY", "AI_INTEGRATIONS_OPENAI_API_KEY")
-OPENAI_BASE_URL = _env("OPENAI_BASE_URL", "AI_INTEGRATIONS_OPENAI_BASE_URL", default="https://api.openai.com/v1")
-MODEL = _env("OPENAI_MODEL", default="gpt-5")
-
-HTTP_TIMEOUT = int(_env("HTTP_TIMEOUT", default="25") or 25)
-TG_LONGPOLL_TIMEOUT = int(_env("TG_LONGPOLL_TIMEOUT", default="50") or 50)  # это не “задержка ответа”
-TG_RETRIES = int(_env("TG_RETRIES", default="3") or 3)
+TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
+OPENAI_MODEL = (os.getenv("OPENAI_MODEL") or "gpt-5-mini").strip()
 
 if not TELEGRAM_BOT_TOKEN:
-    raise SystemExit("ENV TELEGRAM_BOT_TOKEN is missing")
+    raise SystemExit("Missing ENV: TELEGRAM_BOT_TOKEN")
 if not OPENAI_API_KEY:
-    raise SystemExit("ENV OPENAI_API_KEY (or AI_INTEGRATIONS_OPENAI_API_KEY) is missing")
+    raise SystemExit("Missing ENV: OPENAI_API_KEY")
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
-
-# =========================
-# MEMORY / PROFILE
-# =========================
-USER_PROFILE = {}   # chat_id -> dict
-USER_MEMORY = {}    # chat_id -> list[{"role":..,"content":..}]
-MEMORY_MAX_TURNS = 10  # чуть больше
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # =========================
-# KB (Warzone / BF6 / BO7)
+# LOG
+# =========================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+# =========================
+# In-memory state
+# =========================
+USER_PROFILE: Dict[int, Dict[str, str]] = {}   # user_id -> profile
+USER_MEMORY: Dict[int, List[Dict[str, str]]] = {}  # user_id -> [{"role","content"}]
+MEMORY_MAX_TURNS = 10  # (user+assistant) pairs -> 20 msgs max
+
+# =========================
+# Knowledge base
 # =========================
 GAME_KB = {
     "warzone": {
         "name": "Call of Duty: Warzone",
-        "quick_settings": """🎮 Warzone — базовые настройки (контроллер)
-• Sens: 7/7 (если мажешь → 6/6)
-• ADS: 0.90 low / 0.85 high
-• Aim Assist: Dynamic (fallback Standard)
-• Response Curve: Dynamic
-• Deadzone min: 0.05 (дрифт → 0.07–0.10)
-• FOV: 105–110
-• ADS FOV Affected: ON
-• Weapon FOV: Wide
-• Camera Movement: Least
-""",
-        "pillars": """🧠 Warzone — фундамент
-1) Позиция/тайминги (высота/укрытия/ротации)
-2) Инфо/коммуникация (короткие коллы)
-3) Выживание > киллы (ресурсы, репозиция)
-4) Первые 0.7 сек решают (пре-эйм, центр экрана)
-5) Микро: слайд/стрэф/джамп без паники
-""",
-        "vod_template": """📼 Разбор ситуации (шаблон)
-1) Режим/сквад
-2) Где был бой
-3) Как умер
-4) Ресурсы (плиты/смок/стим/саморес)
-5) Что хотел сделать (пуш/отход/ротация)
-
-Я верну:
-• Ошибка №1
-• 1–2 действия
-• Мини-дрилл 💪
-""",
+        "quick_settings": (
+            "🎮 *Warzone — базовые настройки (контроллер)*\n"
+            "• Sens: 7/7 (если мажешь → 6/6)\n"
+            "• ADS: 0.90 low / 0.85 high\n"
+            "• Aim Assist: Dynamic (fallback Standard)\n"
+            "• Response Curve: Dynamic\n"
+            "• Deadzone min: 0.05 (дрифт → 0.07–0.10)\n"
+            "• FOV: 105–110\n"
+            "• ADS FOV Affected: ON\n"
+            "• Weapon FOV: Wide\n"
+            "• Camera Movement: Least\n"
+        ),
+        "pillars": (
+            "🧠 *Warzone — фундамент про-уровня*\n"
+            "1) Позиция/тайминги (высота, укрытия, ротации)\n"
+            "2) Инфо (пинги, короткие коллы)\n"
+            "3) Выживание > киллы (ресурсы, перезанятие позиции)\n"
+            "4) Первые 0.7 сек решают (pre-aim, headglitch, центр экрана)\n"
+            "5) Микро-движение без паники (slide/strafe/jump)\n"
+        ),
+        "vod_template": (
+            "📼 *Разбор ситуации (шаблон)*\n"
+            "1) Режим/сквад\n"
+            "2) Где был бой (дом/крыша/поле)\n"
+            "3) Как умер (угол/ошибка/чем наказали)\n"
+            "4) Ресурсы (плиты/смок/стим/саморез)\n"
+            "5) Что хотел сделать (пуш/отход/ротация)\n\n"
+            "Я верну: *Ошибка №1* + *1–2 действия* + *мини-дрилл* 💪\n"
+        ),
         "drills": {
-            "aim": "🎯 Warzone — 20 минут Aim\n10 мин warm-up\n5 мин трекинг\n5 мин микро-коррекции",
-            "recoil": "🔫 Warzone — 20 минут Recoil\n5 мин 15–25м\n10 мин 25–40м\n5 мин дисциплина",
-            "movement": "🕹 Warzone — 15 минут Movement\nугол→слайд→пик\nджамп-пики\nрепозиция"
-        }
+            "aim": "🎯 *Warzone Aim 20 мин*\n10м warm-up\n5м трекинг\n5м микро-коррекции",
+            "recoil": "🔫 *Warzone Recoil 20 мин*\n5м 15–25м\n10м 25–40м\n5м дисциплина очередей",
+            "movement": "🕹 *Warzone Movement 15 мин*\nугол→slide→пик\njump-пики\nreposition после контакта",
+        },
     },
-
     "bf6": {
         "name": "BF6",
-        "quick_settings": """🎮 BF6 — базовые настройки
-• Sens: средняя (чтобы не “рвать” прицел)
-• ADS: чуть ниже base sens
-• Deadzone: минимум без дрифта
-• FOV: высокий (комфортно)
-• Кнопки: удобный прыжок/присед на быстрых
-""",
-        "pillars": """🧠 BF6 — фундамент
-1) Линия фронта и спавн-логика
-2) Минимальный пик (углы под контроль)
-3) Командная ценность (ресы/инфо/точки)
-4) Серия → смена позиции
-5) Дисциплина: не “перепушивать”
-""",
-        "vod_template": "📼 BF6 разбор: карта/режим, класс, где умер/почему, что хотел сделать.",
+        "quick_settings": (
+            "🎮 *BF6 — базовые настройки*\n"
+            "• Sens: средняя\n"
+            "• ADS: чуть ниже base\n"
+            "• Deadzone: минимум без дрифта\n"
+            "• FOV: высокий (комфорт)\n"
+        ),
+        "pillars": (
+            "🧠 *BF6 — фундамент*\n"
+            "• Линии фронта + спавн-логика\n"
+            "• Не стой на одном угле: дал инфо → сменил позицию\n"
+            "• Мини-пики, префайр, дисциплина перезарядки\n"
+        ),
+        "vod_template": "📼 *BF6 разбор:* карта/режим, класс, где умер/почему, что хотел сделать.",
         "drills": {
-            "aim": "🎯 BF6 Aim: префайр углов, трекинг, серия→репозиция",
-            "movement": "🕹 BF6 Movement: выглянул→дал инфо→откатился"
-        }
+            "aim": "🎯 *BF6 Aim*\nпрефайр углов\nтрекинг\nсмена позиции после серии",
+            "movement": "🕹 *BF6 Movement*\nвыглянул→дал инфо→откатился\nрепик с другого угла",
+        },
     },
-
     "bo7": {
         "name": "BO7",
-        "quick_settings": """🎮 BO7 — настройки (быстро)
-Контроллер:
-• Sens: 7–9 (агро) / 6–7 (стабильно)
-• ADS Mult: 0.85–0.95 (если “перелетаешь” → ниже)
-• Response Curve: Dynamic (если дёргает → Standard)
-• Deadzone min: 0.03–0.06 (дрифт → 0.07+)
-• FOV: 100–110 (выше = больше инфы, ниже = проще контроль)
-• Aim Assist: ON (если доступно — Dynamic/Black Ops style)
-
-KBM:
-• DPI: 800 (база) / 1600 (если привык)
-• In-game sens: под 25–35 см на 360° как старт
-• ADS: 0.80–1.00
-• Raw Input: ON
-• Acceleration: OFF
-""",
-        "pillars": """🧠 BO7 — как играть “как про”
-1) Центр экрана всегда на уровне головы/верх-грудь
-2) Тайминг: 2 секунды на позиции → смена угла
-3) Не репикай один и тот же угол (репик = другой угол)
-4) Первые пули важнее всего: префайр/пре-эйм
-5) Мини-карта/спавн: угадывай где враг появится
-6) Игра от трейда: не геройствуй, играй сериями
-""",
-        "vod_template": """📼 BO7 разбор (шаблон)
-1) Режим/карта
-2) Роль (агро/анкёр/поддержка)
-3) Оружие + дистанция боя
-4) Где умер и почему (пик/репик/позиция/тайминг)
-5) Что хотел сделать (пуш/холд/фланг)
-
-Я верну:
-• Ошибка №1
-• 1–2 действия
-• Мини-дрилл 💪
-""",
-        "extra": """🔥 BO7 — быстрые правила, которые реально апают
-• “Шаг 1”: инфо → “Шаг 2”: угол → “Шаг 3”: серия → “Шаг 4”: смена позиции
-• Если проиграл дуэль: не “ускоряй sens”, а “упрости углы” и держи центр
-• На агро: 1 килл = откат/перезаряд → другой пик
-• На деф: держи head-glitch, не давай бесплатный широкий угол
-• Коммуникация: 3 слова (где, сколько, хп) — всё
-""",
+        "quick_settings": (
+            "🎮 *BO7 — настройки (быстро и по делу)*\n"
+            "• Sens: 6–8 (агро → ближе к 8)\n"
+            "• ADS: −10–15% от base (чтобы трекинг не «дрожал»)\n"
+            "• Deadzone min: 0.03–0.06 (без дрифта)\n"
+            "• FOV: 105–115 (если теряешь цели → 105)\n"
+            "• Sprint Assist / Auto Tac Sprint: ON (если удобно)\n"
+            "• Aim response curve: Dynamic/Linear (выбирай по контролю)\n"
+        ),
+        "pillars": (
+            "🧠 *BO7 — что реально делает разницу*\n"
+            "1) *Центр экрана*: держи прицел там, где появится враг\n"
+            "2) *Тайминги*: после контакта не стой — репозиция за 1–2 сек\n"
+            "3) *Дуэль*: первая точная очередь + контроль отдачи\n"
+            "4) *Репики*: второй пик — с другого угла, не повторяйся\n"
+            "5) *Инфо*: мини-карты/звук/пинги → решение за 0.5 сек\n"
+        ),
+        "vod_template": (
+            "📼 *BO7 разбор (шаблон)*\n"
+            "1) Режим/карта\n"
+            "2) Оружие/роль (entry/anchor/support)\n"
+            "3) Момент смерти (что видел/что не видел)\n"
+            "4) Позиция (почему именно там)\n"
+            "5) План (что хотел сделать)\n\n"
+            "Я верну: *Ошибка №1* + *2 правки* + *два мини-дрилла* 🔥\n"
+        ),
         "drills": {
-            "aim": """🎯 BO7 — Aim 20 минут
-1) 5м — префайр углов (в голове “враг тут”)
-2) 7м — трекинг ближний (без паники, мелкие коррекции)
-3) 5м — флик→стоп (выстрел только после остановки)
-4) 3м — дисциплина (не спрей на эмоциях)
-""",
-            "movement": """🕹 BO7 — Movement 15 минут
-• Пик короткий (плечо) → инфо → откат
-• Джамп-пик только с планом (не “в никуда”)
-• После контакта — смена угла (обязательный закон)
-""",
-            "recoil": """🔫 BO7 — Контроль 15 минут
-• 5м — короткие очереди на средней
-• 5м — “перевод” с цели на цель
-• 5м — удержание центра без овер-движений
-"""
+            "aim": (
+                "🎯 *BO7 Aim 15–20 мин*\n"
+                "• 5м: pre-aim по углам (медленно, чисто)\n"
+                "• 5м: трекинг ближний (микро-движение стиком)\n"
+                "• 5–10м: «первый выстрел» — выход/1 очередь/укрытие\n"
+            ),
+            "recoil": (
+                "🔫 *BO7 Recoil 10–15 мин*\n"
+                "• 5м: короткие очереди 8–12 патронов\n"
+                "• 5–10м: контроль на средней дистанции\n"
+                "Фокус: *не зажимай*, держи темп и точность.\n"
+            ),
+            "movement": (
+                "🕹 *BO7 Movement 10–15 мин*\n"
+                "• угол → короткий пик → назад\n"
+                "• slide/jump только с целью (не «ради красоты»)\n"
+                "• после килла: *сразу* смена позиции\n"
+            ),
         },
-        "loadout_tips": """🧩 BO7 — про лоадаут (универсально)
-• Выбирай оружие под свою дистанцию (а не “мету”)
-• Если много ближнего — быстрее ADS/спринт-аут
-• Если средняя — стабильность/контроль/минимум разброса
-• Пристрел: выбери 2 дистанции (ближняя + средняя) и играй от них
-""",
+        "meta_help": (
+            "⚠️ По «мете» BO7: она меняется патчами.\n"
+            "Скажи:\n"
+            "• режим (MP/Ranked/Warzone-стиль)\n"
+            "• платформа (controller/KBM)\n"
+            "• дистанция (close/mid/long)\n"
+            "— и я дам 2–3 связки + как их играть.\n"
+        )
     }
 }
 
-SYSTEM_PROMPT = """Ты профессиональный киберспортивный коуч по FPS (Warzone/BF6/BO7).
-Язык: русский. Тон: уверенный, дружелюбный, мотивирующий.
-Формат: коротко и структурно, без воды. Эмодзи иногда 🎮🔥💪
-
-Запрещено:
-- Любые читы/хаки/аимботы/обход античита/эксплойты.
-Если просят такое — вежливо откажи и предложи честные альтернативы.
-
-Всегда:
-- 1 ключевая ошибка
-- 1–2 конкретных действия
-- мини-дрилл
-"""
+SYSTEM_PROMPT = (
+    "Ты профессиональный киберспортивный коуч по FPS (Warzone/BF6/BO7).\n"
+    "Язык: русский. Тон: уверенный, дружелюбный.\n"
+    "Формат: коротко и структурно. Иногда эмодзи 🎮🔥💪\n\n"
+    "Запрещено: читы/хаки/обход античита.\n"
+    "Если просят — вежливо откажи и дай честные альтернативы.\n\n"
+    "Правило ответа: всегда дай:\n"
+    "• 1 ключевая ошибка/узкое место\n"
+    "• 1–2 конкретных действия\n"
+    "• 1 мини-дрилл на 5–10 минут\n"
+)
 
 # =========================
-# Telegram API
+# Helpers
 # =========================
-def tg_request(method: str, *, payload=None, params=None, is_post=False, retries=TG_RETRIES):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
-    last = None
-    for i in range(retries):
-        try:
-            if is_post:
-                r = requests.post(url, json=payload, timeout=HTTP_TIMEOUT)
-            else:
-                r = requests.get(url, params=params, timeout=HTTP_TIMEOUT)
-
-            data = r.json() if "application/json" in r.headers.get("content-type", "") else None
-            if r.status_code == 200 and data and data.get("ok"):
-                return data
-
-            last = RuntimeError(
-                data.get("description", f"Telegram error HTTP {r.status_code}") if data else f"Telegram HTTP {r.status_code}"
-            )
-        except Exception as e:
-            last = e
-        time.sleep(1.2 * (i + 1))
-    raise last
-
-def send_message(chat_id: int, text: str):
-    for i in range(0, len(text), 3900):
-        tg_request("sendMessage", payload={"chat_id": chat_id, "text": text[i:i+3900]}, is_post=True)
-
-# =========================
-# Profile / memory
-# =========================
-def ensure_profile(chat_id: int) -> dict:
-    return USER_PROFILE.setdefault(chat_id, {
+def ensure_profile(user_id: int) -> Dict[str, str]:
+    return USER_PROFILE.setdefault(user_id, {
         "game": "warzone",
         "platform": "",
         "style": "",
         "goal": "",
     })
 
-def update_memory(chat_id: int, role: str, content: str):
-    mem = USER_MEMORY.setdefault(chat_id, [])
+def update_memory(user_id: int, role: str, content: str):
+    mem = USER_MEMORY.setdefault(user_id, [])
     mem.append({"role": role, "content": content})
+    # keep last N turns
     if len(mem) > MEMORY_MAX_TURNS * 2:
-        USER_MEMORY[chat_id] = mem[-MEMORY_MAX_TURNS*2:]
+        USER_MEMORY[user_id] = mem[-MEMORY_MAX_TURNS*2:]
 
-def profile_hint(chat_id: int) -> str:
-    p = ensure_profile(chat_id)
+def parse_tune_text(text: str) -> Tuple[str, str, str]:
+    t = text.lower()
+    platform = ""
+    if "xbox" in t: platform = "Xbox"
+    elif "ps" in t or "playstation" in t: platform = "PlayStation"
+    elif "kbm" in t or "мыш" in t or "клав" in t: platform = "KBM"
+
+    style = ""
+    if "агро" in t or "aggressive" in t: style = "Aggressive"
+    elif "спокой" in t or "calm" in t or "деф" in t: style = "Calm"
+
+    goal = ""
+    if "aim" in t or "аим" in t or "прицел" in t: goal = "Aim"
+    elif "recoil" in t or "отдач" in t: goal = "Recoil"
+    elif "movement" in t or "мув" in t or "движ" in t: goal = "Movement"
+    elif "rank" in t or "ранг" in t: goal = "Rank"
+
+    return platform, style, goal
+
+def profile_hint(user_id: int) -> str:
+    p = ensure_profile(user_id)
     kb = GAME_KB.get(p["game"], {})
     parts = [f"game={p['game']}"]
     for k in ("platform", "style", "goal"):
@@ -246,226 +221,186 @@ def profile_hint(chat_id: int) -> str:
             parts.append(f"{k}={p[k]}")
     return f"Профиль игрока: {', '.join(parts)}. Игра: {kb.get('name', p['game'])}"
 
-def parse_tune_text(text: str):
-    t = text.lower()
-
-    platform = ""
-    if "xbox" in t:
-        platform = "Xbox"
-    elif "ps" in t or "playstation" in t:
-        platform = "PlayStation"
-    elif "kbm" in t or "k&m" in t or "мыш" in t or "клав" in t:
-        platform = "KBM"
-
-    style = ""
-    if "агро" in t or "aggressive" in t or "агресс" in t:
-        style = "Aggressive"
-    elif "спокой" in t or "calm" in t or "деф" in t or "анк" in t:
-        style = "Calm"
-
-    goal = ""
-    if "aim" in t or "аим" in t or "прицел" in t:
-        goal = "Aim"
-    elif "recoil" in t or "отдач" in t:
-        goal = "Recoil"
-    elif "track" in t or "трекинг" in t:
-        goal = "Tracking"
-    elif "rank" in t or "ранг" in t:
-        goal = "Rank"
-    elif "пози" in t or "позиция" in t:
-        goal = "Positioning"
-
-    return platform, style, goal
-
 def tune_prompt() -> str:
     return (
-        "🎯 Настройка профиля (1 сообщение)\n"
-        "Напиши: платформа, стиль, цель\n"
-        'Пример: "KBM, Aggressive, Aim"\n\n'
-        "Команды:\n"
+        "🎯 *Настройка профиля (1 сообщением)*\n"
+        'Напиши: "Xbox, Aggressive, Aim"\n\n'
+        "*Команды:*\n"
         "• /game warzone | bf6 | bo7\n"
         "• /settings\n"
         "• /drills aim | recoil | movement\n"
         "• /vod\n"
         "• /plan\n"
         "• /profile\n"
-        "• /reset"
+        "• /reset\n"
     )
 
-def settings_text(chat_id: int) -> str:
-    p = ensure_profile(chat_id)
+def settings_text(user_id: int) -> str:
+    p = ensure_profile(user_id)
     kb = GAME_KB[p["game"]]
     extra = []
     if p.get("platform"): extra.append(f"Платформа: {p['platform']}")
     if p.get("style"): extra.append(f"Стиль: {p['style']}")
     if p.get("goal"): extra.append(f"Цель: {p['goal']}")
-    base = kb.get("quick_settings", "")
-    if kb.get("extra") and p["game"] == "bo7":
-        base = base + "\n" + kb["extra"]
-    return base + ("\n\n" + "\n".join(extra) if extra else "")
+    return kb.get("quick_settings", "") + ("\n\n" + "\n".join(extra) if extra else "")
 
-def drills_text(chat_id: int, kind: str) -> str:
-    p = ensure_profile(chat_id)
+def drills_text(user_id: int, kind: str) -> str:
+    p = ensure_profile(user_id)
     drills = GAME_KB[p["game"]].get("drills", {})
     if kind not in drills:
         return "Доступно: aim | recoil | movement"
     return drills[kind]
 
-def plan_text(chat_id: int) -> str:
-    p = ensure_profile(chat_id)
+def plan_text(user_id: int) -> str:
+    p = ensure_profile(user_id)
     game = GAME_KB[p["game"]]["name"]
     goal = p.get("goal") or "стабильность"
     return (
-        f"📅 План на 7 дней — {game}\nЦель: {goal}\n\n"
+        f"📅 *План на 7 дней — {game}*\nЦель: *{goal}*\n\n"
         "День 1–2: warm-up 10м + aim 15м + movement 10м + мини-разбор 5м\n"
         "День 3–4: warm-up 10м + дуэли/углы 15м + дисциплина 10м + вывод 5м\n"
         "День 5–6: warm-up 10м + игра от инфо 20м + фиксация ошибок 5м\n"
-        "День 7: 30–60м игры + разбор 2 смертей 10м"
+        "День 7: 30–60м игры + разбор 2 смертей 10м\n"
     )
 
-def set_game(chat_id: int, game_key: str) -> str:
-    p = ensure_profile(chat_id)
+def set_game(user_id: int, game_key: str) -> str:
+    p = ensure_profile(user_id)
     if game_key not in GAME_KB:
         return "Не знаю такую игру. Доступно: warzone, bf6, bo7"
     p["game"] = game_key
-    return f"Ок ✅ Текущая игра: {GAME_KB[game_key]['name']}\nНапиши /settings или /drills"
+    return f"Ок ✅ Текущая игра: *{GAME_KB[game_key]['name']}*\nНапиши /settings или /drills"
 
 # =========================
 # OpenAI
 # =========================
-def openai_reply(chat_id: int, user_text: str) -> str:
-    p = ensure_profile(chat_id)
+def openai_reply(user_id: int, user_text: str) -> str:
+    p = ensure_profile(user_id)
     kb = GAME_KB[p["game"]]
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "system", "content": profile_hint(chat_id)},
+        {"role": "system", "content": profile_hint(user_id)},
         {"role": "system", "content": kb.get("pillars", "")},
     ]
 
+    # BO7 extra helper about meta volatility
     if p["game"] == "bo7":
-        # чуть больше контекста именно под BO7
-        messages.append({"role": "system", "content": kb.get("loadout_tips", "")})
+        messages.append({"role": "system", "content": kb.get("meta_help", "")})
 
-    messages.extend(USER_MEMORY.get(chat_id, []))
+    messages.extend(USER_MEMORY.get(user_id, []))
     messages.append({"role": "user", "content": user_text})
 
-    resp = openai_client.chat.completions.create(
-        model=MODEL,
+    resp = client.chat.completions.create(
+        model=OPENAI_MODEL,
         messages=messages,
-        max_completion_tokens=750,
+        # экономим: без огромных простыней
+        max_tokens=450,
     )
-    return resp.choices[0].message.content or "Не получил ответ. Напиши ещё раз 🙌"
+    return (resp.choices[0].message.content or "").strip() or "Не получил ответ. Напиши ещё раз 🙌"
 
 # =========================
-# Render health server (Web Service требует слушать PORT)
+# Telegram handlers
 # =========================
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(b"OK\n")
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        f"Я бот: @{BOT_NAME} 🎮\n\n" + tune_prompt(),
+        parse_mode=ParseMode.MARKDOWN
+    )
 
-    def log_message(self, fmt, *args):
+async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    USER_PROFILE.pop(uid, None)
+    USER_MEMORY.pop(uid, None)
+    await update.message.reply_text("Сбросил профиль и память ✅\n\n" + tune_prompt(), parse_mode=ParseMode.MARKDOWN)
+
+async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    p = ensure_profile(uid)
+    await update.message.reply_text(
+        "Профиль:\n" + json.dumps(p, ensure_ascii=False, indent=2)
+    )
+
+async def cmd_tune(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(tune_prompt(), parse_mode=ParseMode.MARKDOWN)
+
+async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not context.args:
+        await update.message.reply_text("Используй: /game warzone  или  /game bf6  или  /game bo7")
+        return
+    await update.message.reply_text(set_game(uid, context.args[0].lower()), parse_mode=ParseMode.MARKDOWN)
+
+async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    await update.message.reply_text(settings_text(uid), parse_mode=ParseMode.MARKDOWN)
+
+async def cmd_drills(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    kind = (context.args[0].lower() if context.args else "aim")
+    await update.message.reply_text(drills_text(uid, kind), parse_mode=ParseMode.MARKDOWN)
+
+async def cmd_vod(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    p = ensure_profile(uid)
+    await update.message.reply_text(GAME_KB[p["game"]].get("vod_template", "Опиши ситуацию."), parse_mode=ParseMode.MARKDOWN)
+
+async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    await update.message.reply_text(plan_text(uid), parse_mode=ParseMode.MARKDOWN)
+
+async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    text = (update.message.text or "").strip()
+    if not text:
         return
 
-def start_health_server():
-    port = int(os.environ.get("PORT", "10000"))
-    server = HTTPServer(("0.0.0.0", port), Handler)
-    print(f"[health] listening on :{port}")
-    server.serve_forever()
+    # quick tune message (Xbox, Aggressive, Aim)
+    p = ensure_profile(uid)
+    platform, style, goal = parse_tune_text(text)
+    if platform or style or goal:
+        if platform: p["platform"] = platform
+        if style: p["style"] = style
+        if goal: p["goal"] = goal
+        await update.message.reply_text("Принял ✅\n\n" + settings_text(uid), parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # AI
+    try:
+        update_memory(uid, "user", text)
+        reply = openai_reply(uid, text)
+        update_memory(uid, "assistant", reply)
+
+        # Telegram message limit safety
+        if len(reply) > 3900:
+            for i in range(0, len(reply), 3900):
+                await update.message.reply_text(reply[i:i+3900], parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN)
+
+    except Exception as e:
+        logging.exception("AI/Message error: %s", e)
+        await update.message.reply_text("Ошибка 😅 Попробуй ещё раз через минуту.")
 
 # =========================
-# Bot loop (Long Polling)
+# MAIN
 # =========================
-def run_bot():
-    print("[bot] started (long polling)")
-    offset = 0
+def main():
+    logging.info("Starting bot polling...")
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-    while True:
-        try:
-            data = tg_request("getUpdates", params={"offset": offset, "timeout": TG_LONGPOLL_TIMEOUT}, is_post=False)
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("profile", cmd_profile))
+    app.add_handler(CommandHandler("tune", cmd_tune))
+    app.add_handler(CommandHandler("game", cmd_game))
+    app.add_handler(CommandHandler("settings", cmd_settings))
+    app.add_handler(CommandHandler("drills", cmd_drills))
+    app.add_handler(CommandHandler("vod", cmd_vod))
+    app.add_handler(CommandHandler("plan", cmd_plan))
 
-            for upd in data.get("result", []):
-                offset = upd.get("update_id", offset) + 1
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
-                msg = upd.get("message") or upd.get("edited_message") or {}
-                text = (msg.get("text") or "").strip()
-                chat_id = (msg.get("chat") or {}).get("id")
-                if not chat_id or not text:
-                    continue
-
-                try:
-                    p = ensure_profile(chat_id)
-
-                    if text.startswith("/start"):
-                        send_message(chat_id, "Я про-коуч по Warzone / BF6 / BO7 🎮\n\n" + tune_prompt())
-                        continue
-
-                    if text.startswith("/reset"):
-                        USER_PROFILE.pop(chat_id, None)
-                        USER_MEMORY.pop(chat_id, None)
-                        send_message(chat_id, "Сбросил профиль и память ✅ Начнём заново: /tune")
-                        continue
-
-                    if text.startswith("/profile"):
-                        send_message(chat_id, "Профиль:\n" + json.dumps(ensure_profile(chat_id), ensure_ascii=False, indent=2))
-                        continue
-
-                    if text.startswith("/tune"):
-                        send_message(chat_id, tune_prompt())
-                        continue
-
-                    if text.startswith("/game"):
-                        parts = text.split()
-                        if len(parts) >= 2:
-                            send_message(chat_id, set_game(chat_id, parts[1].lower()))
-                        else:
-                            send_message(chat_id, "Используй: /game warzone  или  /game bf6  или  /game bo7")
-                        continue
-
-                    if text.startswith("/settings"):
-                        send_message(chat_id, settings_text(chat_id))
-                        continue
-
-                    if text.startswith("/drills"):
-                        parts = text.split()
-                        kind = parts[1].lower() if len(parts) >= 2 else "aim"
-                        send_message(chat_id, drills_text(chat_id, kind))
-                        continue
-
-                    if text.startswith("/vod"):
-                        send_message(chat_id, GAME_KB[p["game"]].get("vod_template", "Опиши ситуацию."))
-                        continue
-
-                    if text.startswith("/plan"):
-                        send_message(chat_id, plan_text(chat_id))
-                        continue
-
-                    # tune-like сообщение (обычный текст)
-                    platform, style, goal = parse_tune_text(text)
-                    if platform or style or goal:
-                        if platform: p["platform"] = platform
-                        if style: p["style"] = style
-                        if goal: p["goal"] = goal
-                        send_message(chat_id, "Принял ✅\n\n" + settings_text(chat_id))
-                        continue
-
-                    # AI
-                    update_memory(chat_id, "user", text)
-                    reply = openai_reply(chat_id, text)
-                    update_memory(chat_id, "assistant", reply)
-                    send_message(chat_id, reply)
-
-                except Exception as e:
-                    print("[msg] error:", repr(e))
-                    send_message(chat_id, "Ошибка 😅 Попробуй ещё раз через минуту.")
-
-        except Exception as e:
-            print("[loop] error:", repr(e))
-            time.sleep(3)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    threading.Thread(target=start_health_server, daemon=True).start()
-    run_bot()
+    main()
