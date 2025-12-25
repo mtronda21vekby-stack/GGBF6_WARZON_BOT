@@ -4,7 +4,9 @@ FPS Coach Bot — clean+smart v2 (Render + long polling + memory + dialog)
 
 + Zombies: 2 карты (выбор карты -> выбор раздела) 🧟
 + Zombies: поиск по тексту (если ты в меню Zombies — любое сообщение ищет по разделам)
-+ Всё меню на русском (кроме коротких названий игр WZ/BF6/BO7 — это ок)
++ ⚡ Молния: супер-короткие ответы 1–3 строки (переключатель в меню)
++ Меню: снизу теперь 1 большая кнопка "📦 Ещё" (туда спрятаны: Тренировка/Профиль/Настройки/VOD/Задание дня/Очистить память/Сброс)
+  (Zombies остаётся в главном меню отдельной кнопкой)
 
 ENV:
 TELEGRAM_BOT_TOKEN=...
@@ -204,6 +206,14 @@ SYSTEM_CHAT = (
     "Запрещено: читы/хаки/обход античита/эксплойты.\n"
 )
 
+SYSTEM_LIGHTNING = (
+    "РЕЖИМ ⚡ МОЛНИЯ:\n"
+    "• Ответ максимум 1–3 строки.\n"
+    "• Без вопросов.\n"
+    "• Только конкретное действие прямо сейчас.\n"
+    "• Без воды и длинных списков.\n"
+)
+
 THINKING_LINES = ["🧠 Думаю…", "⌛ Секунду…", "🎮 Окей, ща разложу…", "🌑 Анализирую…"]
 
 
@@ -294,6 +304,7 @@ def ensure_profile(chat_id: int) -> Dict[str, Any]:
         "memory": "on",
         "ui": "show",
         "mode": "chat",
+        "speed": "normal",     # ✅ normal | lightning
         "last_question": "",
         "last_answer": "",
         "page": "main",        # main | zombies
@@ -486,6 +497,8 @@ def menu_main(chat_id: int):
     mode = p.get("mode", "chat").upper()
     ai = "ON" if openai_client else "OFF"
 
+    lightning_on = (p.get("speed", "normal") == "lightning")
+
     return {
         "inline_keyboard": [
             [
@@ -501,21 +514,26 @@ def menu_main(chat_id: int):
                 {"text": f"🤖 ИИ: {ai}", "callback_data": "action:ai_status"},
             ],
             [
-                {"text": "💪 Тренировка", "callback_data": "nav:training"},
-                {"text": "📊 Профиль", "callback_data": "action:profile"},
-                {"text": "⚙️ Настройки", "callback_data": "nav:settings"},
-            ],
-            [
-                {"text": "🎯 Задание дня", "callback_data": "action:daily"},
-                {"text": "📼 VOD-разбор", "callback_data": "action:vod"},
+                {"text": f"⚡ Молния: {'ВКЛ' if lightning_on else 'ВЫКЛ'}", "callback_data": "toggle:lightning"},
                 {"text": "🧟 Zombies", "callback_data": "zmb:home"},
             ],
             [
-                {"text": "🧽 Очистить память", "callback_data": "action:clear_memory"},
-                {"text": "🧨 Сбросить всё", "callback_data": "action:reset_all"},
+                {"text": "📦 Ещё", "callback_data": "nav:more"},
             ],
         ]
     }
+
+def menu_more(chat_id: int):
+    return {"inline_keyboard": [
+        [{"text": "💪 Тренировка", "callback_data": "nav:training"}],
+        [{"text": "🎯 Задание дня", "callback_data": "action:daily"}],
+        [{"text": "📼 VOD-разбор", "callback_data": "action:vod"}],
+        [{"text": "📊 Профиль", "callback_data": "action:profile"}],
+        [{"text": "⚙️ Настройки", "callback_data": "nav:settings"}],
+        [{"text": "🧽 Очистить память", "callback_data": "action:clear_memory"}],
+        [{"text": "🧨 Сбросить всё", "callback_data": "action:reset_all"}],
+        [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
+    ]}
 
 def menu_game(chat_id: int):
     p = ensure_profile(chat_id)
@@ -560,7 +578,7 @@ def menu_training(chat_id: int):
          {"text": "🕹 Мувмент", "callback_data": "action:drill:movement"}],
         [{"text": "🎯 Задание дня", "callback_data": "action:daily"},
          {"text": "📼 VOD-разбор", "callback_data": "action:vod"}],
-        [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
+        [{"text": "⬅️ Назад", "callback_data": "nav:more"}],
     ]}
 
 def menu_settings(chat_id: int):
@@ -569,14 +587,14 @@ def menu_settings(chat_id: int):
     return {"inline_keyboard": [
         [{"text": f"{_badge(ui=='show')} Показ меню", "callback_data": "toggle:ui"},
          {"text": "🧾 Статус", "callback_data": "action:status"}],
-        [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
+        [{"text": "⬅️ Назад", "callback_data": "nav:more"}],
     ]}
 
 def menu_daily(chat_id: int):
     return {"inline_keyboard": [
         [{"text": "✅ Сделал", "callback_data": "daily:done"},
          {"text": "❌ Не вышло", "callback_data": "daily:fail"}],
-        [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
+        [{"text": "⬅️ Назад", "callback_data": "nav:more"}],
     ]}
 
 def header(chat_id: int) -> str:
@@ -637,6 +655,7 @@ def profile_text(chat_id: int) -> str:
         f"Игра: {p.get('game','auto').upper()}",
         f"Стиль: {p.get('persona')}",
         f"Длина: {p.get('verbosity')}",
+        f"Молния: {('ВКЛ' if p.get('speed','normal')=='lightning' else 'ВЫКЛ')}",
         f"Память: {p.get('memory','on').upper()} (сообщений: {mem_len})",
         "",
         "🧩 Карта проблем (топ):"
@@ -728,6 +747,9 @@ def build_messages(chat_id: int, user_text: str, mode: str, cause: str) -> List[
         {"role": "system", "content": VERBOSITY_HINT.get(verbosity, VERBOSITY_HINT["normal"])},
     ]
 
+    if p.get("speed", "normal") == "lightning":
+        msgs.append({"role": "system", "content": SYSTEM_LIGHTNING})
+
     if p.get("memory") == "on":
         msgs.extend(USER_MEMORY.get(chat_id, []))
 
@@ -737,6 +759,27 @@ def build_messages(chat_id: int, user_text: str, mode: str, cause: str) -> List[
 
     msgs.append({"role": "user", "content": user_text})
     return msgs
+
+def lightning_off_reply(chat_id: int, user_text: str) -> str:
+    g = resolve_game(chat_id, user_text)
+    cause = classify_cause(user_text)
+
+    tips = {
+        "info": "⚡ Сначала инфо: звук/радар → только потом выход.",
+        "timing": "⚡ Не репикай сразу: подожди 1–2 сек и выйди с другого угла.",
+        "position": "⚡ Смени угол/укрытие: не стой на линии прострела.",
+        "discipline": "⚡ Ресет: плейты/перезаряд → потом файт.",
+        "mechanics": "⚡ Упрости: ниже сенса/короче очереди — первые 5 пуль в тело.",
+    }
+
+    base = tips.get(cause, "⚡ Сыграй проще: инфо → позиция → короткий выход.")
+    if g == "warzone":
+        return base + " В WZ: после первого хита — меняй угол."
+    if g == "bf6":
+        return base + " В BF6: после контакта — репозиция."
+    if g == "bo7":
+        return base + " В BO7: префайр + смена угла."
+    return base
 
 def ai_off_chat(chat_id: int, user_text: str) -> str:
     cause = classify_cause(user_text)
@@ -774,14 +817,23 @@ def coach_reply(chat_id: int, user_text: str) -> str:
     if not openai_client:
         return enforce_4_blocks("", fallback_cause=cause)
 
+    p = ensure_profile(chat_id)
     msgs = build_messages(chat_id, user_text, mode="coach", cause=cause)
-    max_out = 750 if ensure_profile(chat_id).get("verbosity") == "talkative" else 550
+    if p.get("speed", "normal") == "lightning":
+        max_out = 180
+    else:
+        max_out = 750 if p.get("verbosity") == "talkative" else 550
+
     out = _openai_chat(msgs, max_out)
     return enforce_4_blocks(out, fallback_cause=cause)
 
 def chat_reply(chat_id: int, user_text: str) -> str:
     cause = classify_cause(user_text)
     stat_inc(chat_id, cause)
+
+    p = ensure_profile(chat_id)
+    if p.get("speed", "normal") == "lightning" and not openai_client:
+        return lightning_off_reply(chat_id, user_text)
 
     if is_tilt(user_text) and not openai_client:
         return ai_off_chat(chat_id, user_text)
@@ -790,7 +842,11 @@ def chat_reply(chat_id: int, user_text: str) -> str:
         return ai_off_chat(chat_id, user_text)
 
     msgs = build_messages(chat_id, user_text, mode="chat", cause=cause)
-    max_out = 420 if ensure_profile(chat_id).get("verbosity") == "short" else 650
+    if p.get("speed", "normal") == "lightning":
+        max_out = 120
+    else:
+        max_out = 420 if p.get("verbosity") == "short" else 650
+
     out = _openai_chat(msgs, max_out)
     return (out or "").strip()[:3500] or ai_off_chat(chat_id, user_text)
 
@@ -837,7 +893,6 @@ def handle_message(chat_id: int, text: str) -> None:
         if not t.startswith("/") and p.get("page") == "zombies":
             z = zombies_router.handle_text(t, current_map=p.get("zmb_map", "ashes"))
             if z is not None:
-                # возвращаемся в зомби-меню, не трогаем память/ИИ
                 send_message(chat_id, z["text"], reply_markup=z.get("reply_markup"))
                 return
 
@@ -927,7 +982,6 @@ def handle_callback(cb: Dict[str, Any]) -> None:
         # ✅ Zombies router перехватывает ВСЕ zmb:* кнопки
         z = zombies_router.handle_callback(data)
         if z is not None:
-            # применяем изменения профиля, если router их вернул
             sp = z.get("set_profile") or {}
             if isinstance(sp, dict) and sp:
                 for k, v in sp.items():
@@ -940,6 +994,9 @@ def handle_callback(cb: Dict[str, Any]) -> None:
             p["page"] = "main"
             save_state()
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
+
+        elif data == "nav:more":
+            edit_message(chat_id, message_id, "📦 Ещё:", reply_markup=menu_more(chat_id))
 
         elif data == "nav:game":
             edit_message(chat_id, message_id, "🎮 Выбери игру:", reply_markup=menu_game(chat_id))
@@ -973,6 +1030,11 @@ def handle_callback(cb: Dict[str, Any]) -> None:
             save_state()
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
 
+        elif data == "toggle:lightning":
+            p["speed"] = "normal" if p.get("speed", "normal") == "lightning" else "lightning"
+            save_state()
+            edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
+
         elif data.startswith("set:game:"):
             g = data.split(":", 2)[2]
             if g in ("auto",) + GAMES:
@@ -995,10 +1057,10 @@ def handle_callback(cb: Dict[str, Any]) -> None:
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
 
         elif data == "action:status":
-            edit_message(chat_id, message_id, status_text(), reply_markup=menu_main(chat_id))
+            edit_message(chat_id, message_id, status_text(), reply_markup=menu_settings(chat_id))
 
         elif data == "action:profile":
-            edit_message(chat_id, message_id, profile_text(chat_id), reply_markup=menu_main(chat_id))
+            edit_message(chat_id, message_id, profile_text(chat_id), reply_markup=menu_more(chat_id))
 
         elif data == "action:ai_status":
             ai = "ON" if openai_client else "OFF"
@@ -1007,7 +1069,7 @@ def handle_callback(cb: Dict[str, Any]) -> None:
         elif data == "action:clear_memory":
             clear_memory(chat_id)
             save_state()
-            edit_message(chat_id, message_id, "🧽 Память очищена.", reply_markup=menu_main(chat_id))
+            edit_message(chat_id, message_id, "🧽 Память очищена.", reply_markup=menu_more(chat_id))
 
         elif data == "action:reset_all":
             USER_PROFILE.pop(chat_id, None)
@@ -1017,7 +1079,7 @@ def handle_callback(cb: Dict[str, Any]) -> None:
             ensure_profile(chat_id)
             ensure_daily(chat_id)
             save_state()
-            edit_message(chat_id, message_id, "🧨 Сброс выполнен.", reply_markup=menu_main(chat_id))
+            edit_message(chat_id, message_id, "🧨 Сброс выполнен.", reply_markup=menu_more(chat_id))
 
         elif data.startswith("action:drill:"):
             kind = data.split(":", 2)[2]
@@ -1027,7 +1089,7 @@ def handle_callback(cb: Dict[str, Any]) -> None:
 
         elif data == "action:vod":
             g = resolve_game(chat_id, "")
-            edit_message(chat_id, message_id, GAME_KB[g]["vod"], reply_markup=menu_training(chat_id))
+            edit_message(chat_id, message_id, GAME_KB[g]["vod"], reply_markup=menu_more(chat_id))
 
         elif data == "action:daily":
             d = ensure_daily(chat_id)
