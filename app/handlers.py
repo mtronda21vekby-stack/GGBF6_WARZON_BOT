@@ -1,37 +1,32 @@
 # app/handlers.py
 # -*- coding: utf-8 -*-
 
-from app.log import log
 from app.tg import send_message, edit_message, answer_callback
-from zombies.router import handle_zombies
 from app.ui import main_menu_markup
+from zombies import router as zombies_router
 
 
 def handle_message(chat_id: int, text: str):
-    text = (text or "").strip()
-
-    # базовая защита
-    if not text:
+    t = (text or "").strip()
+    if not t:
         return
 
-    # старт
-    if text.lower() in ("/start", "start"):
+    if t.lower() in ("/start", "/menu", "start"):
         send_message(
             chat_id,
-            "Привет! Я помощник по Warzone, BF6 и Zombies.\nВыбирай режим ниже 👇",
+            "Привет! Выбирай режим ниже 👇",
             reply_markup=main_menu_markup()
         )
         return
 
-    # zombies
-    if text.lower() in ("zombies", "зомби"):
-        handle_zombies(chat_id)
+    if t.lower() in ("/zombies", "zombies", "зомби"):
+        z = zombies_router.handle_callback("zmb:home")
+        send_message(chat_id, z["text"], reply_markup=z.get("reply_markup"))
         return
 
-    # дефолт
     send_message(
         chat_id,
-        "Я понял 👍\nЗадай вопрос по Warzone / BF6 или выбери Zombies 👇",
+        "Ок 👍 Напиши вопрос или открой Zombies 👇",
         reply_markup=main_menu_markup()
     )
 
@@ -40,15 +35,17 @@ def handle_callback(cb: dict):
     cb_id = cb.get("id")
     msg = cb.get("message") or {}
     chat_id = (msg.get("chat") or {}).get("id")
+    message_id = msg.get("message_id")
     data = (cb.get("data") or "").strip()
 
     if not chat_id:
         answer_callback(cb_id)
         return
 
-    # Zombies callbacks
-    if data.startswith("zombies:"):
-        handle_zombies(chat_id, callback=data, message_id=msg.get("message_id"))
+    # ✅ все кнопки Zombies: zmb:*
+    z = zombies_router.handle_callback(data)
+    if z is not None and message_id:
+        edit_message(chat_id, message_id, z["text"], reply_markup=z.get("reply_markup"))
         answer_callback(cb_id)
         return
 
