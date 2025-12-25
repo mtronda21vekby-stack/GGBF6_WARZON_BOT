@@ -1,22 +1,45 @@
 # zombies/maps.py
-# -*- coding: utf-8 -*-
+# Central registry for Zombies maps
 
-from zombies.blood_spire import MAP_ID as B_ID, MAP_NAME as B_NAME, list_buttons as B_LIST, get_section as B_GET
-from zombies.astra_malorum import MAP_ID as A_ID, MAP_NAME as A_NAME, list_buttons as A_LIST, get_section as A_GET
+from zombies.ashes_of_damned import ASHES_OF_DAMNED
+from zombies.astra_malorum import ASTRA_MALORUM
 
 MAPS = {
-    B_ID: {"name": B_NAME, "list": B_LIST, "get": B_GET},
-    A_ID: {"name": A_NAME, "list": A_LIST, "get": A_GET},
+    "ashes_of_damned": {
+        "title": "Ashes of the Damned",
+        "data": ASHES_OF_DAMNED,
+    },
+    "astra_malorum": {
+        "title": "Astra Malorum",
+        "data": ASTRA_MALORUM,
+    },
 }
 
-def map_list():
-    return [(mid, MAPS[mid]["name"]) for mid in MAPS.keys()]
+def get_maps_keyboard():
+    """
+    Inline keyboard for Zombies maps
+    """
+    keyboard = []
+    for key, value in MAPS.items():
+        keyboard.append([
+            {
+                "text": value["title"],
+                "callback_data": f"zombies:map:{key}"
+            }
+        ])
 
-def map_exists(map_id: str) -> bool:
-    return map_id in MAPS
+    keyboard.append([
+        {"text": "⬅️ Back", "callback_data": "nav:main"}
+    ])
 
-def list_sections(map_id: str):
-    return MAPS[map_id]["list"]()
+    return {"inline_keyboard": keyboard}
 
-def get_section(map_id: str, section_id: str):
-    return MAPS[map_id]["get"](section_id)
+
+def get_map_text(map_key: str) -> str:
+    """
+    Returns full formatted guide for selected map
+    """
+    if map_key not in MAPS:
+        return "❌ Map not found."
+
+    return MAPS[map_key]["data"]
