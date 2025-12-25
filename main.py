@@ -1,33 +1,33 @@
 # -*- coding: utf-8 -*-
 """
-FPS Coach Bot — clean_hardened (Render + long polling + memory)
+FPS Coach Bot — clean+smart v2 (Render + long polling + memory + dialog)
 
-Фишки:
-- /healthz всегда живой (HTTP в main thread), Telegram polling в daemon thread.
-- Не падает “молча”: лог + traceback.
-- Если TELEGRAM_BOT_TOKEN отсутствует — процесс жив (healthz OK), Telegram не стартуем.
-- getMe self-check + deleteWebhook(drop_pending_updates=True)
-- OpenAI опционален: нет ключа/пакета -> AI OFF, бот живёт.
-- Память/профиль/факты/заметки сохраняются в DATA_DIR.
-- UI-кнопки (inline keyboard) + команды.
+Фичи:
+- COACH/CHAT режим: бот реально общается, а не только шаблон.
+- Root-cause (почему умер) + статистика причин.
+- Daily Challenge с кнопками (done/fail) и автогенерацией на день.
+- Tilt detector (анти-тильт ответы).
+- Красивое упорядоченное меню (страницы).
+- Render friendly: /healthz всегда жив, Telegram в daemon-thread, ретраи, getMe чек.
+- OpenAI optional: нет ключа/пакета => AI OFF, бот живёт (ответы по базе/логике).
 
-ENV (Render):
-- TELEGRAM_BOT_TOKEN=...
-- OPENAI_API_KEY=... (опционально)
-- OPENAI_MODEL=gpt-4o-mini (или gpt-4o если доступно)
-- DATA_DIR=/tmp (по умолчанию)
-- PORT=10000 (Render выставит сам)
+ENV:
+TELEGRAM_BOT_TOKEN=...
+OPENAI_API_KEY=... (опционально)
+OPENAI_MODEL=gpt-4o-mini (или другой)
+PORT=10000 (Render сам задаёт)
 """
 
 import os
 import re
-import sys
 import time
 import json
 import random
 import threading
 import logging
 import traceback
+import sys
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -44,7 +44,7 @@ except Exception:
 # Logging
 # =========================
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-log = logging.getLogger("fps_coach_clean")
+log = logging.getLogger("fps_coach_clean_smart_v2")
 
 
 # =========================
@@ -62,31 +62,23 @@ OFFSET_PATH = os.path.join(DATA_DIR, "tg_offset.txt")
 
 HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "25"))
 TG_LONGPOLL_TIMEOUT = int(os.getenv("TG_LONGPOLL_TIMEOUT", "50"))
-TG_RETRIES = int(os.getenv("TG_RETRIES", "5"))
+TG_RETRIES = int(os.getenv("TG_RETRIES", "6"))
 
 CONFLICT_BACKOFF_MIN = int(os.getenv("CONFLICT_BACKOFF_MIN", "12"))
 CONFLICT_BACKOFF_MAX = int(os.getenv("CONFLICT_BACKOFF_MAX", "30"))
 
-PULSE_MIN_SECONDS = float(os.getenv("PULSE_MIN_SECONDS", "1.25"))
 MIN_SECONDS_BETWEEN_MSG = float(os.getenv("MIN_SECONDS_BETWEEN_MSG", "0.25"))
-
 MEMORY_MAX_TURNS = int(os.getenv("MEMORY_MAX_TURNS", "10"))
-KB_ARTICLES_PATH = os.getenv("KB_ARTICLES_PATH", "kb_articles.json").strip()
 
 MAX_TEXT_LEN = 3900
-
 os.makedirs(DATA_DIR, exist_ok=True)
 
 
-def startup_diagnostics() -> None:
+def startup_diagnostics():
     try:
         log.info("=== STARTUP DIAGNOSTICS ===")
         log.info("python: %s", sys.version.replace("\n", " "))
         log.info("cwd: %s", os.getcwd())
-        try:
-            log.info("files: %s", ", ".join(sorted(os.listdir("."))[:40]))
-        except Exception:
-            pass
         log.info("DATA_DIR=%s", DATA_DIR)
         log.info("STATE_PATH=%s", STATE_PATH)
         log.info("OFFSET_PATH=%s", OFFSET_PATH)
@@ -106,32 +98,25 @@ def startup_diagnostics() -> None:
 openai_client = None
 if OpenAI and OPENAI_API_KEY:
     try:
-        openai_client = OpenAI(
-            api_key=OPENAI_API_KEY,
-            base_url=OPENAI_BASE_URL,
-            timeout=30,
-            max_retries=0,
-        )
+        openai_client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL, timeout=30, max_retries=0)
+        log.info("OpenAI client: ON")
     except Exception as e:
         log.warning("OpenAI init failed: %r", e)
         openai_client = None
 else:
-    if not OPENAI_API_KEY:
-        log.warning("OPENAI_API_KEY missing => AI OFF (bot still runs).")
-    if not OpenAI:
-        log.warning("openai package not installed => AI OFF.")
+    log.warning("OpenAI: OFF (missing key or package). Bot still works.")
 
 
 # =========================
 # Requests session (Telegram)
 # =========================
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "render-fps-coach-bot/clean_hardened"})
+SESSION.headers.update({"User-Agent": "render-fps-coach-bot/clean-smart-v2"})
 SESSION.mount("https://", requests.adapters.HTTPAdapter(pool_connections=40, pool_maxsize=40))
 
 
 # =========================
-# Game KB
+# Knowledge (simple built-in)
 # =========================
 GAME_KB = {
     "warzone": {
@@ -146,262 +131,149 @@ GAME_KB = {
             "• Camera Movement: Least\n"
         ),
         "drills": {
-            "aim": "🎯 Aim (5–10м)\n• warm-up 2м\n• трекинг 3м\n• микро 2м\n• дуэли/префайр 1–3м",
-            "recoil": "🔫 Recoil (5–10м)\n• 15–25м 2м\n• 25–40м 3м\n• первая пуля 2м\n• очереди 1–3м",
-            "movement": "🕹 Movement (5–10м)\n• угол→пик→откат\n• джамп/слайд пики\n• репозиция после контакта",
+            "aim": "🎯 Aim (7 минут)\n• 2м warm-up\n• 3м трекинг\n• 2м микро-фиксы (центрирование на голову/плечи)",
+            "recoil": "🔫 Recoil (7 минут)\n• 3м 20–30м короткие очереди\n• 2м first-shot\n• 2м контроль на средней",
+            "movement": "🕹 Move (7 минут)\n• угол→пик→откат\n• слайд/джамп пики\n• после хита — смена угла",
         },
-        "plan": (
-            "📅 План на 7 дней — Warzone\n"
-            "Д1–2: aim 10м + movement 10м + разбор 2 смертей\n"
-            "Д3–4: углы/тайминги 15м + дисциплина 10м\n"
-            "Д5–6: игра от инфо 20м + фиксация ошибок 5м\n"
-            "Д7: 45–60м + разбор 3 моментов\n"
-        ),
-        "vod": "📼 VOD (коротко): режим/сквад → где бой → как умер → ресурсы → что хотел сделать.",
+        "vod": "📼 VOD: режим/карта → что видел → что решил → где ошибся → что сделаешь иначе.",
     },
     "bf6": {
         "name": "Battlefield 6 (BF6)",
         "settings": (
             "🌑 BF6 — база\n"
-            "• Sens: средняя, ADS ниже\n"
-            "• Deadzone: минимум без дрифта\n"
-            "• FOV: высокий (комфорт)\n"
+            "• Sens средняя, ADS ниже\n"
+            "• Deadzone минимум без дрифта\n"
+            "• FOV высокий (комфорт)\n"
             "• После контакта — смена позиции\n"
         ),
         "drills": {
-            "aim": "🎯 Aim (5–10м)\n• префайр\n• трекинг\n• файт→репозиция",
-            "recoil": "🔫 Recoil (5–10м)\n• короткие очереди\n• первая пуля\n• контроль на дистанции",
-            "movement": "🕹 Movement (5–10м)\n• выглянул→инфо→откат\n• репик с другого угла",
+            "aim": "🎯 Aim (7 минут)\n• префайр углов\n• трекинг\n• файт→репозиция",
+            "recoil": "🔫 Recoil (7 минут)\n• короткие очереди\n• первая пуля\n• контроль на дистанции",
+            "movement": "🕹 Move (7 минут)\n• выглянул→инфо→откат\n• репик с другого угла",
         },
-        "plan": (
-            "📅 План на 7 дней — BF6\n"
-            "Д1–2: aim 15м + позиции 15м\n"
-            "Д3–4: фронт/спавны 20м + дуэли 10м\n"
-            "Д5–6: игра от инфо 25м + разбор 5м\n"
-            "Д7: 45–60м + разбор 2 смертей\n"
-        ),
-        "vod": "📼 BF6: карта/режим → класс → где умер/почему → что хотел сделать → что помешало.",
+        "vod": "📼 BF6: точка/спавны → где стоял → кто первый увидел → почему не вышел/вышел.",
     },
     "bo7": {
         "name": "Call of Duty: Black Ops 7 (BO7)",
         "settings": (
             "🌑 BO7 — базовый сетап (контроллер)\n"
-            "• Sens: 6–8 (перелетаешь → -1)\n"
+            "• Sens: 6–8\n"
             "• ADS: 0.80–0.95\n"
             "• Deadzone min: 0.03–0.07\n"
             "• FOV: 100–115\n"
         ),
         "drills": {
-            "aim": "🎯 Aim (5–10м)\n• префайр\n• трекинг\n• микро-подводки",
-            "recoil": "🔫 Recoil (5–10м)\n• короткие очереди\n• первая пуля\n• контроль на средней",
-            "movement": "🕹 Movement (5–10м)\n• репики\n• стрейф-шоты\n• смена угла",
+            "aim": "🎯 Aim (7 минут)\n• префайр\n• трекинг\n• микро-подводки",
+            "recoil": "🔫 Recoil (7 минут)\n• короткие очереди\n• first-shot\n• контроль на средней",
+            "movement": "🕹 Move (7 минут)\n• репики\n• стрейф-шоты\n• смена угла",
         },
-        "plan": (
-            "📅 План на 7 дней — BO7\n"
-            "Д1–2: aim 20м + movement 10м\n"
-            "Д3–4: углы/тайминги 25м + мини-разбор 5м\n"
-            "Д5–6: дуэли 30м\n"
-            "Д7: 45–60м + разбор 2–3 смертей\n"
-        ),
-        "vod": "📼 BO7: режим/карта → смерть → инфо (радар/звук) → что хотел сделать → что не учёл.",
+        "vod": "📼 BO7: режим/карта → смерть → инфо (радар/звук) → решение → ошибка.",
     },
 }
 GAMES = tuple(GAME_KB.keys())
 
 
 # =========================
-# Articles KB (optional)
+# Style / prompts
 # =========================
-def load_articles() -> List[Dict[str, Any]]:
-    try:
-        if KB_ARTICLES_PATH and os.path.exists(KB_ARTICLES_PATH):
-            with open(KB_ARTICLES_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get("articles"), list):
-                return data["articles"]
-            if isinstance(data, list):
-                return data
-    except Exception as e:
-        log.warning("KB load failed: %r", e)
-    return []
-
-
-ARTICLES = load_articles()
-
-
-def kb_search(query: str, game: Optional[str] = None, limit: int = 5) -> List[Dict[str, Any]]:
-    q = (query or "").strip().lower()
-    if not q:
-        return []
-    tokens = re.findall(r"[a-zа-я0-9ё]{3,}", q)
-    scored = []
-    for a in ARTICLES:
-        if game and a.get("game") and a.get("game") != game:
-            continue
-        hay = " ".join(
-            [
-                str(a.get("id", "")),
-                str(a.get("title", "")),
-                " ".join(a.get("tags") or []),
-                str(a.get("summary_ru", "")),
-                " ".join(a.get("steps_ru") or []),
-            ]
-        ).lower()
-        score = sum(1 for t in tokens if t in hay)
-        if score > 0:
-            score += 2 * sum(1 for t in tokens if t in str(a.get("title", "")).lower())
-            scored.append((score, a))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [a for _, a in scored[:limit]]
-
-
-def kb_get(article_id: str) -> Optional[Dict[str, Any]]:
-    aid = (article_id or "").strip()
-    for a in ARTICLES:
-        if str(a.get("id", "")).strip() == aid:
-            return a
-    return None
-
-
-def kb_format_article(a: Dict[str, Any]) -> str:
-    title = a.get("title") or a.get("id") or "Статья"
-    url = a.get("url", "")
-    summary = (a.get("summary_ru") or "").strip()
-    steps = a.get("steps_ru") or []
-    out = [f"📚 {title}"]
-    if url:
-        out.append(url)
-    if summary:
-        out.append("\n🧠 Коротко:")
-        out.append(summary)
-    if steps:
-        out.append("\n🧩 Шаги:")
-        for s in steps[:12]:
-            if isinstance(s, str) and s.strip():
-                out.append(f"• {s.strip()}")
-    return "\n".join(out).strip()
-
-
-def kb_relevant_steps(user_text: str, game: str, limit_steps: int = 3) -> List[str]:
-    t = (user_text or "").lower()
-    tokens = set(re.findall(r"[a-zа-я0-9ё]{3,}", t))
-    best = None
-    best_score = 0
-    for a in ARTICLES:
-        if a.get("lang") and a.get("lang") != "ru":
-            continue
-        if a.get("game") and a.get("game") != game:
-            continue
-        hay = " ".join(
-            [
-                str(a.get("title", "")),
-                " ".join(a.get("tags") or []),
-                str(a.get("summary_ru", "")),
-            ]
-        ).lower()
-        score = sum(1 for tok in tokens if tok in hay)
-        if score > best_score:
-            best_score = score
-            best = a
-    if not best or best_score <= 0:
-        return []
-    steps = best.get("steps_ru") or []
-    out = []
-    for s in steps:
-        if isinstance(s, str) and s.strip():
-            out.append(s.strip())
-        if len(out) >= limit_steps:
-            break
-    return out
-
-
-# =========================
-# Style
-# =========================
-SYSTEM_PROMPT = (
-    "Ты харизматичный FPS-коуч по Warzone/BF6/BO7. Пишешь по-русски.\n"
-    "Тон: уверенный, быстрый, живой, с юмором, без токсичности.\n"
-    "Запрещено: читы/хаки/обход античита/эксплойты.\n\n"
-    "Формат ответа СТРОГО 4 блока и только так:\n"
-    "🎯 Диагноз\n"
-    "✅ Что делать\n"
-    "🧪 Дрилл\n"
-    "😈 Панчик/мотивация\n\n"
-    "В '✅ Что делать' дай РОВНО 2 строки:\n"
-    "Сейчас — ...\n"
-    "Дальше — ...\n"
-    "Не нумеруй, не делай подпункты.\n"
-    "Если мало данных — один короткий вопрос в самом конце."
-)
-
 PERSONA_HINT = {
-    "spicy": "Стиль: дерзко и смешно, но без унижений.",
-    "chill": "Стиль: спокойный, дружелюбный, мягкий юмор.",
-    "pro": "Стиль: строго по делу, минимум шуток.",
+    "spicy": "Стиль: дерзко и смешно, но без унижений. Сленг уместен.",
+    "chill": "Стиль: спокойный, дружелюбный, мягко и по делу.",
+    "pro": "Стиль: строго по делу, минимум шуток, чёткая структура.",
 }
 VERBOSITY_HINT = {
     "short": "Длина: коротко, без воды.",
-    "normal": "Длина: обычно, плотная польза.",
-    "talkative": "Длина: подробнее, но не занудно.",
+    "normal": "Длина: нормально, плотная польза.",
+    "talkative": "Длина: подробнее, но без занудства.",
 }
+MODES = ("coach", "chat")  # coach=структурный разбор, chat=живой диалог
 
-FOCUSES: List[Tuple[str, str]] = [
-    ("позиционка", "углы, укрытия, высота, линии обзора"),
-    ("тайминг", "когда входить/выходить, репики, паузы"),
-    ("инфо", "радар, звук, пинги, чтение ситуации"),
-    ("дуэли", "пик, first-shot, центрирование, микро-коррекции"),
-    ("дисциплина", "ресурсы, ресеты, не жадничать, контроль"),
-    ("плеймейкинг", "инициатива, фланг, давление, открытие файта"),
-]
-
-MICRO_CHALLENGES = [
-    "🎲 Micro-Challenge: 3 файта подряд — после первого хита сразу смени угол.",
-    "🎲 Micro-Challenge: 5 минут — держи центр экрана на уровне головы/плеч.",
-    "🎲 Micro-Challenge: 3 входа в бой — сначала инфо (радар/звук), потом стрельба.",
-    "🎲 Micro-Challenge: каждый файт — один фейк-пик перед реальным выходом.",
-]
-
-THINKING_LINES = [
-    "🧠 Ща разложу…",
-    "⌛ Секунду, включаю коуча…",
-    "🎮 Окей. Сейчас будет практично.",
-    "🌑 Анализирую. Не моргай 😈",
-]
-
-_SMALLTALK_RX = re.compile(
-    r"^\s*(привет|здаров|здравствуйте|йо|ку|qq|hello|hi|хай|добрый\s*(день|вечер|утро)|что\s+умеешь\??)\s*[!.\-–—]*\s*$",
-    re.I,
+SYSTEM_COACH = (
+    "Ты FPS-коуч. Пишешь по-русски. Без токсичности.\n"
+    "Запрещено: читы/хаки/обход античита/эксплойты.\n"
+    "Отвечай живо, но практично.\n"
+    "Если данных мало — задай 1 короткий уточняющий вопрос.\n\n"
+    "Если режим COACH: дай 4 блока:\n"
+    "🎯 Диагноз\n"
+    "✅ Что делать (ровно 2 строки: 'Сейчас — ...' и 'Дальше — ...')\n"
+    "🧪 Дрилл\n"
+    "😈 Панчик/мотивация\n"
 )
 
+SYSTEM_CHAT = (
+    "Ты тиммейт/коуч в чате. Пишешь по-русски.\n"
+    "Твоя задача — общаться как живой: задавай вопросы, уточняй, подстраивайся.\n"
+    "Не выдавай шаблон. Можно коротко. Можно пошутить.\n"
+    "Запрещено: читы/хаки/обход античита/эксплойты.\n"
+)
+
+THINKING_LINES = ["🧠 Думаю…", "⌛ Секунду…", "🎮 Окей, ща разложу…", "🌑 Анализирую…"]
+
+
+# =========================
+# Simple detectors (tilt / cheat / smalltalk)
+# =========================
+_SMALLTALK_RX = re.compile(r"^\s*(привет|здаров|здравствуйте|йо|ку|qq|hello|hi|хай)\s*[!.\-–—]*\s*$", re.I)
+_TILT_RX = re.compile(r"(я\s+говно|я\s+дно|не\s+прёт|не\s+идёт|вечно\s+не\s+везёт|тильт|бесит|ненавижу|заеб|сука|бля)", re.I)
 
 def is_smalltalk(text: str) -> bool:
     return bool(_SMALLTALK_RX.match(text or ""))
 
+def is_tilt(text: str) -> bool:
+    return bool(_TILT_RX.search(text or ""))
 
-def is_low_info(text: str) -> bool:
-    t = (text or "").strip()
-    if len(t) < 12:
-        return True
-    tl = t.lower()
-    keywords = [
-        "умираю",
-        "сливаю",
-        "проигрываю",
-        "не получается",
-        "ошибка",
-        "пуш",
-        "эндгейм",
-        "пози",
-        "дуэ",
-        "тайм",
-        "инфо",
-        "аим",
-        "отдач",
-        "сенс",
-        "fov",
-        "пинг",
-    ]
-    return not any(k in tl for k in keywords)
+def is_cheat_request(text: str) -> bool:
+    t = (text or "").lower()
+    banned = ["чит", "cheat", "hack", "обход", "античит", "exploit", "эксплойт", "аимбот", "wallhack", "вх", "спуфер"]
+    return any(w in t for w in banned)
+
+def detect_game(text: str) -> Optional[str]:
+    t = (text or "").lower()
+    if any(x in t for x in ["bf6", "battlefield", "батлфилд", "конквест", "захват"]):
+        return "bf6"
+    if any(x in t for x in ["bo7", "black ops", "блэк опс", "hardpoint", "хардпоинт", "zombies", "зомби"]):
+        return "bo7"
+    if any(x in t for x in ["warzone", "wz", "варзон", "verdansk", "rebirth", "gulag", "бр"]):
+        return "warzone"
+    return None
+
+
+# =========================
+# Root-cause classifier (reliable heuristic)
+# =========================
+CAUSES = ("info", "timing", "position", "discipline", "mechanics")
+CAUSE_LABEL = {
+    "info": "Инфо (звук/радар/пинги)",
+    "timing": "Тайминг (когда пикнул/вышел)",
+    "position": "Позиция (угол/высота/линия обзора)",
+    "discipline": "Дисциплина (жадность/ресурсы/ресет)",
+    "mechanics": "Механика (аим/отдача/сенса)",
+}
+
+def classify_cause(text: str) -> str:
+    t = (text or "").lower()
+    score = {c: 0 for c in CAUSES}
+    # info
+    for k in ["не слыш", "звук", "шаг", "радар", "пинг", "инфо", "увидел поздно"]:
+        if k in t: score["info"] += 2
+    # timing
+    for k in ["тайм", "поздно", "рано", "репик", "пикнул", "вышел", "задержал"]:
+        if k in t: score["timing"] += 2
+    # position
+    for k in ["пози", "угол", "высот", "открыт", "прострел", "линия", "укрыт"]:
+        if k in t: score["position"] += 2
+    # discipline
+    for k in ["жадн", "ресурс", "плейт", "пласти", "хил", "перезар", "вдвоём", "в соло", "погнал"]:
+        if k in t: score["discipline"] += 2
+    # mechanics
+    for k in ["аим", "отдач", "сенс", "фов", "перел", "дрейф", "не попал", "мимо"]:
+        if k in t: score["mechanics"] += 2
+
+    best = max(score.items(), key=lambda kv: kv[1])[0]
+    # если вообще ничего — считаем дисциплину/позицию по умолчанию
+    if score[best] == 0:
+        return "position"
+    return best
 
 
 # =========================
@@ -409,43 +281,50 @@ def is_low_info(text: str) -> bool:
 # =========================
 USER_PROFILE: Dict[int, Dict[str, Any]] = {}
 USER_MEMORY: Dict[int, List[Dict[str, str]]] = {}
-USER_FACTS: Dict[int, Dict[str, Any]] = {}
-COACH_NOTES: Dict[int, str] = {}
+USER_STATS: Dict[int, Dict[str, int]] = {}  # причины смерти/ошибок
+USER_DAILY: Dict[int, Dict[str, Any]] = {}  # daily challenge
 LAST_MSG_TS: Dict[int, float] = {}
 
+STATE_GUARD = threading.Lock()
 CHAT_LOCKS: Dict[int, threading.Lock] = {}
 LOCKS_GUARD = threading.Lock()
-STATE_GUARD = threading.Lock()
 
 
 def _get_lock(chat_id: int) -> threading.Lock:
     with LOCKS_GUARD:
-        lock = CHAT_LOCKS.get(chat_id)
-        if lock is None:
-            lock = threading.Lock()
-            CHAT_LOCKS[chat_id] = lock
-        return lock
+        if chat_id not in CHAT_LOCKS:
+            CHAT_LOCKS[chat_id] = threading.Lock()
+        return CHAT_LOCKS[chat_id]
+
+
+def ensure_profile(chat_id: int) -> Dict[str, Any]:
+    return USER_PROFILE.setdefault(chat_id, {
+        "game": "auto",
+        "persona": "spicy",
+        "verbosity": "normal",
+        "memory": "on",
+        "ui": "show",
+        "mode": "chat",  # по умолчанию живой диалог
+        "last_question": "",
+        "last_answer": "",
+        "page": "main",
+    })
 
 
 def load_state() -> None:
-    global USER_PROFILE, USER_MEMORY, USER_FACTS, COACH_NOTES
+    global USER_PROFILE, USER_MEMORY, USER_STATS, USER_DAILY
     try:
         if os.path.exists(STATE_PATH):
             with open(STATE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
             USER_PROFILE = {int(k): v for k, v in (data.get("profiles") or {}).items()}
             USER_MEMORY = {int(k): v for k, v in (data.get("memory") or {}).items()}
-            USER_FACTS = {int(k): v for k, v in (data.get("facts") or {}).items()}
-            COACH_NOTES = {int(k): str(v) for k, v in (data.get("coach_notes") or {}).items()}
-            log.info(
-                "State loaded: profiles=%d memory=%d facts=%d notes=%d",
-                len(USER_PROFILE),
-                len(USER_MEMORY),
-                len(USER_FACTS),
-                len(COACH_NOTES),
-            )
+            USER_STATS = {int(k): v for k, v in (data.get("stats") or {}).items()}
+            USER_DAILY = {int(k): v for k, v in (data.get("daily") or {}).items()}
+            log.info("State loaded: profiles=%d memory=%d stats=%d daily=%d",
+                     len(USER_PROFILE), len(USER_MEMORY), len(USER_STATS), len(USER_DAILY))
     except Exception as e:
-        log.warning("State load failed (reset state): %r", e)
+        log.warning("State load failed: %r (starting clean)", e)
 
 
 def save_state() -> None:
@@ -454,8 +333,8 @@ def save_state() -> None:
             data = {
                 "profiles": {str(k): v for k, v in USER_PROFILE.items()},
                 "memory": {str(k): v for k, v in USER_MEMORY.items()},
-                "facts": {str(k): v for k, v in USER_FACTS.items()},
-                "coach_notes": {str(k): v for k, v in COACH_NOTES.items()},
+                "stats": {str(k): v for k, v in USER_STATS.items()},
+                "daily": {str(k): v for k, v in USER_DAILY.items()},
                 "saved_at": int(time.time()),
             }
         tmp = STATE_PATH + ".tmp"
@@ -474,22 +353,13 @@ def autosave_loop(stop: threading.Event, interval_s: int = 60) -> None:
         save_state()
 
 
-load_state()
-
-
-def ensure_profile(chat_id: int) -> Dict[str, Any]:
-    return USER_PROFILE.setdefault(
-        chat_id,
-        {
-            "game": "auto",
-            "persona": "spicy",
-            "verbosity": "normal",
-            "ui": "show",
-            "memory": "on",
-            "last_focus": "",
-            "last_answer": "",
-        },
-    )
+def throttle(chat_id: int) -> bool:
+    now = time.time()
+    last = LAST_MSG_TS.get(chat_id, 0.0)
+    if now - last < MIN_SECONDS_BETWEEN_MSG:
+        return True
+    LAST_MSG_TS[chat_id] = now
+    return False
 
 
 def update_memory(chat_id: int, role: str, content: str) -> None:
@@ -507,138 +377,40 @@ def clear_memory(chat_id: int) -> None:
     USER_MEMORY.pop(chat_id, None)
     p = ensure_profile(chat_id)
     p["last_answer"] = ""
-    p["last_focus"] = ""
+    p["last_question"] = ""
 
 
-def update_coach_notes(chat_id: int, user_text: str) -> None:
-    tl = (user_text or "").lower()
-    notes = COACH_NOTES.get(chat_id, "").strip()
-
-    tags = []
-    if any(x in tl for x in ["не слыш", "звук", "шаги"]):
-        tags.append("часто теряет инфо по звуку")
-    if any(x in tl for x in ["тайминг", "когда пуш", "момент"]):
-        tags.append("проблема тайминга (вход/выход)")
-    if any(x in tl for x in ["пози", "угол", "высот"]):
-        tags.append("позиционка/углы")
-    if any(x in tl for x in ["дуэль", "1v1", "вблизи", "ближ"]):
-        tags.append("дуэли (особенно ближние)")
-
-    if not tags:
-        return
-
-    existing = set([x.strip() for x in notes.split(" • ") if x.strip()]) if notes else set()
-    for t in tags:
-        existing.add(t)
-    COACH_NOTES[chat_id] = " • ".join(sorted(existing))[:600]
+def stat_inc(chat_id: int, cause: str) -> None:
+    st = USER_STATS.setdefault(chat_id, {})
+    st[cause] = int(st.get(cause, 0)) + 1
 
 
 # =========================
-# Facts
+# Daily challenge
 # =========================
-_RX_SENS = re.compile(r"(sens|сенс)\s*[:=]?\s*([0-9]{1,2})(?:\s*/\s*([0-9]{1,2}))?", re.I)
-_RX_FOV = re.compile(r"\b(fov)\s*[:=]?\s*([0-9]{2,3})\b", re.I)
-_RX_PLATFORM = re.compile(r"\b(xbox|ps5|ps4|ps|playstation|pc|kbm|клава|мыш|комп)\b", re.I)
+DAILY_POOL = [
+    ("angles", "5 файтов подряд — не репикай тот же угол. После первого хита меняй позицию."),
+    ("info", "3 файта подряд — сначала инфо (звук/радар), потом выход. Без ‘на авось’."),
+    ("center", "10 минут — держи прицел на уровне головы/плеч. Без ‘в пол’."),
+    ("reset", "Каждый файт — после контакта 1 раз: ‘плейты/перезар/ресет’ перед репиком."),
+]
 
+def _today_key() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%d")
 
-def extract_facts(chat_id: int, text: str) -> None:
-    t = (text or "").lower()
-    facts = USER_FACTS.setdefault(chat_id, {})
-
-    m = _RX_PLATFORM.search(t)
-    if m:
-        raw = m.group(1).lower()
-        if raw in ("ps", "ps4", "ps5", "playstation"):
-            facts["platform"] = "PlayStation"
-        elif raw == "xbox":
-            facts["platform"] = "Xbox"
-        else:
-            facts["platform"] = "PC/KBM"
-
-    m = _RX_SENS.search(t)
-    if m:
-        a = m.group(2)
-        b = m.group(3)
-        facts["sens"] = f"{a}/{b}" if b else a
-
-    m = _RX_FOV.search(t)
-    if m:
-        facts["fov"] = m.group(2)
-
-
-def throttle(chat_id: int) -> bool:
-    now = time.time()
-    last = LAST_MSG_TS.get(chat_id, 0.0)
-    if now - last < MIN_SECONDS_BETWEEN_MSG:
-        return True
-    LAST_MSG_TS[chat_id] = now
-    return False
-
-
-# =========================
-# Game detect
-# =========================
-_GAME_PATTERNS = {
-    "warzone": re.compile(r"\b(warzone|wz|варзон|verdansk|rebirth|gulag|бр|battle\s*royale)\b", re.I),
-    "bf6": re.compile(r"\b(bf6|battlefield|батлфилд|конквест|захват)\b", re.I),
-    "bo7": re.compile(r"\b(bo7|black\s*ops|блэк\s*опс|zombies|зомби|hardpoint|хардпоинт)\b", re.I),
-}
-
-
-def detect_game(text: str) -> Optional[str]:
-    t = (text or "").strip()
-    if not t:
-        return None
-    hits = []
-    for g, rx in _GAME_PATTERNS.items():
-        if rx.search(t):
-            hits.append(g)
-    if "bf6" in hits:
-        return "bf6"
-    if "bo7" in hits:
-        return "bo7"
-    if "warzone" in hits:
-        return "warzone"
-    return None
-
-
-def resolve_game(chat_id: int, user_text: str) -> str:
-    p = ensure_profile(chat_id)
-    forced = p.get("game", "auto")
-    if forced in GAMES:
-        return forced
-    detected = detect_game(user_text)
-    return detected if detected in GAMES else "warzone"
-
-
-def _tokenize(s: str) -> List[str]:
-    s = (s or "").lower()
-    s = re.sub(r"[^a-zа-я0-9ё\s]+", " ", s)
-    return [p for p in s.split() if len(p) >= 4]
-
-
-def similarity(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    ta = set(_tokenize(a))
-    tb = set(_tokenize(b))
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / max(1, len(ta | tb))
-
-
-def is_cheat_request(text: str) -> bool:
-    t = (text or "").lower()
-    banned = ["чит", "cheat", "hack", "обход", "античит", "exploit", "эксплойт", "аимбот", "wallhack", "вх", "спуфер"]
-    return any(w in t for w in banned)
+def ensure_daily(chat_id: int) -> Dict[str, Any]:
+    d = USER_DAILY.setdefault(chat_id, {})
+    if d.get("day") != _today_key() or not d.get("id"):
+        cid, text = random.choice(DAILY_POOL)
+        USER_DAILY[chat_id] = {"day": _today_key(), "id": cid, "text": text, "done": 0, "fail": 0}
+    return USER_DAILY[chat_id]
 
 
 # =========================
 # Telegram API
 # =========================
 def _sleep_backoff(i: int) -> None:
-    time.sleep((0.6 * (i + 1)) + random.random() * 0.25)
-
+    time.sleep((0.6 * (i + 1)) + random.random() * 0.3)
 
 def tg_request(method: str, *, params=None, payload=None, is_post: bool = False, retries: int = TG_RETRIES) -> Dict[str, Any]:
     if not TELEGRAM_BOT_TOKEN:
@@ -654,11 +426,7 @@ def tg_request(method: str, *, params=None, payload=None, is_post: bool = False,
             else:
                 r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
 
-            try:
-                data = r.json()
-            except Exception:
-                raise RuntimeError(f"Telegram non-JSON (HTTP {r.status_code}): {r.text[:200]}")
-
+            data = r.json()
             if r.status_code == 200 and data.get("ok"):
                 return data
 
@@ -679,13 +447,13 @@ def tg_request(method: str, *, params=None, payload=None, is_post: bool = False,
     raise last or RuntimeError("Telegram request failed")
 
 
-def tg_getme_check_forever() -> None:
+def tg_getme_check_forever():
     if not TELEGRAM_BOT_TOKEN:
         log.error("TELEGRAM_BOT_TOKEN is missing (set it in Render Environment).")
         return
     while True:
         try:
-            data = tg_request("getMe", is_post=False, params=None, retries=3)
+            data = tg_request("getMe", retries=3)
             me = data.get("result") or {}
             log.info("Telegram getMe OK: @%s (id=%s)", me.get("username"), me.get("id"))
             return
@@ -695,9 +463,8 @@ def tg_getme_check_forever() -> None:
 
 
 def send_message(chat_id: int, text: str, reply_markup=None) -> Optional[int]:
-    if text is None:
-        text = ""
-    chunks = [text[i : i + MAX_TEXT_LEN] for i in range(0, len(text), MAX_TEXT_LEN)] or [""]
+    text = text or ""
+    chunks = [text[i:i + MAX_TEXT_LEN] for i in range(0, len(text), MAX_TEXT_LEN)] or [""]
     last_msg_id = None
     for ch in chunks:
         payload = {"chat_id": chat_id, "text": ch}
@@ -722,269 +489,209 @@ def answer_callback(callback_id: str) -> None:
         pass
 
 
-def send_chat_action(chat_id: int, action: str = "typing") -> None:
-    try:
-        tg_request("sendChatAction", payload={"chat_id": chat_id, "action": action}, is_post=True, retries=2)
-    except Exception:
-        pass
-
-
-def delete_webhook_on_start() -> None:
-    try:
-        tg_request("deleteWebhook", payload={"drop_pending_updates": True}, is_post=True, retries=3)
-        log.info("Webhook deleted (drop_pending_updates=true)")
-    except Exception as e:
-        log.warning("Could not delete webhook: %r", e)
-
-
 # =========================
-# UI
+# UI / Menu
 # =========================
 def _badge(ok: bool) -> str:
     return "✅" if ok else "🚫"
 
-
-def kb_main(chat_id: int):
+def menu_main(chat_id: int):
     p = ensure_profile(chat_id)
-    if p.get("ui", "show") == "hide":
+    if p.get("ui") == "hide":
         return None
-    game = p.get("game", "auto")
+
+    game = p.get("game", "auto").upper()
     persona = p.get("persona", "spicy")
     talk = p.get("verbosity", "normal")
     mem_on = (p.get("memory", "on") == "on")
+    mode = p.get("mode", "chat").upper()
+    ai = "ON" if openai_client else "OFF"
+
     return {
         "inline_keyboard": [
             [
-                {"text": f"🎮 {game.upper()}", "callback_data": "menu:game"},
-                {"text": f"😈 {persona}", "callback_data": "menu:persona"},
-                {"text": f"🗣 {talk}", "callback_data": "menu:talk"},
+                {"text": f"🎮 {game}", "callback_data": "nav:game"},
+                {"text": f"🎭 {persona}", "callback_data": "nav:persona"},
+                {"text": f"🗣 {talk}", "callback_data": "nav:talk"},
             ],
             [
-                {"text": f"{_badge(mem_on)} Память", "callback_data": "toggle:memory"},
-                {"text": "👤 Профиль", "callback_data": "action:profile"},
-                {"text": "🕶 UI", "callback_data": "action:ui"},
+                {"text": f"{_badge(mem_on)} Memory", "callback_data": "toggle:memory"},
+                {"text": f"🔁 {mode}", "callback_data": "toggle:mode"},
+                {"text": f"🤖 AI {ai}", "callback_data": "action:ai_status"},
             ],
             [
-                {"text": "💪 Drills", "callback_data": "action:drills"},
-                {"text": "📅 Plan", "callback_data": "action:plan"},
-                {"text": "⚙️ Settings", "callback_data": "action:settings"},
+                {"text": "💪 Training", "callback_data": "nav:training"},
+                {"text": "📊 Profile", "callback_data": "action:profile"},
+                {"text": "⚙️ Settings", "callback_data": "nav:settings"},
             ],
             [
+                {"text": "🎯 Daily", "callback_data": "action:daily"},
                 {"text": "📼 VOD", "callback_data": "action:vod"},
-                {"text": "📚 Статьи", "callback_data": "action:kb"},
                 {"text": "❓ Help", "callback_data": "action:help"},
             ],
-            [{"text": "🧽 Clear memory", "callback_data": "action:reset_mem"}],
-        ]
-    }
-
-
-def kb_game(chat_id: int):
-    p = ensure_profile(chat_id)
-    if p.get("ui", "show") == "hide":
-        return None
-    cur = p.get("game", "auto")
-
-    def b(key, label):
-        mark = "✅ " if cur == key else ""
-        return {"text": f"{mark}{label}", "callback_data": f"set:game:{key}"}
-
-    return {
-        "inline_keyboard": [
-            [b("auto", "AUTO"), b("warzone", "Warzone"), b("bf6", "BF6"), b("bo7", "BO7")],
-            [{"text": "⬅️ Назад", "callback_data": "action:menu"}],
-        ]
-    }
-
-
-def kb_persona(chat_id: int):
-    p = ensure_profile(chat_id)
-    if p.get("ui", "show") == "hide":
-        return None
-    cur = p.get("persona", "spicy")
-
-    def b(key):
-        mark = "✅ " if cur == key else ""
-        return {"text": f"{mark}{key}", "callback_data": f"set:persona:{key}"}
-
-    return {
-        "inline_keyboard": [
-            [b("spicy"), b("chill"), b("pro")],
-            [{"text": "⬅️ Назад", "callback_data": "action:menu"}],
-        ]
-    }
-
-
-def kb_talk(chat_id: int):
-    p = ensure_profile(chat_id)
-    if p.get("ui", "show") == "hide":
-        return None
-    cur = p.get("verbosity", "normal")
-
-    def b(key):
-        mark = "✅ " if cur == key else ""
-        return {"text": f"{mark}{key}", "callback_data": f"set:talk:{key}"}
-
-    return {
-        "inline_keyboard": [
-            [b("short"), b("normal"), b("talkative")],
-            [{"text": "⬅️ Назад", "callback_data": "action:menu"}],
-        ]
-    }
-
-
-def kb_drills(chat_id: int):
-    p = ensure_profile(chat_id)
-    if p.get("ui", "show") == "hide":
-        return None
-    return {
-        "inline_keyboard": [
             [
-                {"text": "🎯 Aim", "callback_data": "drill:aim"},
-                {"text": "🔫 Recoil", "callback_data": "drill:recoil"},
-                {"text": "🕹 Move", "callback_data": "drill:movement"},
-            ],
-            [{"text": "⬅️ Назад", "callback_data": "action:menu"}],
+                {"text": "🧽 Clear memory", "callback_data": "action:clear_memory"},
+                {"text": "🧨 Reset all", "callback_data": "action:reset_all"},
+            ]
         ]
     }
 
-
-def kb_kb(chat_id: int):
+def menu_game(chat_id: int):
     p = ensure_profile(chat_id)
-    if p.get("ui", "show") == "hide":
-        return None
-    return {
-        "inline_keyboard": [
-            [{"text": "🔎 Как искать", "callback_data": "kb:help"}, {"text": "⭐ Топ по игре", "callback_data": "kb:top"}],
-            [{"text": "⬅️ Назад", "callback_data": "action:menu"}],
-        ]
-    }
+    cur = p.get("game", "auto")
+    def b(key, label):
+        return {"text": ("✅ " if cur == key else "") + label, "callback_data": f"set:game:{key}"}
+    return {"inline_keyboard": [[b("auto","AUTO"), b("warzone","WZ"), b("bf6","BF6"), b("bo7","BO7")],
+                               [{"text":"⬅️ Back","callback_data":"nav:main"}]]}
 
-
-def render_menu_text(chat_id: int) -> str:
+def menu_persona(chat_id: int):
     p = ensure_profile(chat_id)
-    g = p.get("game", "auto")
-    mem = p.get("memory", "on")
+    cur = p.get("persona", "spicy")
+    def b(key):
+        return {"text": ("✅ " if cur == key else "") + key, "callback_data": f"set:persona:{key}"}
+    return {"inline_keyboard": [[b("spicy"), b("chill"), b("pro")],
+                               [{"text":"⬅️ Back","callback_data":"nav:main"}]]}
+
+def menu_talk(chat_id: int):
+    p = ensure_profile(chat_id)
+    cur = p.get("verbosity", "normal")
+    def b(key):
+        return {"text": ("✅ " if cur == key else "") + key, "callback_data": f"set:talk:{key}"}
+    return {"inline_keyboard": [[b("short"), b("normal"), b("talkative")],
+                               [{"text":"⬅️ Back","callback_data":"nav:main"}]]}
+
+def menu_training(chat_id: int):
+    return {"inline_keyboard": [
+        [{"text":"🎯 Aim", "callback_data":"action:drill:aim"},
+         {"text":"🔫 Recoil", "callback_data":"action:drill:recoil"},
+         {"text":"🕹 Move", "callback_data":"action:drill:movement"}],
+        [{"text":"🎯 Daily", "callback_data":"action:daily"},
+         {"text":"📼 VOD", "callback_data":"action:vod"}],
+        [{"text":"⬅️ Back","callback_data":"nav:main"}],
+    ]}
+
+def menu_settings(chat_id: int):
+    p = ensure_profile(chat_id)
+    ui = p.get("ui", "show")
+    return {"inline_keyboard": [
+        [{"text": f"{_badge(ui=='show')} UI", "callback_data":"toggle:ui"},
+         {"text": "🧾 Status", "callback_data":"action:status"}],
+        [{"text":"⬅️ Back","callback_data":"nav:main"}],
+    ]}
+
+def menu_daily(chat_id: int):
+    return {"inline_keyboard": [
+        [{"text":"✅ Сделал", "callback_data":"daily:done"},
+         {"text":"❌ Не вышло", "callback_data":"daily:fail"}],
+        [{"text":"⬅️ Back","callback_data":"nav:main"}],
+    ]}
+
+def header(chat_id: int) -> str:
+    p = ensure_profile(chat_id)
     ai = "ON" if openai_client else "OFF"
-    return (
-        "🌑 FPS Coach Bot (clean)\n"
-        f"🎮 {g.upper()}  |  😈 {p.get('persona')}  |  🗣 {p.get('verbosity')}  |  🧠 {mem.upper()}  |  🤖 AI {ai}\n\n"
-        "Напиши ситуацию одной сценой:\n"
-        "• где был • кто первый увидел • на чём умер • что хотел сделать\n\n"
-        "Или жми кнопки 👇"
-    )
+    return f"🌑 FPS Coach Bot v2 | 🎮 {p.get('game','auto').upper()} | 🔁 {p.get('mode','chat').upper()} | 🤖 AI {ai}"
 
+def main_text(chat_id: int) -> str:
+    p = ensure_profile(chat_id)
+    mode = p.get("mode", "chat")
+    if mode == "chat":
+        return (
+            f"{header(chat_id)}\n\n"
+            "Напиши как другу/тиммейту: что бесит, где умираешь, что хочешь улучшить.\n"
+            "Я буду задавать вопросы и вести тебя к решению.\n\n"
+            "Или жми меню 👇"
+        )
+    return (
+        f"{header(chat_id)}\n\n"
+        "COACH режим: опиши 1 сцену:\n"
+        "• где был • кто первый увидел • на чём умер • что хотел сделать\n\n"
+        "Или жми меню 👇"
+    )
 
 def help_text() -> str:
     return (
-        "❓ Как пользоваться\n"
-        "Пиши одну ситуацию — я дам диагноз, 2 действия и дрилл.\n\n"
+        "❓ Help\n"
+        "Режимы:\n"
+        "• CHAT — живой разговор/вопросы/разбор по шагам\n"
+        "• COACH — структурный разбор (4 блока)\n\n"
         "Команды:\n"
-        "/start /status /profile\n"
-        "/kb_search <слово>\n"
-        "/kb_show <id>\n"
-        "/reset (полный сброс)\n"
+        "/start /menu\n"
+        "/profile\n"
+        "/daily\n"
+        "/reset\n"
     )
-
-
-def profile_text(chat_id: int) -> str:
-    p = ensure_profile(chat_id)
-    facts = USER_FACTS.get(chat_id, {})
-    notes = COACH_NOTES.get(chat_id, "").strip()
-    lines = [
-        "👤 Профиль",
-        f"Игра: {p.get('game','auto').upper()}",
-        f"Persona: {p.get('persona')}",
-        f"Talk: {p.get('verbosity')}",
-        f"Память: {p.get('memory','on').upper()}",
-        f"История: {len(USER_MEMORY.get(chat_id, []))} сообщений",
-        f"AI: {'ON' if openai_client else 'OFF'}",
-    ]
-    if facts:
-        extras = []
-        if facts.get("platform"):
-            extras.append(f"platform={facts['platform']}")
-        if facts.get("sens"):
-            extras.append(f"sens={facts['sens']}")
-        if facts.get("fov"):
-            extras.append(f"fov={facts['fov']}")
-        if extras:
-            lines.append("Факты: " + ", ".join(extras))
-    if notes:
-        lines.append("Заметки коуча: " + notes)
-    return "\n".join(lines)
-
 
 def status_text() -> str:
     return (
         "🧾 Status\n"
-        f"OPENAI_BASE_URL: {OPENAI_BASE_URL}\n"
         f"OPENAI_MODEL: {OPENAI_MODEL}\n"
         f"DATA_DIR: {DATA_DIR}\n"
-        f"STATE_PATH: {STATE_PATH}\n"
-        f"OFFSET_PATH: {OFFSET_PATH}\n"
-        f"ARTICLES: {len(ARTICLES)}\n"
-        f"AI: {'ON' if openai_client else 'OFF'}\n\n"
-        "Если Conflict 409 — у тебя 2 инстанса или второй сервис делает getUpdates.\n"
+        f"AI: {'ON' if openai_client else 'OFF'}\n"
+        "Если Conflict 409 — у тебя два инстанса или где-то ещё включён getUpdates.\n"
     )
 
+def profile_text(chat_id: int) -> str:
+    p = ensure_profile(chat_id)
+    st = USER_STATS.get(chat_id, {})
+    mem_len = len(USER_MEMORY.get(chat_id, []))
+    daily = ensure_daily(chat_id)
+    top = sorted(st.items(), key=lambda kv: kv[1], reverse=True)[:3]
+
+    lines = [
+        "📊 Профиль",
+        f"Mode: {p.get('mode','chat').upper()}",
+        f"Game: {p.get('game','auto').upper()}",
+        f"Persona: {p.get('persona')}",
+        f"Talk: {p.get('verbosity')}",
+        f"Memory: {p.get('memory','on').upper()} (msgs: {mem_len})",
+        "",
+        "🧩 Карта проблем (топ):"
+    ]
+    if not top:
+        lines.append("— пока пусто (нужны ситуации/смерти).")
+    else:
+        for c, n in top:
+            lines.append(f"• {CAUSE_LABEL.get(c,c)}: {n}")
+
+    lines += [
+        "",
+        "🎯 Daily сегодня:",
+        f"• {daily.get('text')}",
+        f"• done={daily.get('done',0)} fail={daily.get('fail',0)}",
+    ]
+    return "\n".join(lines)
+
 
 # =========================
-# Animation
+# AI helpers
 # =========================
-def typing_loop(chat_id: int, stop_event: threading.Event, interval: float = 4.0) -> None:
-    while not stop_event.is_set():
-        try:
-            send_chat_action(chat_id, "typing")
-        except Exception:
-            pass
-        stop_event.wait(interval)
-
-
-def pulse_edit_loop(chat_id: int, message_id: int, stop_event: threading.Event, base: str = "⌛ Думаю") -> None:
-    dots = 0
-    last_edit = 0.0
-    while not stop_event.is_set():
-        now = time.time()
-        if now - last_edit >= PULSE_MIN_SECONDS:
-            dots = (dots + 1) % 4
-            try:
-                edit_message(chat_id, message_id, base + ("." * dots))
-            except Exception:
-                pass
-            last_edit = now
-        stop_event.wait(0.2)
-
-
-# =========================
-# OpenAI helpers
-# =========================
-def _openai_create(messages: List[Dict[str, str]], max_tokens: int, regen: bool = False):
-    # Чуть больше разнообразия, чтобы не было “под копирку”
-    temp = 0.95 if not regen else 0.99
-    pres = 0.80 if not regen else 0.95
-    freq = 0.55 if not regen else 0.70
-
-    kwargs = dict(
-        model=OPENAI_MODEL,
-        messages=messages,
-        temperature=temp,
-        presence_penalty=pres,
-        frequency_penalty=freq,
-    )
-
-    # Совместимость со старыми/новыми версиями SDK
+def _openai_chat(messages: List[Dict[str, str]], max_tokens: int) -> str:
+    if not openai_client:
+        return ""
+    # openai python versions may differ in param name
     try:
-        return openai_client.chat.completions.create(**kwargs, max_completion_tokens=max_tokens)
+        resp = openai_client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=messages,
+            temperature=0.9,
+            presence_penalty=0.7,
+            frequency_penalty=0.4,
+            max_completion_tokens=max_tokens,
+        )
     except TypeError:
-        return openai_client.chat.completions.create(**kwargs, max_tokens=max_tokens)
+        resp = openai_client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=messages,
+            temperature=0.9,
+            presence_penalty=0.7,
+            frequency_penalty=0.4,
+            max_tokens=max_tokens,
+        )
+    return (resp.choices[0].message.content or "").strip()
 
-
-def enforce_4_blocks(text: str) -> str:
+def enforce_4_blocks(text: str, fallback_cause: str) -> str:
     t = (text or "").replace("\r", "").strip()
-    t = re.sub(r"(?m)^\s*\d+\)\s*", "", t)
-    t = re.sub(r"(?m)^\s*\d+\.\s*", "", t)
-
+    # если уже 4 эмодзи-блока есть — нормализуем заголовки
     needed = ["🎯", "✅", "🧪", "😈"]
     if all(x in t for x in needed):
         t = re.sub(r"\n{3,}", "\n\n", t).strip()
@@ -994,179 +701,112 @@ def enforce_4_blocks(text: str) -> str:
         t = re.sub(r"(?im)^\s*😈.*$", "😈 Панчик/мотивация", t)
         return t
 
-    sents = [x.strip() for x in re.split(r"[.!?\n]+", t) if x.strip()]
-    diag = sents[0] if sents else "Ты действуешь без плана и отдаёшь инициативу."
-    do1 = sents[1] if len(sents) > 1 else "Сначала инфо, потом движение."
-    do2 = sents[2] if len(sents) > 2 else "После контакта — смена угла."
-    drill = "5–10 минут: 3×2 минуты один микро-скилл + 1 минута честного разбора."
-    punch = "Скилл — это привычка. 😈"
+    # fallback
     return (
         "🎯 Диагноз\n"
-        f"{diag}\n\n"
+        f"Похоже, главная причина — {CAUSE_LABEL.get(fallback_cause)}.\n\n"
         "✅ Что делать\n"
-        f"Сейчас — {do1}\n"
-        f"Дальше — {do2}\n\n"
+        "Сейчас — сыграй от инфо: звук/радар/пинг перед выходом.\n"
+        "Дальше — после первого хита меняй угол (не репикай лоб в лоб).\n\n"
         "🧪 Дрилл\n"
-        f"{drill}\n\n"
+        "7 минут: 3 файта → после каждого 1 фраза: «почему умер».\n\n"
         "😈 Панчик/мотивация\n"
-        f"{punch}"
+        "Не ищем магию. Ищем привычку. 😈"
     )
 
-
-def build_messages(chat_id: int, user_text: str, regen: bool = False) -> List[Dict[str, str]]:
+def resolve_game(chat_id: int, user_text: str) -> str:
     p = ensure_profile(chat_id)
-    game = resolve_game(chat_id, user_text)
+    forced = p.get("game", "auto")
+    if forced in GAMES:
+        return forced
+    d = detect_game(user_text)
+    return d if d in GAMES else "warzone"
+
+def build_messages(chat_id: int, user_text: str, mode: str, cause: str) -> List[Dict[str, str]]:
+    p = ensure_profile(chat_id)
     persona = p.get("persona", "spicy")
     verbosity = p.get("verbosity", "normal")
+    game = resolve_game(chat_id, user_text)
 
-    last_focus = p.get("last_focus") or ""
-    focus = random.choice(FOCUSES)
-    if last_focus and len(FOCUSES) > 1:
-        for _ in range(6):
-            if focus[0] != last_focus:
-                break
-            focus = random.choice(FOCUSES)
-    p["last_focus"] = focus[0]
+    sys_prompt = SYSTEM_CHAT if mode == "chat" else SYSTEM_COACH
+    sys_prompt += f"\nТекущая игра: {GAME_KB[game]['name']}. Предполагаемая причина: {CAUSE_LABEL.get(cause)}."
 
-    micro = random.choice(MICRO_CHALLENGES)
-
-    facts = USER_FACTS.get(chat_id, {})
-    facts_line = ""
-    if facts:
-        parts = []
-        if facts.get("platform"):
-            parts.append(f"platform={facts['platform']}")
-        if facts.get("sens"):
-            parts.append(f"sens={facts['sens']}")
-        if facts.get("fov"):
-            parts.append(f"fov={facts['fov']}")
-        if parts:
-            facts_line = "ФАКТЫ ИГРОКА: " + ", ".join(parts)
-
-    notes = COACH_NOTES.get(chat_id, "").strip()
-    notes_line = f"ЗАМЕТКИ КОУЧА: {notes}" if notes else ""
-
-    kb_steps = kb_relevant_steps(user_text, game, limit_steps=3)
-    kb_hint = ""
-    if kb_steps:
-        kb_hint = (
-            "Если уместно, аккуратно встрои 1–3 пункта ниже в '✅ Что делать' или '🧪 Дрилл' (не упоминай источник):\n"
-            + "\n".join([f"- {x}" for x in kb_steps])
-        )
-
-    prev_answer = (p.get("last_answer") or "")[:1200]
-
-    anti_repeat_lines = [
-        "Анти-повтор:",
-        "- Не используй канцелярит.",
-        "- Меняй ритм, глаголы и формулировки.",
-        "- Не повторяй прошлый ответ.",
-    ]
-    if prev_answer:
-        anti_repeat_lines += ["", "Прошлый ответ (не повторять):", prev_answer]
-    if regen:
-        anti_repeat_lines += ["", "Усиление: полностью поменяй 2 действия и дрилл."]
-
-    coach_frame_lines = [
-        "Не выдумывай патчи/мету.",
-        "Запрещено: читы/хаки/обход античита.",
-        f"Игра: {GAME_KB[game]['name']}.",
-        f"ФОКУС ДНЯ: {focus[0]} — {focus[1]}.",
-        micro,
-    ]
-    if facts_line:
-        coach_frame_lines.append(facts_line)
-    if notes_line:
-        coach_frame_lines.append(notes_line)
-    if kb_hint:
-        coach_frame_lines.append(kb_hint)
-
-    coach_frame_lines.append("Важно: в '✅ Что делать' ровно 2 строки: 'Сейчас — ...' и 'Дальше — ...'.")
-
-    coach_frame = "\n".join([x for x in coach_frame_lines if x]).strip()
-    anti_repeat = "\n".join([x for x in anti_repeat_lines if x is not None]).strip()
-
-    messages: List[Dict[str, str]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+    msgs: List[Dict[str, str]] = [
+        {"role": "system", "content": sys_prompt},
         {"role": "system", "content": PERSONA_HINT.get(persona, PERSONA_HINT["spicy"])},
         {"role": "system", "content": VERBOSITY_HINT.get(verbosity, VERBOSITY_HINT["normal"])},
-        {"role": "system", "content": coach_frame},
-        {"role": "system", "content": anti_repeat},
     ]
 
-    if p.get("memory", "on") == "on":
-        messages.extend(USER_MEMORY.get(chat_id, []))
+    if p.get("memory") == "on":
+        msgs.extend(USER_MEMORY.get(chat_id, []))
 
-    messages.append({"role": "user", "content": f"[GAME={game}] {user_text}"})
-    return messages
+    # анти-повтор (чтобы не было копипасты)
+    last_ans = (p.get("last_answer") or "")[:800]
+    if last_ans:
+        msgs.append({"role": "system", "content": "Не повторяй прошлый ответ, меняй формулировки.\nПрошлый ответ:\n" + last_ans})
 
+    msgs.append({"role": "user", "content": user_text})
+    return msgs
 
-def ai_off_reply(chat_id: int, user_text: str) -> str:
-    game = resolve_game(chat_id, user_text)
-    micro = random.choice(MICRO_CHALLENGES)
-    return enforce_4_blocks(
-        "🎯 Диагноз\n"
-        "AI сейчас выключен, но база коучинга всё равно работает.\n\n"
-        "✅ Что делать\n"
-        "Сейчас — опиши одну смерть (где был / кто первый увидел / чем умер).\n"
-        f"Дальше — скажи дистанцию и игру: {GAME_KB[game]['name']}.\n\n"
-        "🧪 Дрилл\n"
-        f"5–7 минут: 3 контакта → после каждого: «почему умер». {micro}\n\n"
-        "😈 Панчик/мотивация\n"
-        "Ключ — это ускорение. Но привычка — это сила. 😈"
+def ai_off_chat(chat_id: int, user_text: str) -> str:
+    cause = classify_cause(user_text)
+    st = CAUSE_LABEL.get(cause, cause)
+    if is_tilt(user_text):
+        return (
+            "Слышу тильт 😈\n"
+            "Давай без самоуничтожения. Быстро: что именно чаще всего ломает тебя — звук/тайминг/аим/позиция?\n"
+            f"По тексту похоже на: {st}."
+        )
+    if is_smalltalk(user_text):
+        return "Йо 😄 Скажи: ты сейчас в WZ/BF6/BO7 и где чаще умираешь — ближка или средняя?"
+    return (
+        f"Ок, понял. Похоже, причина: {st}.\n"
+        "Скажи одну сцену: где был, кто первый увидел, на чём умер — и я дам точнее."
     )
 
 
-def openai_reply(chat_id: int, user_text: str) -> str:
-    p = ensure_profile(chat_id)
+def coach_reply(chat_id: int, user_text: str) -> str:
+    cause = classify_cause(user_text)
+    stat_inc(chat_id, cause)
 
     if is_cheat_request(user_text):
-        return enforce_4_blocks(
+        return (
             "🎯 Диагноз\n"
             "Читы = бан + ноль прогресса.\n\n"
             "✅ Что делать\n"
-            "Сейчас — скажи, где сыпешься: дуэли / инфо / пози.\n"
-            "Дальше — сделаем план без магии.\n\n"
+            "Сейчас — скажи, где сыпешься: инфо/тайминг/позиция/аим.\n"
+            "Дальше — соберём план без магии.\n\n"
             "🧪 Дрилл\n"
             "7 минут: 3×2 минуты микро-скилл + 1 минута разбор.\n\n"
             "😈 Панчик/мотивация\n"
             "Мы качаем руки, не софт. 😈"
         )
 
-    if is_smalltalk(user_text) or is_low_info(user_text):
-        return enforce_4_blocks(
-            "🎯 Диагноз\n"
-            "Пока мало деталей — если начну умничать, будет коуч-гороскоп.\n\n"
-            "✅ Что делать\n"
-            "Сейчас — опиши одну смерть: где был, кто первый увидел, чем закончилось.\n"
-            "Дальше — дистанция (близко/средне/далеко) и игра (WZ/BF6/BO7).\n\n"
-            "🧪 Дрилл\n"
-            "5 минут: 3 контакта → после каждого: «что сделал лишнего».\n\n"
-            "😈 Панчик/мотивация\n"
-            "Дай факты — и будет план. 😈"
-        )
+    if not openai_client:
+        return enforce_4_blocks("", fallback_cause=cause)
+
+    msgs = build_messages(chat_id, user_text, mode="coach", cause=cause)
+    max_out = 750 if ensure_profile(chat_id).get("verbosity") == "talkative" else 550
+    out = _openai_chat(msgs, max_out)
+    return enforce_4_blocks(out, fallback_cause=cause)
+
+
+def chat_reply(chat_id: int, user_text: str) -> str:
+    cause = classify_cause(user_text)
+    stat_inc(chat_id, cause)
+
+    # tilt handling even with AI
+    if is_tilt(user_text) and not openai_client:
+        return ai_off_chat(chat_id, user_text)
 
     if not openai_client:
-        return ai_off_reply(chat_id, user_text)
+        return ai_off_chat(chat_id, user_text)
 
-    messages = build_messages(chat_id, user_text, regen=False)
-    max_out = 900 if p.get("verbosity") == "talkative" else 650
-
-    last = p.get("last_answer", "")
-    for attempt in range(2):
-        try:
-            resp = _openai_create(messages, max_out, regen=(attempt == 1))
-            out = (resp.choices[0].message.content or "").strip()
-            out = enforce_4_blocks(out)
-
-            sim = similarity(out, last)
-            if attempt == 0 and sim >= 0.35:
-                messages = build_messages(chat_id, user_text, regen=True)
-                continue
-            return out
-        except Exception:
-            log.exception("OpenAI failed -> fallback to AI OFF reply")
-            return ai_off_reply(chat_id, user_text)
+    msgs = build_messages(chat_id, user_text, mode="chat", cause=cause)
+    max_out = 420 if ensure_profile(chat_id).get("verbosity") == "short" else 650
+    out = _openai_chat(msgs, max_out)
+    # если модель вдруг ушла в простыню — чуть подрежем
+    return (out or "").strip()[:3500] or ai_off_chat(chat_id, user_text)
 
 
 # =========================
@@ -1180,7 +820,6 @@ def load_offset() -> int:
     except Exception:
         pass
     return 0
-
 
 def save_offset(offset: int) -> None:
     try:
@@ -1205,87 +844,73 @@ def handle_message(chat_id: int, text: str) -> None:
 
         p = ensure_profile(chat_id)
         t = (text or "").strip()
+        if not t:
+            return
 
-        extract_facts(chat_id, t)
-        update_coach_notes(chat_id, t)
-
+        # commands
         if t.startswith("/start") or t.startswith("/menu"):
-            send_message(chat_id, render_menu_text(chat_id), reply_markup=kb_main(chat_id))
+            ensure_daily(chat_id)
+            send_message(chat_id, main_text(chat_id), reply_markup=menu_main(chat_id))
             save_state()
             return
 
         if t.startswith("/help"):
-            send_message(chat_id, help_text(), reply_markup=kb_main(chat_id))
+            send_message(chat_id, help_text(), reply_markup=menu_main(chat_id))
             return
 
         if t.startswith("/status"):
-            send_message(chat_id, status_text(), reply_markup=kb_main(chat_id))
+            send_message(chat_id, status_text(), reply_markup=menu_main(chat_id))
             return
 
         if t.startswith("/profile"):
-            send_message(chat_id, profile_text(chat_id), reply_markup=kb_main(chat_id))
+            send_message(chat_id, profile_text(chat_id), reply_markup=menu_main(chat_id))
+            return
+
+        if t.startswith("/daily"):
+            d = ensure_daily(chat_id)
+            send_message(chat_id, "🎯 Daily сегодня:\n• " + d["text"], reply_markup=menu_daily(chat_id))
             return
 
         if t.startswith("/reset"):
             USER_PROFILE.pop(chat_id, None)
             USER_MEMORY.pop(chat_id, None)
-            USER_FACTS.pop(chat_id, None)
-            COACH_NOTES.pop(chat_id, None)
+            USER_STATS.pop(chat_id, None)
+            USER_DAILY.pop(chat_id, None)
             ensure_profile(chat_id)
+            ensure_daily(chat_id)
             save_state()
-            send_message(chat_id, "🧹 Полный сброс (профиль/память/факты/заметки).", reply_markup=kb_main(chat_id))
+            send_message(chat_id, "🧨 Reset: профиль/память/статы/дейли очищены.", reply_markup=menu_main(chat_id))
             return
 
-        if t.startswith("/kb_search"):
-            q = t[len("/kb_search") :].strip()
-            game = resolve_game(chat_id, t)
-            res = kb_search(q, game=game, limit=7)
-            if not res:
-                send_message(chat_id, "Не нашёл. Пример: /kb_search тайминг", reply_markup=kb_main(chat_id))
-                return
-            lines = ["🔎 Нашёл статьи:"]
-            for a in res:
-                lines.append(f"• {a.get('id')} — {a.get('title')}")
-            lines.append("\nОткрыть: /kb_show <id>")
-            send_message(chat_id, "\n".join(lines), reply_markup=kb_main(chat_id))
-            return
-
-        if t.startswith("/kb_show"):
-            art_id = t[len("/kb_show") :].strip()
-            a = kb_get(art_id)
-            if not a:
-                send_message(chat_id, "Не нашёл такой id. Сначала: /kb_search <слово>", reply_markup=kb_main(chat_id))
-                return
-            send_message(chat_id, kb_format_article(a), reply_markup=kb_main(chat_id))
-            return
-
+        # remember user text
         update_memory(chat_id, "user", t)
 
+        # reply
         tmp_id = send_message(chat_id, random.choice(THINKING_LINES), reply_markup=None)
 
-        stop = threading.Event()
-        threading.Thread(target=typing_loop, args=(chat_id, stop), daemon=True).start()
-        if tmp_id:
-            threading.Thread(target=pulse_edit_loop, args=(chat_id, tmp_id, stop, "⌛ Думаю"), daemon=True).start()
-
+        mode = p.get("mode", "chat")
         try:
-            reply = openai_reply(chat_id, t)
-        finally:
-            stop.set()
+            if mode == "coach":
+                reply = coach_reply(chat_id, t)
+            else:
+                reply = chat_reply(chat_id, t)
+        except Exception:
+            log.exception("Reply generation failed")
+            reply = "Упс 😅 Что-то сломалось. Напиши ещё раз коротко: где умер и почему думаешь?"
 
-        reply = enforce_4_blocks(reply)
+        # remember assistant
         update_memory(chat_id, "assistant", reply)
-
         p["last_answer"] = reply[:2000]
         save_state()
 
+        # send final
         if tmp_id:
             try:
-                edit_message(chat_id, tmp_id, reply, reply_markup=kb_main(chat_id))
+                edit_message(chat_id, tmp_id, reply, reply_markup=menu_main(chat_id))
             except Exception:
-                send_message(chat_id, reply, reply_markup=kb_main(chat_id))
+                send_message(chat_id, reply, reply_markup=menu_main(chat_id))
         else:
-            send_message(chat_id, reply, reply_markup=kb_main(chat_id))
+            send_message(chat_id, reply, reply_markup=menu_main(chat_id))
 
     finally:
         lock.release()
@@ -1304,89 +929,123 @@ def handle_callback(cb: Dict[str, Any]) -> None:
     try:
         p = ensure_profile(chat_id)
 
-        if data == "action:menu":
-            edit_message(chat_id, message_id, render_menu_text(chat_id), reply_markup=kb_main(chat_id))
-        elif data == "menu:game":
-            edit_message(chat_id, message_id, "🎮 Выбери игру:", reply_markup=kb_game(chat_id))
-        elif data == "menu:persona":
-            edit_message(chat_id, message_id, "😈 Выбери Persona:", reply_markup=kb_persona(chat_id))
-        elif data == "menu:talk":
-            edit_message(chat_id, message_id, "🗣 Выбери Talk:", reply_markup=kb_talk(chat_id))
+        # navigation
+        if data == "nav:main":
+            edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
+
+        elif data == "nav:game":
+            edit_message(chat_id, message_id, "🎮 Выбери игру:", reply_markup=menu_game(chat_id))
+
+        elif data == "nav:persona":
+            edit_message(chat_id, message_id, "🎭 Выбери стиль:", reply_markup=menu_persona(chat_id))
+
+        elif data == "nav:talk":
+            edit_message(chat_id, message_id, "🗣 Длина ответа:", reply_markup=menu_talk(chat_id))
+
+        elif data == "nav:training":
+            edit_message(chat_id, message_id, "💪 Training:", reply_markup=menu_training(chat_id))
+
+        elif data == "nav:settings":
+            edit_message(chat_id, message_id, "⚙️ Settings:", reply_markup=menu_settings(chat_id))
+
+        # toggles
         elif data == "toggle:memory":
             p["memory"] = "off" if p.get("memory", "on") == "on" else "on"
             if p["memory"] == "off":
                 clear_memory(chat_id)
             save_state()
-            edit_message(chat_id, message_id, render_menu_text(chat_id), reply_markup=kb_main(chat_id))
+            edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
+
+        elif data == "toggle:mode":
+            p["mode"] = "coach" if p.get("mode", "chat") == "chat" else "chat"
+            save_state()
+            edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
+
+        elif data == "toggle:ui":
+            p["ui"] = "hide" if p.get("ui", "show") == "show" else "show"
+            save_state()
+            edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
+
+        # set values
         elif data.startswith("set:game:"):
             g = data.split(":", 2)[2]
             if g in ("auto",) + GAMES:
                 p["game"] = g
                 save_state()
-            edit_message(chat_id, message_id, render_menu_text(chat_id), reply_markup=kb_main(chat_id))
+            edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
+
         elif data.startswith("set:persona:"):
             v = data.split(":", 2)[2]
             if v in PERSONA_HINT:
                 p["persona"] = v
                 save_state()
-            edit_message(chat_id, message_id, render_menu_text(chat_id), reply_markup=kb_main(chat_id))
+            edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
+
         elif data.startswith("set:talk:"):
             v = data.split(":", 2)[2]
             if v in VERBOSITY_HINT:
                 p["verbosity"] = v
                 save_state()
-            edit_message(chat_id, message_id, render_menu_text(chat_id), reply_markup=kb_main(chat_id))
-        elif data == "action:settings":
-            g = resolve_game(chat_id, "")
-            edit_message(chat_id, message_id, GAME_KB[g]["settings"], reply_markup=kb_main(chat_id))
-        elif data == "action:plan":
-            g = resolve_game(chat_id, "")
-            edit_message(chat_id, message_id, GAME_KB[g]["plan"], reply_markup=kb_main(chat_id))
-        elif data == "action:vod":
-            g = resolve_game(chat_id, "")
-            edit_message(chat_id, message_id, GAME_KB[g]["vod"], reply_markup=kb_main(chat_id))
-        elif data == "action:drills":
-            edit_message(chat_id, message_id, "💪 Выбери дрилл:", reply_markup=kb_drills(chat_id))
-        elif data.startswith("drill:"):
-            kind = data.split(":", 1)[1]
-            g = resolve_game(chat_id, "")
-            txt = GAME_KB[g]["drills"].get(kind, "Доступно: aim/recoil/movement")
-            edit_message(chat_id, message_id, txt, reply_markup=kb_drills(chat_id))
+            edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
+
+        # actions
+        elif data == "action:help":
+            edit_message(chat_id, message_id, help_text(), reply_markup=menu_main(chat_id))
+
+        elif data == "action:status":
+            edit_message(chat_id, message_id, status_text(), reply_markup=menu_main(chat_id))
+
         elif data == "action:profile":
-            edit_message(chat_id, message_id, profile_text(chat_id), reply_markup=kb_main(chat_id))
-        elif data == "action:reset_mem":
+            edit_message(chat_id, message_id, profile_text(chat_id), reply_markup=menu_main(chat_id))
+
+        elif data == "action:ai_status":
+            ai = "ON" if openai_client else "OFF"
+            edit_message(chat_id, message_id, f"🤖 AI {ai}\nMODEL: {OPENAI_MODEL}", reply_markup=menu_main(chat_id))
+
+        elif data == "action:clear_memory":
             clear_memory(chat_id)
             save_state()
-            edit_message(chat_id, message_id, "🧽 Память очищена (профиль оставил).", reply_markup=kb_main(chat_id))
-        elif data == "action:kb":
-            edit_message(chat_id, message_id, "📚 Статьи: что делаем?", reply_markup=kb_kb(chat_id))
-        elif data == "kb:help":
-            edit_message(
-                chat_id,
-                message_id,
-                "🔎 Поиск статей:\n/kb_search <слово>\nОткрыть:\n/kb_show <id>",
-                reply_markup=kb_kb(chat_id),
-            )
-        elif data == "kb:top":
-            g = resolve_game(chat_id, "")
-            lst = [a for a in ARTICLES if (a.get("game") == g and (a.get("lang", "ru") == "ru"))][:7]
-            if not lst:
-                txt = "Пока нет статей под эту игру. Добавь в kb_articles.json."
-            else:
-                lines = [f"⭐ Топ по {GAME_KB[g]['name']}:"]
-                for a in lst:
-                    lines.append(f"• {a.get('id')} — {a.get('title')}")
-                lines.append("\nОткрыть: /kb_show <id>")
-                txt = "\n".join(lines)
-            edit_message(chat_id, message_id, txt, reply_markup=kb_kb(chat_id))
-        elif data == "action:help":
-            edit_message(chat_id, message_id, help_text(), reply_markup=kb_main(chat_id))
-        elif data == "action:ui":
-            p["ui"] = "hide" if p.get("ui", "show") == "show" else "show"
+            edit_message(chat_id, message_id, "🧽 Memory очищена.", reply_markup=menu_main(chat_id))
+
+        elif data == "action:reset_all":
+            USER_PROFILE.pop(chat_id, None)
+            USER_MEMORY.pop(chat_id, None)
+            USER_STATS.pop(chat_id, None)
+            USER_DAILY.pop(chat_id, None)
+            ensure_profile(chat_id)
+            ensure_daily(chat_id)
             save_state()
-            edit_message(chat_id, message_id, render_menu_text(chat_id), reply_markup=kb_main(chat_id))
+            edit_message(chat_id, message_id, "🧨 Reset all выполнен.", reply_markup=menu_main(chat_id))
+
+        elif data.startswith("action:drill:"):
+            kind = data.split(":", 2)[2]
+            g = resolve_game(chat_id, "")
+            txt = GAME_KB[g]["drills"].get(kind, "Доступно: aim/recoil/movement")
+            edit_message(chat_id, message_id, txt, reply_markup=menu_training(chat_id))
+
+        elif data == "action:vod":
+            g = resolve_game(chat_id, "")
+            edit_message(chat_id, message_id, GAME_KB[g]["vod"], reply_markup=menu_training(chat_id))
+
+        elif data == "action:daily":
+            d = ensure_daily(chat_id)
+            edit_message(chat_id, message_id, "🎯 Daily сегодня:\n• " + d["text"], reply_markup=menu_daily(chat_id))
+
+        elif data == "daily:done":
+            d = ensure_daily(chat_id)
+            d["done"] = int(d.get("done", 0)) + 1
+            save_state()
+            edit_message(chat_id, message_id, f"✅ Красавчик. Засчитал.\n\n🎯 Daily:\n• {d['text']}\n(done={d['done']} fail={d['fail']})", reply_markup=menu_daily(chat_id))
+
+        elif data == "daily:fail":
+            d = ensure_daily(chat_id)
+            d["fail"] = int(d.get("fail", 0)) + 1
+            save_state()
+            edit_message(chat_id, message_id, f"❌ Ок, честно. Значит есть где качать.\n\n🎯 Daily:\n• {d['text']}\n(done={d['done']} fail={d['fail']})", reply_markup=menu_daily(chat_id))
+
         else:
-            edit_message(chat_id, message_id, render_menu_text(chat_id), reply_markup=kb_main(chat_id))
+            edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
+
     finally:
         answer_callback(cb_id)
 
@@ -1394,6 +1053,13 @@ def handle_callback(cb: Dict[str, Any]) -> None:
 # =========================
 # Polling loop
 # =========================
+def delete_webhook_on_start() -> None:
+    try:
+        tg_request("deleteWebhook", payload={"drop_pending_updates": True}, is_post=True, retries=3)
+        log.info("Webhook deleted (drop_pending_updates=true)")
+    except Exception as e:
+        log.warning("Could not delete webhook: %r", e)
+
 def run_telegram_bot_once() -> None:
     tg_getme_check_forever()
     if not TELEGRAM_BOT_TOKEN:
@@ -1437,7 +1103,7 @@ def run_telegram_bot_once() -> None:
                 except Exception:
                     log.exception("Message handling error")
                     try:
-                        send_message(chat_id, "Ошибка 😅 Попробуй ещё раз.", reply_markup=kb_main(chat_id))
+                        send_message(chat_id, "Ошибка 😅 Напиши ещё раз коротко.", reply_markup=menu_main(chat_id))
                     except Exception:
                         pass
 
@@ -1454,11 +1120,9 @@ def run_telegram_bot_once() -> None:
                 continue
             log.warning("Loop RuntimeError: %r", e)
             time.sleep(2)
-
         except Exception as e:
             log.warning("Loop error: %r", e)
             time.sleep(2)
-
 
 def run_telegram_bot_forever() -> None:
     while True:
@@ -1477,19 +1141,16 @@ def run_telegram_bot_forever() -> None:
 class HealthHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
-
     def _ok(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-
     def do_HEAD(self):
         if self.path in ("/", "/healthz"):
             self._ok()
         else:
             self.send_response(404)
             self.end_headers()
-
     def do_GET(self):
         if self.path in ("/", "/healthz", "/"):
             self._ok()
@@ -1497,7 +1158,6 @@ class HealthHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
-
 
 def run_http_server() -> None:
     port = int(os.environ.get("PORT", "10000"))
@@ -1512,12 +1172,12 @@ def run_http_server() -> None:
 if __name__ == "__main__":
     try:
         startup_diagnostics()
+        load_state()
 
         stop_autosave = threading.Event()
         threading.Thread(target=autosave_loop, args=(stop_autosave, 60), daemon=True).start()
 
         threading.Thread(target=run_telegram_bot_forever, daemon=True).start()
-
         run_http_server()
 
     except Exception:
