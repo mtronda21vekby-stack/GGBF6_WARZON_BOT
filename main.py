@@ -111,6 +111,36 @@ LAST_MSG_TS: Dict[int, float] = {}
 CHAT_LOCKS: Dict[int, threading.Lock] = {}
 _state_lock = threading.Lock()
 
+TG_OFFSET: int = 0  # persisted offset for getUpdates (reduces duplicates after restarts)
+
+# Best-effort single-process guard (prevents accidental double-start on same machine/container)
+LOCK_PATH = os.path.join(DATA_DIR, "bot.lock")
+_lock_fd = None
+
+def acquire_single_instance_lock() -> None:
+    """Creates an exclusive lock file. If it exists, we exit to avoid 409 Conflict from two pollers."""
+    global _lock_fd
+    try:
+        _lock_fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(_lock_fd, str(os.getpid()).encode("utf-8"))
+        log.info("Lock acquired: %s (pid=%s)", LOCK_PATH, os.getpid())
+    except FileExistsError:
+        raise SystemExit(f"Another instance seems running (lock exists): {LOCK_PATH}")
+    except Exception as e:
+        log.warning("Could not acquire lock (%s). Continuing anyway: %r", LOCK_PATH, e)
+
+def release_single_instance_lock() -> None:
+    global _lock_fd
+    try:
+        if _lock_fd is not None:
+            os.close(_lock_fd)
+            _lock_fd = None
+        if os.path.exists(LOCK_PATH):
+            os.remove(LOCK_PATH)
+            log.info("Lock released: %s", LOCK_PATH)
+    except Exception:
+        pass
+
 
 def _get_lock(chat_id: int) -> threading.Lock:
     lock = CHAT_LOCKS.get(chat_id)
@@ -121,13 +151,14 @@ def _get_lock(chat_id: int) -> threading.Lock:
 
 
 def load_state() -> None:
-    global USER_PROFILE, USER_MEMORY
+    global USER_PROFILE, USER_MEMORY, TG_OFFSET
     try:
         if os.path.exists(STATE_PATH):
             with open(STATE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
             USER_PROFILE = {int(k): v for k, v in (data.get("profiles") or {}).items()}
             USER_MEMORY = {int(k): v for k, v in (data.get("memory") or {}).items()}
+            TG_OFFSET = int(data.get("tg_offset") or 0)
             log.info("State loaded: profiles=%d memory=%d (%s)", len(USER_PROFILE), len(USER_MEMORY), STATE_PATH)
     except Exception as e:
         log.warning("State load failed: %r", e)
@@ -139,6 +170,7 @@ def save_state() -> None:
             data = {
                 "profiles": {str(k): v for k, v in USER_PROFILE.items()},
                 "memory": {str(k): v for k, v in USER_MEMORY.items()},
+            "tg_offset": TG_OFFSET,
                 "saved_at": int(time.time()),
             }
         with open(STATE_PATH, "w", encoding="utf-8") as f:
@@ -870,12 +902,14 @@ def run_telegram_bot_once() -> None:
     delete_webhook_on_start()
     log.info("Telegram bot started (long polling)")
 
-    offset = 0
+    global TG_OFFSET
+    offset = int(TG_OFFSET or 0)
     while True:
         try:
             data = tg_request("getUpdates", params={"offset": offset, "timeout": TG_LONGPOLL_TIMEOUT})
             for upd in data.get("result", []):
                 offset = upd.get("update_id", offset) + 1
+                TG_OFFSET = offset
 
                 msg = upd.get("message") or upd.get("edited_message") or {}
                 chat_id = (msg.get("chat") or {}).get("id")
@@ -892,8 +926,14 @@ def run_telegram_bot_once() -> None:
         except RuntimeError as e:
             s = str(e)
             if "Conflict:" in s and "getUpdates" in s:
-                sleep_s = random.randint(CONFLICT_BACKOFF_MIN, CONFLICT_BACKOFF_MAX)
-                log.warning("Telegram conflict (Instances>1 or webhook). Backoff %ss: %s", sleep_s, s)
+                # Almost always means TWO pollers (another Render instance, local script, etc.)
+                try:
+                    delete_webhook_on_start()
+                except Exception:
+                    pass
+                save_state()
+                sleep_s = random.randint(CONFLICT_BACKOFF_MIN, CONFLICT_BACKOFF_MAX) + random.randint(0, 20)
+                log.warning("Telegram conflict (another poller is running). Backoff %ss: %s", sleep_s, s)
                 time.sleep(sleep_s)
                 continue
             log.warning("Loop RuntimeError: %r", e)
@@ -949,6 +989,11 @@ def run_http_server() -> None:
 
 
 if __name__ == "__main__":
+    import atexit
+
+    acquire_single_instance_lock()
+    atexit.register(release_single_instance_lock)
+
     stop_autosave = threading.Event()
     threading.Thread(target=autosave_loop, args=(stop_autosave, 60), daemon=True).start()
 
