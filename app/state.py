@@ -1,12 +1,13 @@
+# app/state.py
 # -*- coding: utf-8 -*-
+
 import json
 import os
 import threading
 import time
 from datetime import datetime
 from typing import Dict, Any, List
-
-from app.config import STATE_PATH, MEMORY_MAX_TURNS, MIN_SECONDS_BETWEEN_MSG
+from app import config
 from app.log import log
 
 USER_PROFILE: Dict[int, Dict[str, Any]] = {}
@@ -16,24 +17,6 @@ USER_DAILY: Dict[int, Dict[str, Any]] = {}
 LAST_MSG_TS: Dict[int, float] = {}
 
 STATE_GUARD = threading.Lock()
-CHAT_LOCKS: Dict[int, threading.Lock] = {}
-LOCKS_GUARD = threading.Lock()
-
-DAILY_POOL = [
-    ("angles", "5 файтов подряд — не репикай тот же угол. После первого хита меняй позицию."),
-    ("info", "3 файта подряд — сначала инфо (звук/радар), потом выход. Без ‘на авось’."),
-    ("center", "10 минут — держи прицел на уровне головы/плеч. Без ‘в пол’."),
-    ("reset", "Каждый файт — после контакта 1 раз: ‘плейты/перезар/ресет’ перед репиком."),
-]
-
-def _today_key() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d")
-
-def _get_lock(chat_id: int) -> threading.Lock:
-    with LOCKS_GUARD:
-        if chat_id not in CHAT_LOCKS:
-            CHAT_LOCKS[chat_id] = threading.Lock()
-        return CHAT_LOCKS[chat_id]
 
 def ensure_profile(chat_id: int) -> Dict[str, Any]:
     return USER_PROFILE.setdefault(chat_id, {
@@ -43,25 +26,18 @@ def ensure_profile(chat_id: int) -> Dict[str, Any]:
         "memory": "on",
         "ui": "show",
         "mode": "chat",
-        "last_question": "",
+        "page": "main",        # main | zombies | more
+        "zmb_map": "ashes",
+        "lightning": "off",    # ⚡ off/on
         "last_answer": "",
-        "page": "main",        # main | zombies
-        "zmb_map": "ashes",     # ashes | astra
+        "last_question": "",
     })
-
-def ensure_daily(chat_id: int) -> Dict[str, Any]:
-    import random
-    d = USER_DAILY.setdefault(chat_id, {})
-    if d.get("day") != _today_key() or not d.get("id"):
-        cid, text = random.choice(DAILY_POOL)
-        USER_DAILY[chat_id] = {"day": _today_key(), "id": cid, "text": text, "done": 0, "fail": 0}
-    return USER_DAILY[chat_id]
 
 def load_state() -> None:
     global USER_PROFILE, USER_MEMORY, USER_STATS, USER_DAILY
     try:
-        if os.path.exists(STATE_PATH):
-            with open(STATE_PATH, "r", encoding="utf-8") as f:
+        if os.path.exists(config.STATE_PATH):
+            with open(config.STATE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
             USER_PROFILE = {int(k): v for k, v in (data.get("profiles") or {}).items()}
             USER_MEMORY = {int(k): v for k, v in (data.get("memory") or {}).items()}
@@ -82,10 +58,10 @@ def save_state() -> None:
                 "daily": {str(k): v for k, v in USER_DAILY.items()},
                 "saved_at": int(time.time()),
             }
-        tmp = STATE_PATH + ".tmp"
+        tmp = config.STATE_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp, STATE_PATH)
+        os.replace(tmp, config.STATE_PATH)
     except Exception as e:
         log.warning("State save failed: %r", e)
 
@@ -99,7 +75,7 @@ def autosave_loop(stop: threading.Event, interval_s: int = 60) -> None:
 def throttle(chat_id: int) -> bool:
     now = time.time()
     last = LAST_MSG_TS.get(chat_id, 0.0)
-    if now - last < MIN_SECONDS_BETWEEN_MSG:
+    if now - last < config.MIN_SECONDS_BETWEEN_MSG:
         return True
     LAST_MSG_TS[chat_id] = now
     return False
@@ -110,7 +86,7 @@ def update_memory(chat_id: int, role: str, content: str) -> None:
         return
     mem = USER_MEMORY.setdefault(chat_id, [])
     mem.append({"role": role, "content": content})
-    max_len = max(2, MEMORY_MAX_TURNS * 2)
+    max_len = max(2, config.MEMORY_MAX_TURNS * 2)
     if len(mem) > max_len:
         USER_MEMORY[chat_id] = mem[-max_len:]
 
@@ -120,6 +96,20 @@ def clear_memory(chat_id: int) -> None:
     p["last_answer"] = ""
     p["last_question"] = ""
 
-def stat_inc(chat_id: int, key: str) -> None:
-    st = USER_STATS.setdefault(chat_id, {})
-    st[key] = int(st.get(key, 0)) + 1
+DAILY_POOL = [
+    ("angles", "5 файтов подряд — не репикай тот же угол. После первого хита меняй позицию."),
+    ("info", "3 файта подряд — сначала инфо (звук/радар), потом выход. Без ‘на авось’."),
+    ("center", "10 минут — держи прицел на уровне головы/плеч. Без ‘в пол’."),
+    ("reset", "Каждый файт — после контакта 1 раз: ‘плейты/перезар/ресет’ перед репиком."),
+]
+
+def _today_key() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%d")
+
+def ensure_daily(chat_id: int) -> Dict[str, Any]:
+    d = USER_DAILY.setdefault(chat_id, {})
+    if d.get("day") != _today_key() or not d.get("id"):
+        import random
+        cid, text = random.choice(DAILY_POOL)
+        USER_DAILY[chat_id] = {"day": _today_key(), "id": cid, "text": text, "done": 0, "fail": 0}
+    return USER_DAILY[chat_id]
