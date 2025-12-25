@@ -1,2 +1,2 @@
 # -*- coding: utf-8 -*-
-# app package
+# app/__init__.py
