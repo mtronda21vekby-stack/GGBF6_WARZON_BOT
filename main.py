@@ -1,10 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-FPS Coach Bot — PUBLIC AI (no buttons) for Render + long polling
-- No inline keyboards (so nothing "doesn't work")
-- Stable getUpdates + conflict backoff
-- deleteWebhook on start
-- OpenAI chat replies with your format
+FPS Coach Bot — PUBLIC AI (no buttons) for Render (Web Service) + long polling
+
+What this version fixes/strengthens:
+- Proper UTF-8 strings (no broken symbols)
+- Much tougher Telegram request layer (timeouts, JSON errors, 429/5xx retries)
+- Safer long polling loop with conflict backoff + jitter
+- Optional typing animation (default OFF to avoid edit limits)
+- Per-chat rate limit + global concurrency limit for OpenAI calls
+- Small in-memory chat memory (bounded)
+- Health endpoint for Render: /healthz
+
+IMPORTANT ABOUT 24/7:
+- Render Free Web Services can "spin down" on inactivity. To stay always-on you need either:
+  1) Paid plan (recommended), or
+  2) External ping (e.g., UptimeRobot) hitting /healthz every ~5 minutes.
 """
 
 import os
@@ -14,23 +24,15 @@ import random
 import threading
 import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from typing import Dict, List, Optional
 
 import requests
-
 from openai import OpenAI
 from openai import APIConnectionError, AuthenticationError, RateLimitError, BadRequestError, APIError
 
-
-# =========================
-# Logging
-# =========================
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-log = logging.getLogger("fps_coach_public")
+log = logging.getLogger("fps_coach_public_v6")
 
-
-# =========================
-# ENV
-# =========================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
@@ -38,56 +40,47 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
 
 HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "25"))
 TG_LONGPOLL_TIMEOUT = int(os.getenv("TG_LONGPOLL_TIMEOUT", "50"))
-TG_RETRIES = int(os.getenv("TG_RETRIES", "5"))
+TG_RETRIES = int(os.getenv("TG_RETRIES", "6"))
 
-# Telegram edit limit safe
-PULSE_MIN_SECONDS = float(os.getenv("PULSE_MIN_SECONDS", "1.25"))
-
-# anti-flood per chat
 MIN_SECONDS_BETWEEN_MSG = float(os.getenv("MIN_SECONDS_BETWEEN_MSG", "0.35"))
 
-# 409 conflict backoff
 CONFLICT_BACKOFF_MIN = int(os.getenv("CONFLICT_BACKOFF_MIN", "12"))
 CONFLICT_BACKOFF_MAX = int(os.getenv("CONFLICT_BACKOFF_MAX", "30"))
 
 MEMORY_MAX_TURNS = int(os.getenv("MEMORY_MAX_TURNS", "8"))
+
+ANIMATION = os.getenv("ANIMATION", "0").strip() == "1"
+PULSE_MIN_SECONDS = float(os.getenv("PULSE_MIN_SECONDS", "1.35"))
+
+MAX_CONCURRENT_AI = int(os.getenv("MAX_CONCURRENT_AI", "2"))
 
 if not TELEGRAM_BOT_TOKEN:
     raise SystemExit("Missing ENV: TELEGRAM_BOT_TOKEN")
 if not OPENAI_API_KEY:
     raise SystemExit("Missing ENV: OPENAI_API_KEY")
 
-
-# =========================
-# OpenAI client
-# =========================
 openai_client = OpenAI(
     api_key=OPENAI_API_KEY,
     base_url=OPENAI_BASE_URL,
     timeout=30,
     max_retries=0,
 )
+_ai_sem = threading.Semaphore(max(1, MAX_CONCURRENT_AI))
 
-
-# =========================
-# Requests session
-# =========================
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "render-fps-coach-public/1.0"})
+SESSION.headers.update({"User-Agent": "render-fps-coach-public/6.0"})
 SESSION.mount("https://", requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20))
 
+USER_PROFILE: Dict[int, Dict[str, str]] = {}
+USER_MEMORY: Dict[int, List[Dict[str, str]]] = {}
+LAST_MSG_TS: Dict[int, float] = {}
 
-# =========================
-# In-memory per chat
-# =========================
-USER_PROFILE = {}  # chat_id -> dict
-USER_MEMORY = {}   # chat_id -> list[{role, content}]
-LAST_MSG_TS = {}   # chat_id -> float
+GAME_PILLARS = {
+    "warzone": "Фокус Warzone: позиция/тайминг, инфо (радар/звук/пинги), пре-эйм, ротации заранее, после контакта — репозиция.",
+    "bf6": "Фокус BF6: линии фронта/спавны, пик→инфо→откат, серия→репозиция, игра от укрытий.",
+    "bo7": "Фокус BO7: центр экрана+префайр, тайминги, 2 секунды на позиции→смена, репик с другого угла.",
+}
 
-
-# =========================
-# Persona / format
-# =========================
 SYSTEM_PROMPT = (
     "Ты харизматичный FPS-коуч по Warzone/BF6/BO7. Пишешь по-русски.\n"
     "Тон: уверенный, быстрый, с юмором и лёгкими подколами (без токсичности).\n"
@@ -117,22 +110,19 @@ THINKING_LINES = [
     "🌑 Анализирую… не моргай 😈",
 ]
 
-
-# =========================
-# Helpers
-# =========================
-def ensure_profile(chat_id: int) -> dict:
+def ensure_profile(chat_id: int) -> Dict[str, str]:
     return USER_PROFILE.setdefault(chat_id, {
-        "game": "warzone",      # warzone/bf6/bo7
-        "persona": "spicy",     # spicy/chill/pro
-        "verbosity": "normal",  # short/normal/talkative
+        "game": "warzone",
+        "persona": "spicy",
+        "verbosity": "normal",
     })
 
 def update_memory(chat_id: int, role: str, content: str):
     mem = USER_MEMORY.setdefault(chat_id, [])
     mem.append({"role": role, "content": content})
-    if len(mem) > MEMORY_MAX_TURNS * 2:
-        USER_MEMORY[chat_id] = mem[-MEMORY_MAX_TURNS * 2:]
+    cap = max(2, MEMORY_MAX_TURNS * 2)
+    if len(mem) > cap:
+        USER_MEMORY[chat_id] = mem[-cap:]
 
 def throttle(chat_id: int) -> bool:
     now = time.time()
@@ -142,16 +132,13 @@ def throttle(chat_id: int) -> bool:
     LAST_MSG_TS[chat_id] = now
     return False
 
-
-# =========================
-# Telegram API
-# =========================
 def _sleep_backoff(i: int):
-    time.sleep((0.6 * (i + 1)) + random.random() * 0.25)
+    time.sleep(min(8.0, 0.7 * (i + 1)) + random.random() * 0.35)
 
 def tg_request(method: str, *, params=None, payload=None, is_post=False, retries=TG_RETRIES):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
-    last = None
+    last: Optional[Exception] = None
+
     for i in range(retries):
         try:
             if is_post:
@@ -159,14 +146,34 @@ def tg_request(method: str, *, params=None, payload=None, is_post=False, retries
             else:
                 r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
 
-            data = r.json()
+            try:
+                data = r.json()
+            except Exception:
+                raise RuntimeError(f"Telegram non-JSON (HTTP {r.status_code}): {r.text[:200]}")
+
             if r.status_code == 200 and data.get("ok"):
                 return data
-            last = RuntimeError(data.get("description", f"Telegram HTTP {r.status_code}"))
+
+            desc = data.get("description", f"Telegram HTTP {r.status_code}")
+
+            if r.status_code == 429:
+                retry_after = 2
+                try:
+                    retry_after = int((data.get("parameters") or {}).get("retry_after") or 2)
+                except Exception:
+                    retry_after = 2
+                time.sleep(min(30, retry_after))
+                last = RuntimeError(desc)
+                continue
+
+            last = RuntimeError(desc)
+
         except Exception as e:
             last = e
+
         _sleep_backoff(i)
-    raise last
+
+    raise last if last else RuntimeError("Telegram request failed")
 
 def send_message(chat_id: int, text: str):
     chunks = [text[i:i + 3900] for i in range(0, len(text), 3900)] or [""]
@@ -186,17 +193,12 @@ def send_chat_action(chat_id: int, action: str = "typing"):
         pass
 
 def delete_webhook_on_start():
-    # важно для polling
     try:
         tg_request("deleteWebhook", payload={"drop_pending_updates": True}, is_post=True, retries=3)
         log.info("Webhook deleted (drop_pending_updates=true)")
     except Exception as e:
         log.warning("Could not delete webhook: %r", e)
 
-
-# =========================
-# Animation (safe)
-# =========================
 def typing_loop(chat_id: int, stop_event: threading.Event, interval: float = 4.0):
     while not stop_event.is_set():
         send_chat_action(chat_id, "typing")
@@ -216,12 +218,7 @@ def pulse_edit_loop(chat_id: int, message_id: int, stop_event: threading.Event, 
             last_edit = now
         stop_event.wait(0.2)
 
-
-# =========================
-# OpenAI
-# =========================
 def _openai_create(messages, max_tokens: int):
-    # compatibility across SDK versions
     try:
         return openai_client.chat.completions.create(
             model=OPENAI_MODEL,
@@ -239,6 +236,7 @@ def openai_reply(chat_id: int, user_text: str) -> str:
     p = ensure_profile(chat_id)
     persona = p.get("persona", "spicy")
     verbosity = p.get("verbosity", "normal")
+    game = p.get("game", "warzone")
 
     coach_frame = (
         "Пиши конкретно. Если данных мало — 1 уточняющий вопрос.\n"
@@ -251,34 +249,40 @@ def openai_reply(chat_id: int, user_text: str) -> str:
         {"role": "system", "content": coach_frame},
         {"role": "system", "content": PERSONA_HINT.get(persona, PERSONA_HINT["spicy"])},
         {"role": "system", "content": VERBOSITY_HINT.get(verbosity, VERBOSITY_HINT["normal"])},
+        {"role": "system", "content": f"Текущая игра: {game}. {GAME_PILLARS.get(game, '')}"},
         {"role": "system", "content": f"Профиль: {json.dumps(p, ensure_ascii=False)}"},
     ]
     messages.extend(USER_MEMORY.get(chat_id, []))
     messages.append({"role": "user", "content": user_text})
 
-    max_out = 650 if verbosity == "talkative" else 520
+    max_out = 700 if verbosity == "talkative" else 520
 
-    for attempt in range(2):
-        try:
-            resp = _openai_create(messages, max_out)
-            out = (resp.choices[0].message.content or "").strip()
-            return out or "Не получил ответ. Напиши ещё раз 🙌"
-        except APIConnectionError:
-            if attempt == 0:
-                time.sleep(0.9)
-                continue
-            return "⚠️ AI: проблема соединения. Попробуй ещё раз через минуту."
-        except AuthenticationError:
-            return "❌ AI: неверный ключ OPENAI_API_KEY."
-        except RateLimitError:
-            return "⏳ AI: лимит/перегруз. Подожди 20–60 сек."
-        except BadRequestError:
-            return f"❌ AI: bad request. Модель: {OPENAI_MODEL}."
-        except APIError:
-            return "⚠️ AI: временная ошибка сервиса. Попробуй ещё раз."
-        except Exception:
-            log.exception("OpenAI unknown error")
-            return "⚠️ AI: неизвестная ошибка. Напиши /status."
+    with _ai_sem:
+        for attempt in range(3):
+            try:
+                resp = _openai_create(messages, max_out)
+                out = (resp.choices[0].message.content or "").strip()
+                return out or "Не получил ответ. Напиши ещё раз 🙌"
+
+            except RateLimitError:
+                time.sleep(2.0 + attempt * 2.0)
+                if attempt == 2:
+                    return "⏳ AI: лимит/перегруз. Подожди 20–60 сек и попробуй снова."
+            except APIConnectionError:
+                time.sleep(1.0 + attempt * 1.5)
+                if attempt == 2:
+                    return "⚠️ AI: проблема соединения. Попробуй ещё раз через минуту."
+            except AuthenticationError:
+                return "❌ AI: неверный ключ OPENAI_API_KEY."
+            except BadRequestError:
+                return f"❌ AI: bad request. Модель: {OPENAI_MODEL}."
+            except APIError:
+                time.sleep(1.0 + attempt)
+                if attempt == 2:
+                    return "⚠️ AI: временная ошибка сервиса. Попробуй ещё раз."
+            except Exception:
+                log.exception("OpenAI unknown error")
+                return "⚠️ AI: неизвестная ошибка. Напиши /status."
 
 def ai_test() -> str:
     try:
@@ -288,16 +292,12 @@ def ai_test() -> str:
     except Exception as e:
         return f"⚠️ /ai_test: {type(e).__name__}"
 
-
-# =========================
-# Commands
-# =========================
 def help_text() -> str:
     return (
         "🌑 FPS Coach Bot (public)\n"
         "Пиши ситуацию / вопрос — отвечу как коуч.\n\n"
         "Команды:\n"
-        "/start — меню\n"
+        "/start — помощь\n"
         "/status — конфиг\n"
         "/ai_test — тест AI\n"
         "/persona spicy|chill|pro\n"
@@ -311,40 +311,39 @@ def status_text() -> str:
         "🧾 Status\n"
         f"OPENAI_BASE_URL: {OPENAI_BASE_URL}\n"
         f"OPENAI_MODEL: {OPENAI_MODEL}\n"
-        "Если ловишь Conflict 409 — значит запущены 2 инстанса (Render Instances > 1) или два сервиса.\n"
+        f"ANIMATION: {'ON' if ANIMATION else 'OFF'}\n"
+        f"MAX_CONCURRENT_AI: {MAX_CONCURRENT_AI}\n\n"
+        "Если ловишь Conflict 409 — значит запущены 2 инстанса (Instance count > 1) или есть webhook.\n"
     )
 
-
-# =========================
-# Message handler
-# =========================
 def handle_message(chat_id: int, text: str):
     if throttle(chat_id):
         return
 
     p = ensure_profile(chat_id)
+    t = text.strip()
 
-    if text.startswith("/start"):
+    if t.startswith("/start") or t.startswith("/help"):
         send_message(chat_id, help_text())
         return
 
-    if text.startswith("/status"):
+    if t.startswith("/status"):
         send_message(chat_id, status_text())
         return
 
-    if text.startswith("/ai_test"):
+    if t.startswith("/ai_test"):
         send_message(chat_id, ai_test())
         return
 
-    if text.startswith("/reset"):
+    if t.startswith("/reset"):
         USER_PROFILE.pop(chat_id, None)
         USER_MEMORY.pop(chat_id, None)
         ensure_profile(chat_id)
         send_message(chat_id, "🧹 Сбросил профиль и память.")
         return
 
-    if text.startswith("/persona"):
-        parts = text.split()
+    if t.startswith("/persona"):
+        parts = t.split()
         if len(parts) >= 2 and parts[1].lower() in ("spicy", "chill", "pro"):
             p["persona"] = parts[1].lower()
             send_message(chat_id, f"✅ Persona = {p['persona']}")
@@ -352,8 +351,8 @@ def handle_message(chat_id: int, text: str):
             send_message(chat_id, "Используй: /persona spicy | chill | pro")
         return
 
-    if text.startswith("/talk"):
-        parts = text.split()
+    if t.startswith("/talk"):
+        parts = t.split()
         if len(parts) >= 2 and parts[1].lower() in ("short", "normal", "talkative"):
             p["verbosity"] = parts[1].lower()
             send_message(chat_id, f"✅ Talk = {p['verbosity']}")
@@ -361,8 +360,8 @@ def handle_message(chat_id: int, text: str):
             send_message(chat_id, "Используй: /talk short | normal | talkative")
         return
 
-    if text.startswith("/game"):
-        parts = text.split()
+    if t.startswith("/game"):
+        parts = t.split()
         if len(parts) >= 2 and parts[1].lower() in ("warzone", "bf6", "bo7"):
             p["game"] = parts[1].lower()
             send_message(chat_id, f"✅ Игра = {p['game']}")
@@ -370,17 +369,18 @@ def handle_message(chat_id: int, text: str):
             send_message(chat_id, "Используй: /game warzone | bf6 | bo7")
         return
 
-    # AI reply + safe animation
-    update_memory(chat_id, "user", text)
+    update_memory(chat_id, "user", t)
 
-    tmp_id = send_message(chat_id, random.choice(THINKING_LINES))
+    tmp_id = None
     stop = threading.Event()
-    threading.Thread(target=typing_loop, args=(chat_id, stop), daemon=True).start()
-    if tmp_id:
-        threading.Thread(target=pulse_edit_loop, args=(chat_id, tmp_id, stop, "⌛ Думаю"), daemon=True).start()
+    if ANIMATION:
+        tmp_id = send_message(chat_id, random.choice(THINKING_LINES))
+        threading.Thread(target=typing_loop, args=(chat_id, stop), daemon=True).start()
+        if tmp_id:
+            threading.Thread(target=pulse_edit_loop, args=(chat_id, tmp_id, stop, "⌛ Думаю"), daemon=True).start()
 
     try:
-        reply = openai_reply(chat_id, text)
+        reply = openai_reply(chat_id, t)
     finally:
         stop.set()
 
@@ -394,10 +394,6 @@ def handle_message(chat_id: int, text: str):
     else:
         send_message(chat_id, reply)
 
-
-# =========================
-# Polling loop
-# =========================
 POLLING_STARTED = False
 
 def run_telegram_bot():
@@ -414,16 +410,13 @@ def run_telegram_bot():
     while True:
         try:
             data = tg_request("getUpdates", params={"offset": offset, "timeout": TG_LONGPOLL_TIMEOUT})
-
             for upd in data.get("result", []):
                 offset = upd.get("update_id", offset) + 1
-
                 msg = upd.get("message") or upd.get("edited_message") or {}
                 chat_id = (msg.get("chat") or {}).get("id")
                 text = (msg.get("text") or "").strip()
                 if not chat_id or not text:
                     continue
-
                 try:
                     handle_message(chat_id, text)
                 except Exception:
@@ -438,15 +431,12 @@ def run_telegram_bot():
                 time.sleep(sleep_s)
                 continue
             log.warning("Loop RuntimeError: %r", e)
-            time.sleep(2)
+            time.sleep(2.0)
+
         except Exception as e:
             log.warning("Loop error: %r", e)
-            time.sleep(2)
+            time.sleep(2.0)
 
-
-# =========================
-# Health endpoint (Render)
-# =========================
 class HealthHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
@@ -457,7 +447,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path in ("/", "/healthz", "/"):
+        if self.path in ("/", "/healthz"):
             self._ok()
             self.wfile.write(b"OK")
         else:
@@ -469,7 +459,6 @@ def run_http_server():
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     log.info("HTTP server listening on :%s", port)
     server.serve_forever()
-
 
 if __name__ == "__main__":
     threading.Thread(target=run_telegram_bot, daemon=True).start()
