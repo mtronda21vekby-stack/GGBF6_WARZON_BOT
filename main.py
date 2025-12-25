@@ -1,24 +1,33 @@
 # -*- coding: utf-8 -*-
 """
-FPS Coach Bot — v1.0_pro_hardened (Render + long polling + memory)
+FPS Coach Bot — clean_hardened (Render + long polling + memory)
 
-Усиления:
-- Никогда не падает "молча": печатает traceback + стартовую диагностику.
-- Если нет TELEGRAM_BOT_TOKEN — не крашим процесс (healthz жив), пишем ошибку в лог.
-- /healthz всегда живой (HTTP сервер в main-thread), Telegram в daemon-thread.
-- getMe self-check на старте, чтобы сразу увидеть "Unauthorized" и т.п.
+Фишки:
+- /healthz всегда живой (HTTP в main thread), Telegram polling в daemon thread.
+- Не падает “молча”: лог + traceback.
+- Если TELEGRAM_BOT_TOKEN отсутствует — процесс жив (healthz OK), Telegram не стартуем.
+- getMe self-check + deleteWebhook(drop_pending_updates=True)
 - OpenAI опционален: нет ключа/пакета -> AI OFF, бот живёт.
+- Память/профиль/факты/заметки сохраняются в DATA_DIR.
+- UI-кнопки (inline keyboard) + команды.
+
+ENV (Render):
+- TELEGRAM_BOT_TOKEN=...
+- OPENAI_API_KEY=... (опционально)
+- OPENAI_MODEL=gpt-4o-mini (или gpt-4o если доступно)
+- DATA_DIR=/tmp (по умолчанию)
+- PORT=10000 (Render выставит сам)
 """
 
 import os
 import re
+import sys
 import time
 import json
 import random
 import threading
 import logging
 import traceback
-import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -27,17 +36,15 @@ import requests
 # OpenAI optional
 try:
     from openai import OpenAI
-    from openai import APIConnectionError, AuthenticationError, RateLimitError, BadRequestError, APIError
 except Exception:
     OpenAI = None
-    APIConnectionError = AuthenticationError = RateLimitError = BadRequestError = APIError = Exception
 
 
 # =========================
 # Logging
 # =========================
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-log = logging.getLogger("fps_coach_hardened")
+log = logging.getLogger("fps_coach_clean")
 
 
 # =========================
@@ -71,8 +78,7 @@ MAX_TEXT_LEN = 3900
 os.makedirs(DATA_DIR, exist_ok=True)
 
 
-def startup_diagnostics():
-    """Чтобы в Render Logs сразу было понятно, что не так."""
+def startup_diagnostics() -> None:
     try:
         log.info("=== STARTUP DIAGNOSTICS ===")
         log.info("python: %s", sys.version.replace("\n", " "))
@@ -120,7 +126,7 @@ else:
 # Requests session (Telegram)
 # =========================
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "render-fps-coach-bot/1.0_hardened"})
+SESSION.headers.update({"User-Agent": "render-fps-coach-bot/clean_hardened"})
 SESSION.mount("https://", requests.adapters.HTTPAdapter(pool_connections=40, pool_maxsize=40))
 
 
@@ -219,7 +225,9 @@ def load_articles() -> List[Dict[str, Any]]:
         log.warning("KB load failed: %r", e)
     return []
 
+
 ARTICLES = load_articles()
+
 
 def kb_search(query: str, game: Optional[str] = None, limit: int = 5) -> List[Dict[str, Any]]:
     q = (query or "").strip().lower()
@@ -230,13 +238,15 @@ def kb_search(query: str, game: Optional[str] = None, limit: int = 5) -> List[Di
     for a in ARTICLES:
         if game and a.get("game") and a.get("game") != game:
             continue
-        hay = " ".join([
-            str(a.get("id", "")),
-            str(a.get("title", "")),
-            " ".join(a.get("tags") or []),
-            str(a.get("summary_ru", "")),
-            " ".join(a.get("steps_ru") or []),
-        ]).lower()
+        hay = " ".join(
+            [
+                str(a.get("id", "")),
+                str(a.get("title", "")),
+                " ".join(a.get("tags") or []),
+                str(a.get("summary_ru", "")),
+                " ".join(a.get("steps_ru") or []),
+            ]
+        ).lower()
         score = sum(1 for t in tokens if t in hay)
         if score > 0:
             score += 2 * sum(1 for t in tokens if t in str(a.get("title", "")).lower())
@@ -244,12 +254,14 @@ def kb_search(query: str, game: Optional[str] = None, limit: int = 5) -> List[Di
     scored.sort(key=lambda x: x[0], reverse=True)
     return [a for _, a in scored[:limit]]
 
+
 def kb_get(article_id: str) -> Optional[Dict[str, Any]]:
     aid = (article_id or "").strip()
     for a in ARTICLES:
         if str(a.get("id", "")).strip() == aid:
             return a
     return None
+
 
 def kb_format_article(a: Dict[str, Any]) -> str:
     title = a.get("title") or a.get("id") or "Статья"
@@ -269,6 +281,7 @@ def kb_format_article(a: Dict[str, Any]) -> str:
                 out.append(f"• {s.strip()}")
     return "\n".join(out).strip()
 
+
 def kb_relevant_steps(user_text: str, game: str, limit_steps: int = 3) -> List[str]:
     t = (user_text or "").lower()
     tokens = set(re.findall(r"[a-zа-я0-9ё]{3,}", t))
@@ -279,11 +292,13 @@ def kb_relevant_steps(user_text: str, game: str, limit_steps: int = 3) -> List[s
             continue
         if a.get("game") and a.get("game") != game:
             continue
-        hay = " ".join([
-            str(a.get("title", "")),
-            " ".join(a.get("tags") or []),
-            str(a.get("summary_ru", "")),
-        ]).lower()
+        hay = " ".join(
+            [
+                str(a.get("title", "")),
+                " ".join(a.get("tags") or []),
+                str(a.get("summary_ru", "")),
+            ]
+        ).lower()
         score = sum(1 for tok in tokens if tok in hay)
         if score > best_score:
             best_score = score
@@ -355,19 +370,37 @@ THINKING_LINES = [
 
 _SMALLTALK_RX = re.compile(
     r"^\s*(привет|здаров|здравствуйте|йо|ку|qq|hello|hi|хай|добрый\s*(день|вечер|утро)|что\s+умеешь\??)\s*[!.\-–—]*\s*$",
-    re.I
+    re.I,
 )
+
 
 def is_smalltalk(text: str) -> bool:
     return bool(_SMALLTALK_RX.match(text or ""))
+
 
 def is_low_info(text: str) -> bool:
     t = (text or "").strip()
     if len(t) < 12:
         return True
     tl = t.lower()
-    keywords = ["умираю", "сливаю", "проигрываю", "не получается", "ошибка", "пуш", "эндгейм",
-                "пози", "дуэ", "тайм", "инфо", "аим", "отдач", "сенс", "fov", "пинг"]
+    keywords = [
+        "умираю",
+        "сливаю",
+        "проигрываю",
+        "не получается",
+        "ошибка",
+        "пуш",
+        "эндгейм",
+        "пози",
+        "дуэ",
+        "тайм",
+        "инфо",
+        "аим",
+        "отдач",
+        "сенс",
+        "fov",
+        "пинг",
+    ]
     return not any(k in tl for k in keywords)
 
 
@@ -384,6 +417,7 @@ CHAT_LOCKS: Dict[int, threading.Lock] = {}
 LOCKS_GUARD = threading.Lock()
 STATE_GUARD = threading.Lock()
 
+
 def _get_lock(chat_id: int) -> threading.Lock:
     with LOCKS_GUARD:
         lock = CHAT_LOCKS.get(chat_id)
@@ -391,6 +425,7 @@ def _get_lock(chat_id: int) -> threading.Lock:
             lock = threading.Lock()
             CHAT_LOCKS[chat_id] = lock
         return lock
+
 
 def load_state() -> None:
     global USER_PROFILE, USER_MEMORY, USER_FACTS, COACH_NOTES
@@ -402,10 +437,16 @@ def load_state() -> None:
             USER_MEMORY = {int(k): v for k, v in (data.get("memory") or {}).items()}
             USER_FACTS = {int(k): v for k, v in (data.get("facts") or {}).items()}
             COACH_NOTES = {int(k): str(v) for k, v in (data.get("coach_notes") or {}).items()}
-            log.info("State loaded: profiles=%d memory=%d facts=%d notes=%d",
-                     len(USER_PROFILE), len(USER_MEMORY), len(USER_FACTS), len(COACH_NOTES))
+            log.info(
+                "State loaded: profiles=%d memory=%d facts=%d notes=%d",
+                len(USER_PROFILE),
+                len(USER_MEMORY),
+                len(USER_FACTS),
+                len(COACH_NOTES),
+            )
     except Exception as e:
         log.warning("State load failed (reset state): %r", e)
+
 
 def save_state() -> None:
     try:
@@ -424,6 +465,7 @@ def save_state() -> None:
     except Exception as e:
         log.warning("State save failed: %r", e)
 
+
 def autosave_loop(stop: threading.Event, interval_s: int = 60) -> None:
     while not stop.is_set():
         stop.wait(interval_s)
@@ -431,18 +473,24 @@ def autosave_loop(stop: threading.Event, interval_s: int = 60) -> None:
             break
         save_state()
 
+
 load_state()
 
+
 def ensure_profile(chat_id: int) -> Dict[str, Any]:
-    return USER_PROFILE.setdefault(chat_id, {
-        "game": "auto",
-        "persona": "spicy",
-        "verbosity": "normal",
-        "ui": "show",
-        "memory": "on",
-        "last_focus": "",
-        "last_answer": "",
-    })
+    return USER_PROFILE.setdefault(
+        chat_id,
+        {
+            "game": "auto",
+            "persona": "spicy",
+            "verbosity": "normal",
+            "ui": "show",
+            "memory": "on",
+            "last_focus": "",
+            "last_answer": "",
+        },
+    )
+
 
 def update_memory(chat_id: int, role: str, content: str) -> None:
     p = ensure_profile(chat_id)
@@ -454,11 +502,13 @@ def update_memory(chat_id: int, role: str, content: str) -> None:
     if len(mem) > max_len:
         USER_MEMORY[chat_id] = mem[-max_len:]
 
+
 def clear_memory(chat_id: int) -> None:
     USER_MEMORY.pop(chat_id, None)
     p = ensure_profile(chat_id)
     p["last_answer"] = ""
     p["last_focus"] = ""
+
 
 def update_coach_notes(chat_id: int, user_text: str) -> None:
     tl = (user_text or "").lower()
@@ -490,6 +540,7 @@ _RX_SENS = re.compile(r"(sens|сенс)\s*[:=]?\s*([0-9]{1,2})(?:\s*/\s*([0-9]{1
 _RX_FOV = re.compile(r"\b(fov)\s*[:=]?\s*([0-9]{2,3})\b", re.I)
 _RX_PLATFORM = re.compile(r"\b(xbox|ps5|ps4|ps|playstation|pc|kbm|клава|мыш|комп)\b", re.I)
 
+
 def extract_facts(chat_id: int, text: str) -> None:
     t = (text or "").lower()
     facts = USER_FACTS.setdefault(chat_id, {})
@@ -514,6 +565,7 @@ def extract_facts(chat_id: int, text: str) -> None:
     if m:
         facts["fov"] = m.group(2)
 
+
 def throttle(chat_id: int) -> bool:
     now = time.time()
     last = LAST_MSG_TS.get(chat_id, 0.0)
@@ -532,6 +584,7 @@ _GAME_PATTERNS = {
     "bo7": re.compile(r"\b(bo7|black\s*ops|блэк\s*опс|zombies|зомби|hardpoint|хардпоинт)\b", re.I),
 }
 
+
 def detect_game(text: str) -> Optional[str]:
     t = (text or "").strip()
     if not t:
@@ -540,10 +593,14 @@ def detect_game(text: str) -> Optional[str]:
     for g, rx in _GAME_PATTERNS.items():
         if rx.search(t):
             hits.append(g)
-    if "bf6" in hits: return "bf6"
-    if "bo7" in hits: return "bo7"
-    if "warzone" in hits: return "warzone"
+    if "bf6" in hits:
+        return "bf6"
+    if "bo7" in hits:
+        return "bo7"
+    if "warzone" in hits:
+        return "warzone"
     return None
+
 
 def resolve_game(chat_id: int, user_text: str) -> str:
     p = ensure_profile(chat_id)
@@ -559,6 +616,7 @@ def _tokenize(s: str) -> List[str]:
     s = re.sub(r"[^a-zа-я0-9ё\s]+", " ", s)
     return [p for p in s.split() if len(p) >= 4]
 
+
 def similarity(a: str, b: str) -> float:
     if not a or not b:
         return 0.0
@@ -567,6 +625,7 @@ def similarity(a: str, b: str) -> float:
     if not ta or not tb:
         return 0.0
     return len(ta & tb) / max(1, len(ta | tb))
+
 
 def is_cheat_request(text: str) -> bool:
     t = (text or "").lower()
@@ -579,6 +638,7 @@ def is_cheat_request(text: str) -> bool:
 # =========================
 def _sleep_backoff(i: int) -> None:
     time.sleep((0.6 * (i + 1)) + random.random() * 0.25)
+
 
 def tg_request(method: str, *, params=None, payload=None, is_post: bool = False, retries: int = TG_RETRIES) -> Dict[str, Any]:
     if not TELEGRAM_BOT_TOKEN:
@@ -618,8 +678,8 @@ def tg_request(method: str, *, params=None, payload=None, is_post: bool = False,
 
     raise last or RuntimeError("Telegram request failed")
 
-def tg_getme_check_forever():
-    """Если токен битый/нет сети — не даём процессу умереть: ретраим и пишем в лог."""
+
+def tg_getme_check_forever() -> None:
     if not TELEGRAM_BOT_TOKEN:
         log.error("TELEGRAM_BOT_TOKEN is missing (set it in Render Environment).")
         return
@@ -633,10 +693,11 @@ def tg_getme_check_forever():
             log.error("Telegram getMe failed (will retry): %r", e)
             time.sleep(5)
 
+
 def send_message(chat_id: int, text: str, reply_markup=None) -> Optional[int]:
     if text is None:
         text = ""
-    chunks = [text[i:i + MAX_TEXT_LEN] for i in range(0, len(text), MAX_TEXT_LEN)] or [""]
+    chunks = [text[i : i + MAX_TEXT_LEN] for i in range(0, len(text), MAX_TEXT_LEN)] or [""]
     last_msg_id = None
     for ch in chunks:
         payload = {"chat_id": chat_id, "text": ch}
@@ -646,11 +707,13 @@ def send_message(chat_id: int, text: str, reply_markup=None) -> Optional[int]:
         last_msg_id = res.get("result", {}).get("message_id")
     return last_msg_id
 
+
 def edit_message(chat_id: int, message_id: int, text: str, reply_markup=None) -> None:
     payload = {"chat_id": chat_id, "message_id": message_id, "text": text}
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
     tg_request("editMessageText", payload=payload, is_post=True)
+
 
 def answer_callback(callback_id: str) -> None:
     try:
@@ -658,11 +721,13 @@ def answer_callback(callback_id: str) -> None:
     except Exception:
         pass
 
+
 def send_chat_action(chat_id: int, action: str = "typing") -> None:
     try:
         tg_request("sendChatAction", payload={"chat_id": chat_id, "action": action}, is_post=True, retries=2)
     except Exception:
         pass
+
 
 def delete_webhook_on_start() -> None:
     try:
@@ -678,6 +743,7 @@ def delete_webhook_on_start() -> None:
 def _badge(ok: bool) -> str:
     return "✅" if ok else "🚫"
 
+
 def kb_main(chat_id: int):
     p = ensure_profile(chat_id)
     if p.get("ui", "show") == "hide":
@@ -688,71 +754,112 @@ def kb_main(chat_id: int):
     mem_on = (p.get("memory", "on") == "on")
     return {
         "inline_keyboard": [
-            [{"text": f"🎮 {game.upper()}", "callback_data": "menu:game"},
-             {"text": f"😈 {persona}", "callback_data": "menu:persona"},
-             {"text": f"🗣 {talk}", "callback_data": "menu:talk"}],
-            [{"text": f"{_badge(mem_on)} Память", "callback_data": "toggle:memory"},
-             {"text": "👤 Профиль", "callback_data": "action:profile"},
-             {"text": "🕶 UI", "callback_data": "action:ui"}],
-            [{"text": "💪 Drills", "callback_data": "action:drills"},
-             {"text": "📅 Plan", "callback_data": "action:plan"},
-             {"text": "⚙️ Settings", "callback_data": "action:settings"}],
-            [{"text": "📼 VOD", "callback_data": "action:vod"},
-             {"text": "📚 Статьи", "callback_data": "action:kb"},
-             {"text": "❓ Help", "callback_data": "action:help"}],
+            [
+                {"text": f"🎮 {game.upper()}", "callback_data": "menu:game"},
+                {"text": f"😈 {persona}", "callback_data": "menu:persona"},
+                {"text": f"🗣 {talk}", "callback_data": "menu:talk"},
+            ],
+            [
+                {"text": f"{_badge(mem_on)} Память", "callback_data": "toggle:memory"},
+                {"text": "👤 Профиль", "callback_data": "action:profile"},
+                {"text": "🕶 UI", "callback_data": "action:ui"},
+            ],
+            [
+                {"text": "💪 Drills", "callback_data": "action:drills"},
+                {"text": "📅 Plan", "callback_data": "action:plan"},
+                {"text": "⚙️ Settings", "callback_data": "action:settings"},
+            ],
+            [
+                {"text": "📼 VOD", "callback_data": "action:vod"},
+                {"text": "📚 Статьи", "callback_data": "action:kb"},
+                {"text": "❓ Help", "callback_data": "action:help"},
+            ],
             [{"text": "🧽 Clear memory", "callback_data": "action:reset_mem"}],
         ]
     }
+
 
 def kb_game(chat_id: int):
     p = ensure_profile(chat_id)
     if p.get("ui", "show") == "hide":
         return None
     cur = p.get("game", "auto")
+
     def b(key, label):
         mark = "✅ " if cur == key else ""
         return {"text": f"{mark}{label}", "callback_data": f"set:game:{key}"}
-    return {"inline_keyboard": [[b("auto","AUTO"), b("warzone","Warzone"), b("bf6","BF6"), b("bo7","BO7")],
-                               [{"text":"⬅️ Назад","callback_data":"action:menu"}]]}
+
+    return {
+        "inline_keyboard": [
+            [b("auto", "AUTO"), b("warzone", "Warzone"), b("bf6", "BF6"), b("bo7", "BO7")],
+            [{"text": "⬅️ Назад", "callback_data": "action:menu"}],
+        ]
+    }
+
 
 def kb_persona(chat_id: int):
     p = ensure_profile(chat_id)
     if p.get("ui", "show") == "hide":
         return None
     cur = p.get("persona", "spicy")
+
     def b(key):
         mark = "✅ " if cur == key else ""
         return {"text": f"{mark}{key}", "callback_data": f"set:persona:{key}"}
-    return {"inline_keyboard": [[b("spicy"), b("chill"), b("pro")],
-                               [{"text":"⬅️ Назад","callback_data":"action:menu"}]]}
+
+    return {
+        "inline_keyboard": [
+            [b("spicy"), b("chill"), b("pro")],
+            [{"text": "⬅️ Назад", "callback_data": "action:menu"}],
+        ]
+    }
+
 
 def kb_talk(chat_id: int):
     p = ensure_profile(chat_id)
     if p.get("ui", "show") == "hide":
         return None
     cur = p.get("verbosity", "normal")
+
     def b(key):
         mark = "✅ " if cur == key else ""
         return {"text": f"{mark}{key}", "callback_data": f"set:talk:{key}"}
-    return {"inline_keyboard": [[b("short"), b("normal"), b("talkative")],
-                               [{"text":"⬅️ Назад","callback_data":"action:menu"}]]}
+
+    return {
+        "inline_keyboard": [
+            [b("short"), b("normal"), b("talkative")],
+            [{"text": "⬅️ Назад", "callback_data": "action:menu"}],
+        ]
+    }
+
 
 def kb_drills(chat_id: int):
     p = ensure_profile(chat_id)
     if p.get("ui", "show") == "hide":
         return None
-    return {"inline_keyboard": [[{"text":"🎯 Aim","callback_data":"drill:aim"},
-                                 {"text":"🔫 Recoil","callback_data":"drill:recoil"},
-                                 {"text":"🕹 Move","callback_data":"drill:movement"}],
-                                [{"text":"⬅️ Назад","callback_data":"action:menu"}]]}
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🎯 Aim", "callback_data": "drill:aim"},
+                {"text": "🔫 Recoil", "callback_data": "drill:recoil"},
+                {"text": "🕹 Move", "callback_data": "drill:movement"},
+            ],
+            [{"text": "⬅️ Назад", "callback_data": "action:menu"}],
+        ]
+    }
+
 
 def kb_kb(chat_id: int):
     p = ensure_profile(chat_id)
     if p.get("ui", "show") == "hide":
         return None
-    return {"inline_keyboard": [[{"text":"🔎 Как искать","callback_data":"kb:help"},
-                                 {"text":"⭐ Топ по игре","callback_data":"kb:top"}],
-                                [{"text":"⬅️ Назад","callback_data":"action:menu"}]]}
+    return {
+        "inline_keyboard": [
+            [{"text": "🔎 Как искать", "callback_data": "kb:help"}, {"text": "⭐ Топ по игре", "callback_data": "kb:top"}],
+            [{"text": "⬅️ Назад", "callback_data": "action:menu"}],
+        ]
+    }
+
 
 def render_menu_text(chat_id: int) -> str:
     p = ensure_profile(chat_id)
@@ -760,12 +867,13 @@ def render_menu_text(chat_id: int) -> str:
     mem = p.get("memory", "on")
     ai = "ON" if openai_client else "OFF"
     return (
-        "🌑 FPS Coach Bot v1.0_hardened\n"
+        "🌑 FPS Coach Bot (clean)\n"
         f"🎮 {g.upper()}  |  😈 {p.get('persona')}  |  🗣 {p.get('verbosity')}  |  🧠 {mem.upper()}  |  🤖 AI {ai}\n\n"
         "Напиши ситуацию одной сценой:\n"
         "• где был • кто первый увидел • на чём умер • что хотел сделать\n\n"
         "Или жми кнопки 👇"
     )
+
 
 def help_text() -> str:
     return (
@@ -777,6 +885,7 @@ def help_text() -> str:
         "/kb_show <id>\n"
         "/reset (полный сброс)\n"
     )
+
 
 def profile_text(chat_id: int) -> str:
     p = ensure_profile(chat_id)
@@ -793,14 +902,18 @@ def profile_text(chat_id: int) -> str:
     ]
     if facts:
         extras = []
-        if facts.get("platform"): extras.append(f"platform={facts['platform']}")
-        if facts.get("sens"): extras.append(f"sens={facts['sens']}")
-        if facts.get("fov"): extras.append(f"fov={facts['fov']}")
+        if facts.get("platform"):
+            extras.append(f"platform={facts['platform']}")
+        if facts.get("sens"):
+            extras.append(f"sens={facts['sens']}")
+        if facts.get("fov"):
+            extras.append(f"fov={facts['fov']}")
         if extras:
             lines.append("Факты: " + ", ".join(extras))
     if notes:
         lines.append("Заметки коуча: " + notes)
     return "\n".join(lines)
+
 
 def status_text() -> str:
     return (
@@ -821,8 +934,12 @@ def status_text() -> str:
 # =========================
 def typing_loop(chat_id: int, stop_event: threading.Event, interval: float = 4.0) -> None:
     while not stop_event.is_set():
-        send_chat_action(chat_id, "typing")
+        try:
+            send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
         stop_event.wait(interval)
+
 
 def pulse_edit_loop(chat_id: int, message_id: int, stop_event: threading.Event, base: str = "⌛ Думаю") -> None:
     dots = 0
@@ -843,9 +960,11 @@ def pulse_edit_loop(chat_id: int, message_id: int, stop_event: threading.Event, 
 # OpenAI helpers
 # =========================
 def _openai_create(messages: List[Dict[str, str]], max_tokens: int, regen: bool = False):
-    temp = 0.92 if not regen else 0.99
-    pres = 0.75 if not regen else 0.95
-    freq = 0.45 if not regen else 0.65
+    # Чуть больше разнообразия, чтобы не было “под копирку”
+    temp = 0.95 if not regen else 0.99
+    pres = 0.80 if not regen else 0.95
+    freq = 0.55 if not regen else 0.70
+
     kwargs = dict(
         model=OPENAI_MODEL,
         messages=messages,
@@ -853,10 +972,13 @@ def _openai_create(messages: List[Dict[str, str]], max_tokens: int, regen: bool 
         presence_penalty=pres,
         frequency_penalty=freq,
     )
+
+    # Совместимость со старыми/новыми версиями SDK
     try:
         return openai_client.chat.completions.create(**kwargs, max_completion_tokens=max_tokens)
     except TypeError:
         return openai_client.chat.completions.create(**kwargs, max_tokens=max_tokens)
+
 
 def enforce_4_blocks(text: str) -> str:
     t = (text or "").replace("\r", "").strip()
@@ -890,6 +1012,7 @@ def enforce_4_blocks(text: str) -> str:
         f"{punch}"
     )
 
+
 def build_messages(chat_id: int, user_text: str, regen: bool = False) -> List[Dict[str, str]]:
     p = ensure_profile(chat_id)
     game = resolve_game(chat_id, user_text)
@@ -911,9 +1034,12 @@ def build_messages(chat_id: int, user_text: str, regen: bool = False) -> List[Di
     facts_line = ""
     if facts:
         parts = []
-        if facts.get("platform"): parts.append(f"platform={facts['platform']}")
-        if facts.get("sens"): parts.append(f"sens={facts['sens']}")
-        if facts.get("fov"): parts.append(f"fov={facts['fov']}")
+        if facts.get("platform"):
+            parts.append(f"platform={facts['platform']}")
+        if facts.get("sens"):
+            parts.append(f"sens={facts['sens']}")
+        if facts.get("fov"):
+            parts.append(f"fov={facts['fov']}")
         if parts:
             facts_line = "ФАКТЫ ИГРОКА: " + ", ".join(parts)
 
@@ -924,34 +1050,41 @@ def build_messages(chat_id: int, user_text: str, regen: bool = False) -> List[Di
     kb_hint = ""
     if kb_steps:
         kb_hint = (
-            "Если уместно, аккуратно встрои 1–3 пункта ниже в '✅ Что делать' или '🧪 Дрилл' "
-            "(не упоминай источник):\n- " + "\n- ".join(kb_steps)
+            "Если уместно, аккуратно встрои 1–3 пункта ниже в '✅ Что делать' или '🧪 Дрилл' (не упоминай источник):\n"
+            + "\n".join([f"- {x}" for x in kb_steps])
         )
 
     prev_answer = (p.get("last_answer") or "")[:1200]
 
-    anti_repeat = (
-        "Анти-повтор:\n"
-        "- Не используй канцелярит.\n"
-        "- Меняй ритм, глаголы и формулировки.\n"
-        "- Не повторяй прошлый ответ.\n"
-    )
+    anti_repeat_lines = [
+        "Анти-повтор:",
+        "- Не используй канцелярит.",
+        "- Меняй ритм, глаголы и формулировки.",
+        "- Не повторяй прошлый ответ.",
+    ]
     if prev_answer:
-        anti_repeat += "\nПрошлый ответ (не повторять):\n" + prev_answer
+        anti_repeat_lines += ["", "Прошлый ответ (не повторять):", prev_answer]
     if regen:
-        anti_repeat += "\nУсиление: полностью поменяй 2 действия и дрилл.\n"
+        anti_repeat_lines += ["", "Усиление: полностью поменяй 2 действия и дрилл."]
 
-    coach_frame = (
-        "Не выдумывай патчи/мету.\n"
-        "Запрещено: читы/хаки/обход античита.\n"
-        f"Игра: {GAME_KB[game]['name']}.\n"
-        f"ФОКУС ДНЯ: {focus[0]} — {focus[1]}.\n"
-        f"{micro}\n"
-        + (facts_line + "\n" if facts_line else "")
-        + (notes_line + "\n" if notes_line else "")
-        + (kb_hint + "\n" if kb_hint else "")
-        "Важно: в '✅ Что делать' ровно 2 строки: 'Сейчас — ...' и 'Дальше — ...'.\n"
-    )
+    coach_frame_lines = [
+        "Не выдумывай патчи/мету.",
+        "Запрещено: читы/хаки/обход античита.",
+        f"Игра: {GAME_KB[game]['name']}.",
+        f"ФОКУС ДНЯ: {focus[0]} — {focus[1]}.",
+        micro,
+    ]
+    if facts_line:
+        coach_frame_lines.append(facts_line)
+    if notes_line:
+        coach_frame_lines.append(notes_line)
+    if kb_hint:
+        coach_frame_lines.append(kb_hint)
+
+    coach_frame_lines.append("Важно: в '✅ Что делать' ровно 2 строки: 'Сейчас — ...' и 'Дальше — ...'.")
+
+    coach_frame = "\n".join([x for x in coach_frame_lines if x]).strip()
+    anti_repeat = "\n".join([x for x in anti_repeat_lines if x is not None]).strip()
 
     messages: List[Dict[str, str]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -967,6 +1100,7 @@ def build_messages(chat_id: int, user_text: str, regen: bool = False) -> List[Di
     messages.append({"role": "user", "content": f"[GAME={game}] {user_text}"})
     return messages
 
+
 def ai_off_reply(chat_id: int, user_text: str) -> str:
     game = resolve_game(chat_id, user_text)
     micro = random.choice(MICRO_CHALLENGES)
@@ -981,6 +1115,7 @@ def ai_off_reply(chat_id: int, user_text: str) -> str:
         "😈 Панчик/мотивация\n"
         "Ключ — это ускорение. Но привычка — это сила. 😈"
     )
+
 
 def openai_reply(chat_id: int, user_text: str) -> str:
     p = ensure_profile(chat_id)
@@ -1015,7 +1150,7 @@ def openai_reply(chat_id: int, user_text: str) -> str:
         return ai_off_reply(chat_id, user_text)
 
     messages = build_messages(chat_id, user_text, regen=False)
-    max_out = 820 if p.get("verbosity") == "talkative" else 600
+    max_out = 900 if p.get("verbosity") == "talkative" else 650
 
     last = p.get("last_answer", "")
     for attempt in range(2):
@@ -1045,6 +1180,7 @@ def load_offset() -> int:
     except Exception:
         pass
     return 0
+
 
 def save_offset(offset: int) -> None:
     try:
@@ -1101,7 +1237,7 @@ def handle_message(chat_id: int, text: str) -> None:
             return
 
         if t.startswith("/kb_search"):
-            q = t[len("/kb_search"):].strip()
+            q = t[len("/kb_search") :].strip()
             game = resolve_game(chat_id, t)
             res = kb_search(q, game=game, limit=7)
             if not res:
@@ -1115,7 +1251,7 @@ def handle_message(chat_id: int, text: str) -> None:
             return
 
         if t.startswith("/kb_show"):
-            art_id = t[len("/kb_show"):].strip()
+            art_id = t[len("/kb_show") :].strip()
             a = kb_get(art_id)
             if not a:
                 send_message(chat_id, "Не нашёл такой id. Сначала: /kb_search <слово>", reply_markup=kb_main(chat_id))
@@ -1153,6 +1289,7 @@ def handle_message(chat_id: int, text: str) -> None:
 
     finally:
         lock.release()
+
 
 def handle_callback(cb: Dict[str, Any]) -> None:
     cb_id = cb.get("id")
@@ -1224,9 +1361,12 @@ def handle_callback(cb: Dict[str, Any]) -> None:
         elif data == "action:kb":
             edit_message(chat_id, message_id, "📚 Статьи: что делаем?", reply_markup=kb_kb(chat_id))
         elif data == "kb:help":
-            edit_message(chat_id, message_id,
-                         "🔎 Поиск статей:\n/kb_search <слово>\nОткрыть:\n/kb_show <id>",
-                         reply_markup=kb_kb(chat_id))
+            edit_message(
+                chat_id,
+                message_id,
+                "🔎 Поиск статей:\n/kb_search <слово>\nОткрыть:\n/kb_show <id>",
+                reply_markup=kb_kb(chat_id),
+            )
         elif data == "kb:top":
             g = resolve_game(chat_id, "")
             lst = [a for a in ARTICLES if (a.get("game") == g and (a.get("lang", "ru") == "ru"))][:7]
@@ -1257,7 +1397,6 @@ def handle_callback(cb: Dict[str, Any]) -> None:
 def run_telegram_bot_once() -> None:
     tg_getme_check_forever()
     if not TELEGRAM_BOT_TOKEN:
-        # токена нет — Telegram не стартуем, но процесс живёт (healthz)
         return
 
     delete_webhook_on_start()
@@ -1320,11 +1459,11 @@ def run_telegram_bot_once() -> None:
             log.warning("Loop error: %r", e)
             time.sleep(2)
 
+
 def run_telegram_bot_forever() -> None:
     while True:
         try:
             run_telegram_bot_once()
-            # если токена нет — не спамим CPU
             if not TELEGRAM_BOT_TOKEN:
                 time.sleep(30)
         except Exception:
@@ -1338,16 +1477,19 @@ def run_telegram_bot_forever() -> None:
 class HealthHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
+
     def _ok(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
+
     def do_HEAD(self):
         if self.path in ("/", "/healthz"):
             self._ok()
         else:
             self.send_response(404)
             self.end_headers()
+
     def do_GET(self):
         if self.path in ("/", "/healthz", "/"):
             self._ok()
@@ -1355,6 +1497,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
+
 
 def run_http_server() -> None:
     port = int(os.environ.get("PORT", "10000"))
@@ -1373,14 +1516,11 @@ if __name__ == "__main__":
         stop_autosave = threading.Event()
         threading.Thread(target=autosave_loop, args=(stop_autosave, 60), daemon=True).start()
 
-        # Telegram loop in daemon thread
         threading.Thread(target=run_telegram_bot_forever, daemon=True).start()
 
-        # Keep process alive (Render health checks)
         run_http_server()
 
     except Exception:
         log.error("FATAL STARTUP ERROR:\n%s", traceback.format_exc())
-        # Чтобы процесс не умер и логи точно успели улететь в Render
         while True:
             time.sleep(60)
