@@ -1,24 +1,62 @@
+# app/tg.py
 # -*- coding: utf-8 -*-
-import random
+
+import os
 import time
-from typing import Any, Dict, Optional
-
+import random
 import requests
+from typing import Dict, Any, Optional
 
-from app.config import (
-    TELEGRAM_BOT_TOKEN, HTTP_TIMEOUT, TG_LONGPOLL_TIMEOUT, TG_RETRIES,
-    CONFLICT_BACKOFF_MIN, CONFLICT_BACKOFF_MAX, OFFSET_PATH, MAX_TEXT_LEN
-)
 from app.log import log
-from app.handlers import handle_message, handle_callback
+from app import config
 
+# =========================
+# Requests session
+# =========================
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "render-fps-coach-bot/modular-v2"})
 SESSION.mount("https://", requests.adapters.HTTPAdapter(pool_connections=40, pool_maxsize=40))
 
+# Safety defaults (если чего-то нет в config — не падаем)
+HTTP_TIMEOUT = float(getattr(config, "HTTP_TIMEOUT", 25))
+TG_LONGPOLL_TIMEOUT = int(getattr(config, "TG_LONGPOLL_TIMEOUT", 50))
+TG_RETRIES = int(getattr(config, "TG_RETRIES", 6))
+CONFLICT_BACKOFF_MIN = int(getattr(config, "CONFLICT_BACKOFF_MIN", 12))
+CONFLICT_BACKOFF_MAX = int(getattr(config, "CONFLICT_BACKOFF_MAX", 30))
 
+TELEGRAM_BOT_TOKEN = getattr(config, "TELEGRAM_BOT_TOKEN", "").strip()
+OFFSET_PATH = getattr(config, "OFFSET_PATH", os.path.join(getattr(config, "DATA_DIR", "/tmp"), "tg_offset.txt"))
+
+
+# =========================
+# Offset persistence
+# =========================
+def load_offset() -> int:
+    try:
+        if os.path.exists(OFFSET_PATH):
+            with open(OFFSET_PATH, "r", encoding="utf-8") as f:
+                return int((f.read() or "0").strip())
+    except Exception:
+        pass
+    return 0
+
+
+def save_offset(offset: int) -> None:
+    try:
+        tmp = OFFSET_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(str(int(offset)))
+        os.replace(tmp, OFFSET_PATH)
+    except Exception:
+        pass
+
+
+# =========================
+# Telegram low-level
+# =========================
 def _sleep_backoff(i: int) -> None:
     time.sleep((0.6 * (i + 1)) + random.random() * 0.3)
+
 
 def tg_request(method: str, *, params=None, payload=None, is_post: bool = False, retries: int = TG_RETRIES) -> Dict[str, Any]:
     if not TELEGRAM_BOT_TOKEN:
@@ -54,23 +92,34 @@ def tg_request(method: str, *, params=None, payload=None, is_post: bool = False,
 
     raise last or RuntimeError("Telegram request failed")
 
+
+# =========================
+# Public helpers (IMPORTANT for handlers.py)
+# =========================
+MAX_TEXT_LEN = 3900
+
+
 def send_message(chat_id: int, text: str, reply_markup=None) -> Optional[int]:
     text = text or ""
     chunks = [text[i:i + MAX_TEXT_LEN] for i in range(0, len(text), MAX_TEXT_LEN)] or [""]
     last_msg_id = None
+
     for ch in chunks:
         payload = {"chat_id": chat_id, "text": ch}
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         res = tg_request("sendMessage", payload=payload, is_post=True)
         last_msg_id = res.get("result", {}).get("message_id")
+
     return last_msg_id
+
 
 def edit_message(chat_id: int, message_id: int, text: str, reply_markup=None) -> None:
     payload = {"chat_id": chat_id, "message_id": message_id, "text": text}
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
     tg_request("editMessageText", payload=payload, is_post=True)
+
 
 def answer_callback(callback_id: str) -> None:
     try:
@@ -79,17 +128,14 @@ def answer_callback(callback_id: str) -> None:
         pass
 
 
-def delete_webhook_on_start() -> None:
-    try:
-        tg_request("deleteWebhook", payload={"drop_pending_updates": True}, is_post=True, retries=3)
-        log.info("Webhook deleted (drop_pending_updates=true)")
-    except Exception as e:
-        log.warning("Could not delete webhook: %r", e)
-
+# =========================
+# Startup helpers
+# =========================
 def tg_getme_check_forever():
     if not TELEGRAM_BOT_TOKEN:
-        log.error("TELEGRAM_BOT_TOKEN is missing.")
+        log.error("TELEGRAM_BOT_TOKEN is missing (set it in Render Environment).")
         return
+
     while True:
         try:
             data = tg_request("getMe", retries=3)
@@ -100,26 +146,18 @@ def tg_getme_check_forever():
             log.error("Telegram getMe failed (will retry): %r", e)
             time.sleep(5)
 
-def load_offset() -> int:
-    try:
-        import os
-        if os.path.exists(OFFSET_PATH):
-            with open(OFFSET_PATH, "r", encoding="utf-8") as f:
-                return int((f.read() or "0").strip())
-    except Exception:
-        pass
-    return 0
 
-def save_offset(offset: int) -> None:
+def delete_webhook_on_start() -> None:
     try:
-        tmp = OFFSET_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(str(int(offset)))
-        import os
-        os.replace(tmp, OFFSET_PATH)
-    except Exception:
-        pass
+        tg_request("deleteWebhook", payload={"drop_pending_updates": True}, is_post=True, retries=3)
+        log.info("Webhook deleted (drop_pending_updates=true)")
+    except Exception as e:
+        log.warning("Could not delete webhook: %r", e)
 
+
+# =========================
+# Polling loop
+# =========================
 def run_telegram_bot_once() -> None:
     tg_getme_check_forever()
     if not TELEGRAM_BOT_TOKEN:
@@ -130,6 +168,9 @@ def run_telegram_bot_once() -> None:
 
     offset = load_offset()
     last_offset_save = time.time()
+
+    # ВАЖНО: импортируем handlers внутри, чтобы не было циклического импорта
+    from app.handlers import handle_message, handle_callback
 
     while True:
         try:
@@ -163,7 +204,7 @@ def run_telegram_bot_once() -> None:
                 except Exception:
                     log.exception("Message handling error")
                     try:
-                        send_message(chat_id, "Ошибка 😅 Напиши ещё раз коротко.")
+                        send_message(chat_id, "Ошибка 😅 Напиши ещё раз коротко.", reply_markup=None)
                     except Exception:
                         pass
 
@@ -183,6 +224,7 @@ def run_telegram_bot_once() -> None:
         except Exception as e:
             log.warning("Loop error: %r", e)
             time.sleep(2)
+
 
 def run_telegram_bot_forever() -> None:
     while True:
