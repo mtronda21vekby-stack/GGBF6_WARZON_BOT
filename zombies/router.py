@@ -3,7 +3,7 @@
 from typing import Dict, Any, Optional, List, Tuple
 
 from zombies import ashes_of_damned as ashes
-from zombies import dark_ritual as ritual
+from zombies import astra_malorum as ritual
 
 
 # Карты, которые доступны
