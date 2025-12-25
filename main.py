@@ -4,7 +4,7 @@ FPS Coach Bot — v1.0_pro_hardened (Render + long polling + memory)
 
 Усиления:
 - Никогда не падает "молча": печатает traceback + стартовую диагностику.
-- Не завершает процесс при проблемах Telegram (токен/сеть) — ретраи.
+- Если нет TELEGRAM_BOT_TOKEN — не крашим процесс (healthz жив), пишем ошибку в лог.
 - /healthz всегда живой (HTTP сервер в main-thread), Telegram в daemon-thread.
 - getMe self-check на старте, чтобы сразу увидеть "Unauthorized" и т.п.
 - OpenAI опционален: нет ключа/пакета -> AI OFF, бот живёт.
@@ -514,7 +514,6 @@ def extract_facts(chat_id: int, text: str) -> None:
     if m:
         facts["fov"] = m.group(2)
 
-
 def throttle(chat_id: int) -> bool:
     now = time.time()
     last = LAST_MSG_TS.get(chat_id, 0.0)
@@ -582,6 +581,9 @@ def _sleep_backoff(i: int) -> None:
     time.sleep((0.6 * (i + 1)) + random.random() * 0.25)
 
 def tg_request(method: str, *, params=None, payload=None, is_post: bool = False, retries: int = TG_RETRIES) -> Dict[str, Any]:
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("Missing ENV: TELEGRAM_BOT_TOKEN")
+
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
     last: Optional[Exception] = None
 
@@ -1254,6 +1256,10 @@ def handle_callback(cb: Dict[str, Any]) -> None:
 # =========================
 def run_telegram_bot_once() -> None:
     tg_getme_check_forever()
+    if not TELEGRAM_BOT_TOKEN:
+        # токена нет — Telegram не стартуем, но процесс живёт (healthz)
+        return
+
     delete_webhook_on_start()
     log.info("Telegram bot started (long polling)")
 
@@ -1291,7 +1297,10 @@ def run_telegram_bot_once() -> None:
                     handle_message(chat_id, text)
                 except Exception:
                     log.exception("Message handling error")
-                    send_message(chat_id, "Ошибка 😅 Попробуй ещё раз.", reply_markup=kb_main(chat_id))
+                    try:
+                        send_message(chat_id, "Ошибка 😅 Попробуй ещё раз.", reply_markup=kb_main(chat_id))
+                    except Exception:
+                        pass
 
             if time.time() - last_offset_save >= 5:
                 save_offset(offset)
@@ -1315,6 +1324,9 @@ def run_telegram_bot_forever() -> None:
     while True:
         try:
             run_telegram_bot_once()
+            # если токена нет — не спамим CPU
+            if not TELEGRAM_BOT_TOKEN:
+                time.sleep(30)
         except Exception:
             log.exception("Polling crashed — restarting in 3 seconds")
             time.sleep(3)
@@ -1369,6 +1381,6 @@ if __name__ == "__main__":
 
     except Exception:
         log.error("FATAL STARTUP ERROR:\n%s", traceback.format_exc())
-        # чтобы Render не "молчал" — и чтобы логи точно успели дойти
+        # Чтобы процесс не умер и логи точно успели улететь в Render
         while True:
             time.sleep(60)
