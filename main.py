@@ -2,14 +2,7 @@
 """
 FPS Coach Bot — clean+smart v2 (Render + long polling + memory + dialog)
 
-Фичи:
-- COACH/CHAT режим: бот реально общается, а не только шаблон.
-- Root-cause (почему умер) + статистика причин.
-- Daily Challenge с кнопками (done/fail) и автогенерацией на день.
-- Tilt detector (анти-тильт ответы).
-- Красивое упорядоченное меню (страницы).
-- Render friendly: /healthz всегда жив, Telegram в daemon-thread, ретраи, getMe чек.
-- OpenAI optional: нет ключа/пакета => AI OFF, бот живёт (ответы по базе/логике).
++ Zombies отдельным модулем и отдельной кнопкой 🧟
 
 ENV:
 TELEGRAM_BOT_TOKEN=...
@@ -29,9 +22,12 @@ import traceback
 import sys
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 
 import requests
+
+# Zombies module
+from zombies.ashes_of_damned import MAP_NAME as ZMAP_NAME, list_buttons as z_list_buttons, get_section as z_get_section
 
 # OpenAI optional
 try:
@@ -186,7 +182,6 @@ VERBOSITY_HINT = {
     "normal": "Длина: нормально, плотная польза.",
     "talkative": "Длина: подробнее, но без занудства.",
 }
-MODES = ("coach", "chat")  # coach=структурный разбор, chat=живой диалог
 
 SYSTEM_COACH = (
     "Ты FPS-коуч. Пишешь по-русски. Без токсичности.\n"
@@ -211,7 +206,7 @@ THINKING_LINES = ["🧠 Думаю…", "⌛ Секунду…", "🎮 Окей,
 
 
 # =========================
-# Simple detectors (tilt / cheat / smalltalk)
+# Detectors
 # =========================
 _SMALLTALK_RX = re.compile(r"^\s*(привет|здаров|здравствуйте|йо|ку|qq|hello|hi|хай)\s*[!.\-–—]*\s*$", re.I)
 _TILT_RX = re.compile(r"(я\s+говно|я\s+дно|не\s+прёт|не\s+идёт|вечно\s+не\s+везёт|тильт|бесит|ненавижу|заеб|сука|бля)", re.I)
@@ -239,7 +234,7 @@ def detect_game(text: str) -> Optional[str]:
 
 
 # =========================
-# Root-cause classifier (reliable heuristic)
+# Root-cause classifier
 # =========================
 CAUSES = ("info", "timing", "position", "discipline", "mechanics")
 CAUSE_LABEL = {
@@ -253,24 +248,18 @@ CAUSE_LABEL = {
 def classify_cause(text: str) -> str:
     t = (text or "").lower()
     score = {c: 0 for c in CAUSES}
-    # info
     for k in ["не слыш", "звук", "шаг", "радар", "пинг", "инфо", "увидел поздно"]:
         if k in t: score["info"] += 2
-    # timing
     for k in ["тайм", "поздно", "рано", "репик", "пикнул", "вышел", "задержал"]:
         if k in t: score["timing"] += 2
-    # position
     for k in ["пози", "угол", "высот", "открыт", "прострел", "линия", "укрыт"]:
         if k in t: score["position"] += 2
-    # discipline
     for k in ["жадн", "ресурс", "плейт", "пласти", "хил", "перезар", "вдвоём", "в соло", "погнал"]:
         if k in t: score["discipline"] += 2
-    # mechanics
     for k in ["аим", "отдач", "сенс", "фов", "перел", "дрейф", "не попал", "мимо"]:
         if k in t: score["mechanics"] += 2
 
     best = max(score.items(), key=lambda kv: kv[1])[0]
-    # если вообще ничего — считаем дисциплину/позицию по умолчанию
     if score[best] == 0:
         return "position"
     return best
@@ -281,8 +270,8 @@ def classify_cause(text: str) -> str:
 # =========================
 USER_PROFILE: Dict[int, Dict[str, Any]] = {}
 USER_MEMORY: Dict[int, List[Dict[str, str]]] = {}
-USER_STATS: Dict[int, Dict[str, int]] = {}  # причины смерти/ошибок
-USER_DAILY: Dict[int, Dict[str, Any]] = {}  # daily challenge
+USER_STATS: Dict[int, Dict[str, int]] = {}
+USER_DAILY: Dict[int, Dict[str, Any]] = {}
 LAST_MSG_TS: Dict[int, float] = {}
 
 STATE_GUARD = threading.Lock()
@@ -304,7 +293,7 @@ def ensure_profile(chat_id: int) -> Dict[str, Any]:
         "verbosity": "normal",
         "memory": "on",
         "ui": "show",
-        "mode": "chat",  # по умолчанию живой диалог
+        "mode": "chat",
         "last_question": "",
         "last_answer": "",
         "page": "main",
@@ -495,6 +484,14 @@ def answer_callback(callback_id: str) -> None:
 def _badge(ok: bool) -> str:
     return "✅" if ok else "🚫"
 
+def menu_zombies(chat_id: int):
+    # Кнопки разделов карты
+    rows = []
+    for sec_id, title in z_list_buttons():
+        rows.append([{"text": title, "callback_data": f"z:open:{sec_id}"}])
+    rows.append([{"text": "⬅️ Back", "callback_data": "nav:main"}])
+    return {"inline_keyboard": rows}
+
 def menu_main(chat_id: int):
     p = ensure_profile(chat_id)
     if p.get("ui") == "hide":
@@ -527,7 +524,7 @@ def menu_main(chat_id: int):
             [
                 {"text": "🎯 Daily", "callback_data": "action:daily"},
                 {"text": "📼 VOD", "callback_data": "action:vod"},
-                {"text": "❓ Help", "callback_data": "action:help"},
+                {"text": "🧟 Zombies", "callback_data": "nav:zombies"},
             ],
             [
                 {"text": "🧽 Clear memory", "callback_data": "action:clear_memory"},
@@ -618,6 +615,7 @@ def help_text() -> str:
         "/start /menu\n"
         "/profile\n"
         "/daily\n"
+        "/zombies\n"
         "/reset\n"
     )
 
@@ -668,7 +666,6 @@ def profile_text(chat_id: int) -> str:
 def _openai_chat(messages: List[Dict[str, str]], max_tokens: int) -> str:
     if not openai_client:
         return ""
-    # openai python versions may differ in param name
     try:
         resp = openai_client.chat.completions.create(
             model=OPENAI_MODEL,
@@ -691,7 +688,6 @@ def _openai_chat(messages: List[Dict[str, str]], max_tokens: int) -> str:
 
 def enforce_4_blocks(text: str, fallback_cause: str) -> str:
     t = (text or "").replace("\r", "").strip()
-    # если уже 4 эмодзи-блока есть — нормализуем заголовки
     needed = ["🎯", "✅", "🧪", "😈"]
     if all(x in t for x in needed):
         t = re.sub(r"\n{3,}", "\n\n", t).strip()
@@ -701,7 +697,6 @@ def enforce_4_blocks(text: str, fallback_cause: str) -> str:
         t = re.sub(r"(?im)^\s*😈.*$", "😈 Панчик/мотивация", t)
         return t
 
-    # fallback
     return (
         "🎯 Диагноз\n"
         f"Похоже, главная причина — {CAUSE_LABEL.get(fallback_cause)}.\n\n"
@@ -740,7 +735,6 @@ def build_messages(chat_id: int, user_text: str, mode: str, cause: str) -> List[
     if p.get("memory") == "on":
         msgs.extend(USER_MEMORY.get(chat_id, []))
 
-    # анти-повтор (чтобы не было копипасты)
     last_ans = (p.get("last_answer") or "")[:800]
     if last_ans:
         msgs.append({"role": "system", "content": "Не повторяй прошлый ответ, меняй формулировки.\nПрошлый ответ:\n" + last_ans})
@@ -763,7 +757,6 @@ def ai_off_chat(chat_id: int, user_text: str) -> str:
         f"Ок, понял. Похоже, причина: {st}.\n"
         "Скажи одну сцену: где был, кто первый увидел, на чём умер — и я дам точнее."
     )
-
 
 def coach_reply(chat_id: int, user_text: str) -> str:
     cause = classify_cause(user_text)
@@ -790,12 +783,10 @@ def coach_reply(chat_id: int, user_text: str) -> str:
     out = _openai_chat(msgs, max_out)
     return enforce_4_blocks(out, fallback_cause=cause)
 
-
 def chat_reply(chat_id: int, user_text: str) -> str:
     cause = classify_cause(user_text)
     stat_inc(chat_id, cause)
 
-    # tilt handling even with AI
     if is_tilt(user_text) and not openai_client:
         return ai_off_chat(chat_id, user_text)
 
@@ -805,7 +796,6 @@ def chat_reply(chat_id: int, user_text: str) -> str:
     msgs = build_messages(chat_id, user_text, mode="chat", cause=cause)
     max_out = 420 if ensure_profile(chat_id).get("verbosity") == "short" else 650
     out = _openai_chat(msgs, max_out)
-    # если модель вдруг ушла в простыню — чуть подрежем
     return (out or "").strip()[:3500] or ai_off_chat(chat_id, user_text)
 
 
@@ -847,7 +837,6 @@ def handle_message(chat_id: int, text: str) -> None:
         if not t:
             return
 
-        # commands
         if t.startswith("/start") or t.startswith("/menu"):
             ensure_daily(chat_id)
             send_message(chat_id, main_text(chat_id), reply_markup=menu_main(chat_id))
@@ -871,6 +860,10 @@ def handle_message(chat_id: int, text: str) -> None:
             send_message(chat_id, "🎯 Daily сегодня:\n• " + d["text"], reply_markup=menu_daily(chat_id))
             return
 
+        if t.startswith("/zombies"):
+            send_message(chat_id, f"🧟 Zombies: {ZMAP_NAME}\nВыбери раздел 👇", reply_markup=menu_zombies(chat_id))
+            return
+
         if t.startswith("/reset"):
             USER_PROFILE.pop(chat_id, None)
             USER_MEMORY.pop(chat_id, None)
@@ -882,28 +875,21 @@ def handle_message(chat_id: int, text: str) -> None:
             send_message(chat_id, "🧨 Reset: профиль/память/статы/дейли очищены.", reply_markup=menu_main(chat_id))
             return
 
-        # remember user text
         update_memory(chat_id, "user", t)
 
-        # reply
         tmp_id = send_message(chat_id, random.choice(THINKING_LINES), reply_markup=None)
 
         mode = p.get("mode", "chat")
         try:
-            if mode == "coach":
-                reply = coach_reply(chat_id, t)
-            else:
-                reply = chat_reply(chat_id, t)
+            reply = coach_reply(chat_id, t) if mode == "coach" else chat_reply(chat_id, t)
         except Exception:
             log.exception("Reply generation failed")
             reply = "Упс 😅 Что-то сломалось. Напиши ещё раз коротко: где умер и почему думаешь?"
 
-        # remember assistant
         update_memory(chat_id, "assistant", reply)
         p["last_answer"] = reply[:2000]
         save_state()
 
-        # send final
         if tmp_id:
             try:
                 edit_message(chat_id, tmp_id, reply, reply_markup=menu_main(chat_id))
@@ -929,9 +915,19 @@ def handle_callback(cb: Dict[str, Any]) -> None:
     try:
         p = ensure_profile(chat_id)
 
-        # navigation
         if data == "nav:main":
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
+
+        elif data == "nav:zombies":
+            edit_message(chat_id, message_id, f"🧟 Zombies: {ZMAP_NAME}\nВыбери раздел 👇", reply_markup=menu_zombies(chat_id))
+
+        elif data.startswith("z:open:"):
+            sec_id = data.split(":", 2)[2]
+            sec = z_get_section(sec_id)
+            if not sec:
+                edit_message(chat_id, message_id, "Раздел не найден 😅", reply_markup=menu_zombies(chat_id))
+            else:
+                edit_message(chat_id, message_id, f"{sec['title']}\n\n{sec['text']}", reply_markup=menu_zombies(chat_id))
 
         elif data == "nav:game":
             edit_message(chat_id, message_id, "🎮 Выбери игру:", reply_markup=menu_game(chat_id))
@@ -948,7 +944,6 @@ def handle_callback(cb: Dict[str, Any]) -> None:
         elif data == "nav:settings":
             edit_message(chat_id, message_id, "⚙️ Settings:", reply_markup=menu_settings(chat_id))
 
-        # toggles
         elif data == "toggle:memory":
             p["memory"] = "off" if p.get("memory", "on") == "on" else "on"
             if p["memory"] == "off":
@@ -966,7 +961,6 @@ def handle_callback(cb: Dict[str, Any]) -> None:
             save_state()
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
 
-        # set values
         elif data.startswith("set:game:"):
             g = data.split(":", 2)[2]
             if g in ("auto",) + GAMES:
@@ -988,7 +982,6 @@ def handle_callback(cb: Dict[str, Any]) -> None:
                 save_state()
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
 
-        # actions
         elif data == "action:help":
             edit_message(chat_id, message_id, help_text(), reply_markup=menu_main(chat_id))
 
