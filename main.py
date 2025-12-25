@@ -5,8 +5,7 @@ import threading
 import time
 import traceback
 
-from app.log import log
-from app.config import startup_diagnostics
+from app.log import log, startup_diagnostics
 from app.state import load_state, autosave_loop
 from app.tg import run_telegram_bot_forever
 from app.health import run_http_server
