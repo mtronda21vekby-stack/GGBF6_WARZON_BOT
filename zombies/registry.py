@@ -1,9 +1,9 @@
 # zombies/registry.py
 # -*- coding: utf-8 -*-
 
-from typing import Dict, Any, List, Optional
 import importlib
 import pkgutil
+from typing import List, Any
 
 def load_maps() -> List[Any]:
     import zombies
