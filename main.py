@@ -5,7 +5,8 @@ import threading
 import time
 import traceback
 
-from app.log import log, startup_diagnostics
+from app.log import log
+from app.log import startup_diagnostics
 from app.state import load_state, autosave_loop
 from app.tg import run_telegram_bot_forever
 from app.health import run_http_server
@@ -17,17 +18,9 @@ if __name__ == "__main__":
         load_state()
 
         stop_autosave = threading.Event()
-        threading.Thread(
-            target=autosave_loop,
-            args=(stop_autosave, 60),
-            daemon=True
-        ).start()
+        threading.Thread(target=autosave_loop, args=(stop_autosave, 60), daemon=True).start()
 
-        threading.Thread(
-            target=run_telegram_bot_forever,
-            daemon=True
-        ).start()
-
+        threading.Thread(target=run_telegram_bot_forever, daemon=True).start()
         run_http_server()
 
     except Exception:
