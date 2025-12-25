@@ -3,6 +3,7 @@
 FPS Coach Bot — clean+smart v2 (Render + long polling + memory + dialog)
 
 + Zombies: 2 карты (выбор карты -> выбор раздела) 🧟
++ Zombies: поиск по тексту (если ты в меню Zombies — любое сообщение ищет по разделам)
 + Всё меню на русском (кроме коротких названий игр WZ/BF6/BO7 — это ок)
 
 ENV:
@@ -27,7 +28,7 @@ from typing import Dict, List, Any, Optional
 
 import requests
 
-# ✅ Zombies router (2 карты)
+# ✅ Zombies router (2 карты + поиск)
 from zombies import router as zombies_router
 
 # OpenAI optional
@@ -295,7 +296,8 @@ def ensure_profile(chat_id: int) -> Dict[str, Any]:
         "mode": "chat",
         "last_question": "",
         "last_answer": "",
-        "page": "main",
+        "page": "main",        # main | zombies
+        "zmb_map": "ashes",     # выбранная карта зомби
     })
 
 def load_state() -> None:
@@ -831,7 +833,16 @@ def handle_message(chat_id: int, text: str) -> None:
         if not t:
             return
 
+        # ✅ Если мы в Zombies-режиме — любой НЕ-командный текст = поиск по текущей карте
+        if not t.startswith("/") and p.get("page") == "zombies":
+            z = zombies_router.handle_text(t, current_map=p.get("zmb_map", "ashes"))
+            if z is not None:
+                # возвращаемся в зомби-меню, не трогаем память/ИИ
+                send_message(chat_id, z["text"], reply_markup=z.get("reply_markup"))
+                return
+
         if t.startswith("/start") or t.startswith("/menu"):
+            p["page"] = "main"
             ensure_daily(chat_id)
             send_message(chat_id, main_text(chat_id), reply_markup=menu_main(chat_id))
             save_state()
@@ -854,8 +865,10 @@ def handle_message(chat_id: int, text: str) -> None:
             send_message(chat_id, "🎯 Задание дня:\n• " + d["text"], reply_markup=menu_daily(chat_id))
             return
 
-        # ✅ Zombies: открываем выбор карты
+        # ✅ Zombies: открываем выбор карты + ставим page=zombies
         if t.startswith("/zombies"):
+            p["page"] = "zombies"
+            save_state()
             z = zombies_router.handle_callback("zmb:home")
             send_message(chat_id, z["text"], reply_markup=z.get("reply_markup"))
             return
@@ -909,15 +922,23 @@ def handle_callback(cb: Dict[str, Any]) -> None:
         return
 
     try:
-        _ = ensure_profile(chat_id)
+        p = ensure_profile(chat_id)
 
         # ✅ Zombies router перехватывает ВСЕ zmb:* кнопки
         z = zombies_router.handle_callback(data)
         if z is not None:
+            # применяем изменения профиля, если router их вернул
+            sp = z.get("set_profile") or {}
+            if isinstance(sp, dict) and sp:
+                for k, v in sp.items():
+                    p[k] = v
+                save_state()
             edit_message(chat_id, message_id, z["text"], reply_markup=z.get("reply_markup"))
             return
 
         if data == "nav:main":
+            p["page"] = "main"
+            save_state()
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
 
         elif data == "nav:game":
@@ -936,7 +957,6 @@ def handle_callback(cb: Dict[str, Any]) -> None:
             edit_message(chat_id, message_id, "⚙️ Настройки:", reply_markup=menu_settings(chat_id))
 
         elif data == "toggle:memory":
-            p = ensure_profile(chat_id)
             p["memory"] = "off" if p.get("memory", "on") == "on" else "on"
             if p["memory"] == "off":
                 clear_memory(chat_id)
@@ -944,19 +964,16 @@ def handle_callback(cb: Dict[str, Any]) -> None:
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
 
         elif data == "toggle:mode":
-            p = ensure_profile(chat_id)
             p["mode"] = "coach" if p.get("mode", "chat") == "chat" else "chat"
             save_state()
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
 
         elif data == "toggle:ui":
-            p = ensure_profile(chat_id)
             p["ui"] = "hide" if p.get("ui", "show") == "show" else "show"
             save_state()
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
 
         elif data.startswith("set:game:"):
-            p = ensure_profile(chat_id)
             g = data.split(":", 2)[2]
             if g in ("auto",) + GAMES:
                 p["game"] = g
@@ -964,7 +981,6 @@ def handle_callback(cb: Dict[str, Any]) -> None:
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
 
         elif data.startswith("set:persona:"):
-            p = ensure_profile(chat_id)
             v = data.split(":", 2)[2]
             if v in PERSONA_HINT:
                 p["persona"] = v
@@ -972,7 +988,6 @@ def handle_callback(cb: Dict[str, Any]) -> None:
             edit_message(chat_id, message_id, main_text(chat_id), reply_markup=menu_main(chat_id))
 
         elif data.startswith("set:talk:"):
-            p = ensure_profile(chat_id)
             v = data.split(":", 2)[2]
             if v in VERBOSITY_HINT:
                 p["verbosity"] = v
