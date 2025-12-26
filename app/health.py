@@ -1,47 +1,32 @@
 # -*- coding: utf-8 -*-
 import os
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Render ждёт открытый порт из ENV PORT.
-# Этот health-сервер нужен ТОЛЬКО чтобы деплой не падал по "no open ports detected".
 
-class _Handler(BaseHTTPRequestHandler):
+class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path in ("/", "/health", "/healthz"):
-            body = b"OK"
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
-
-        body = b"Not Found"
-        self.send_response(404)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(b"OK")
 
-    # чтобы не спамило в логи
     def log_message(self, format, *args):
-        return
+        return  # отключаем стандартный лог
 
 
-def start_health(log=None) -> None:
-    host = "0.0.0.0"
-    port = int(os.getenv("PORT", "10000"))
+def start_health(log=None):
+    port = int(os.environ.get("PORT", "10000"))
 
-    def _run():
+    def run():
         try:
-            httpd = HTTPServer((host, port), _Handler)
+            server = HTTPServer(("0.0.0.0", port), HealthHandler)
             if log:
-                log.info("Health server listening on %s:%s", host, port)
-            httpd.serve_forever()
+                log.info(f"Health server started on port {port}")
+            server.serve_forever()
         except Exception as e:
             if log:
-                log.warning("Health server failed: %r", e)
+                log.error(f"Health server failed: {e}")
 
-    t = threading.Thread(target=_run, name="health-server", daemon=True)
-    t.start()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
