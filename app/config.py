@@ -1,28 +1,45 @@
-# app/config.py
-# -*- coding: utf-8 -*-
-
 import os
+from dataclasses import dataclass
+from typing import List
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+def _must(name: str) -> str:
+    v = os.getenv(name, "").strip()
+    if not v:
+        raise RuntimeError(f"Missing env var: {name}")
+    return v
 
-DATA_DIR = os.getenv("DATA_DIR", "/tmp").strip()
-STATE_PATH = os.path.join(DATA_DIR, "fps_coach_state.json")
-OFFSET_PATH = os.path.join(DATA_DIR, "tg_offset.txt")
 
-HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "25"))
-TG_LONGPOLL_TIMEOUT = int(os.getenv("TG_LONGPOLL_TIMEOUT", "50"))
-TG_RETRIES = int(os.getenv("TG_RETRIES", "6"))
+def _int_list(name: str) -> List[int]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return []
+    out: List[int] = []
+    for p in raw.split(","):
+        p = p.strip()
+        if not p:
+            continue
+        try:
+            out.append(int(p))
+        except ValueError:
+            pass
+    return out
 
-CONFLICT_BACKOFF_MIN = int(os.getenv("CONFLICT_BACKOFF_MIN", "12"))
-CONFLICT_BACKOFF_MAX = int(os.getenv("CONFLICT_BACKOFF_MAX", "30"))
 
-MIN_SECONDS_BETWEEN_MSG = float(os.getenv("MIN_SECONDS_BETWEEN_MSG", "0.25"))
-MEMORY_MAX_TURNS = int(os.getenv("MEMORY_MAX_TURNS", "10"))
+@dataclass(frozen=True)
+class Settings:
+    telegram_token: str
+    openai_api_key: str
+    openai_model: str
+    data_dir: str
+    admin_ids: List[int]
 
-MAX_TEXT_LEN = 3900
 
-os.makedirs(DATA_DIR, exist_ok=True)
+def load_settings() -> Settings:
+    return Settings(
+        telegram_token=_must("TELEGRAM_BOT_TOKEN"),
+        openai_api_key=_must("OPENAI_API_KEY"),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
+        data_dir=os.getenv("DATA_DIR", "./data").strip() or "./data",
+        admin_ids=_int_list("ADMIN_IDS"),
+    )
