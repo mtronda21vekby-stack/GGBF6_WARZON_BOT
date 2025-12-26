@@ -6,6 +6,42 @@ PERSONA_HINT = {"spicy": "Дерзко 😈", "chill": "Спокойно 😌", 
 VERB_HINT = {"short": "Коротко", "normal": "Норм", "talkative": "Подробно"}
 GAME_HINT = {"auto": "AUTO", "warzone": "Warzone", "bf6": "BF6", "bo7": "BO7"}
 
+# ===== Bottom (reply keyboard) labels =====
+BTN_MENU = "📋 Меню"
+BTN_SETTINGS = "⚙️ Настройки"
+BTN_GAME = "🎮 Игра"
+BTN_PERSONA = "🎭 Стиль"
+BTN_TALK = "🗣 Ответ"
+BTN_ZOMBIES = "🧟 Zombies"
+BTN_DAILY = "🎯 Задание дня"
+BTN_VOD = "🎬 VOD"
+BTN_PROFILE = "👤 Профиль"
+BTN_STATUS = "📡 Статус"
+BTN_HELP = "🆘 Помощь"
+BTN_CLEAR_MEM = "🧽 Очистить память"
+BTN_RESET = "🧨 Сброс"
+
+def bottom_keyboard(chat_id: int) -> Dict[str, Any]:
+    """
+    Быстрые кнопки снизу (ReplyKeyboardMarkup).
+    Inline-клавиатуры под сообщениями это НЕ ломает:
+    они остаются на тех сообщениях, где были прикреплены.
+    """
+    # можно в будущем делать разные раскладки под игры/режимы
+    ensure_profile(chat_id)
+    return {
+        "keyboard": [
+            [{"text": BTN_MENU}, {"text": BTN_SETTINGS}],
+            [{"text": BTN_GAME}, {"text": BTN_PERSONA}, {"text": BTN_TALK}],
+            [{"text": BTN_ZOMBIES}, {"text": BTN_DAILY}, {"text": BTN_VOD}],
+            [{"text": BTN_PROFILE}, {"text": BTN_STATUS}, {"text": BTN_HELP}],
+            [{"text": BTN_CLEAR_MEM}, {"text": BTN_RESET}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "input_field_placeholder": "Опиши ситуацию/смерть…",
+    }
+
 def _badge(ok: bool) -> str:
     return "✅" if ok else "❌"
 
