@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 
-# ====== Warzone ======
-
 WZ_PAD = (
     "🎮 Warzone — Controller (PS5/Xbox)\n\n"
     "✅ Base (универсально, топ-уровень)\n"
@@ -31,54 +29,39 @@ WZ_MNK = (
     "• 5 мин: флик 1 выстрел → контроль отдачи\n"
 )
 
-# ====== BO7 ======
-
 BO7_PAD = (
     "🎮 BO7 — Controller (PS5/Xbox)\n\n"
-    "✅ Base\n"
     "• Sens: 6–8\n"
     "• ADS: 0.80–0.95\n"
     "• Deadzone MIN: 0.03–0.07\n"
     "• Aim curve: Dynamic/Standard (что стабильнее)\n"
-    "• FOV: 100–115\n\n"
-    "🎯 Подсказка:\n"
-    "Если много мажешь в ближке — ADS -0.05. Если не доворачиваешь — Sens +1.\n"
+    "• FOV: 100–115\n"
 )
 
 BO7_MNK = (
-    "🖱 BO7 — Mouse & Keyboard (PC)\n\n"
-    "✅ Base\n"
+    "🖱 BO7 — Mouse & Keyboard\n\n"
     "• DPI 800 | sens 4–7\n"
     "• ADS 0.8–1.0\n"
     "• smoothing OFF\n"
     "• FOV 100–115\n"
 )
 
-# ====== BF6 (EN per your request) ======
-
 BF6_PAD_EN = (
     "🎮 BF6 — Controller (EN)\n\n"
-    "Core:\n"
-    "• Stick Deadzone: as low as possible without drift\n"
-    "• Response Curve: Linear / Default (pick what feels consistent)\n"
-    "• Sensitivity: medium, ADS slightly lower\n"
-    "• Aim Assist: ON (default)\n"
-    "• FOV: 90–105 (console comfort) or higher if you track well\n"
-    "• Motion Blur: OFF\n\n"
-    "Rule:\n"
-    "• After first contact: reposition (don’t re-peek the same angle)\n"
+    "• Sensitivity: Medium (start ~ 35–55)\n"
+    "• ADS Sensitivity: Lower than Hipfire\n"
+    "• Deadzone: As low as possible without drift\n"
+    "• FOV: High but comfortable\n"
+    "• After first contact: reposition (don’t re-peek same angle)\n"
 )
 
 BF6_MNK_EN = (
-    "🖱 BF6 — Mouse & Keyboard (PC) (EN)\n\n"
-    "Core:\n"
-    "• DPI: 800 or 1600\n"
-    "• In-game sens: keep eDPI reasonable (start ~2400–4800)\n"
-    "• ADS multiplier: 0.85–1.00\n"
-    "• FOV: 100–110 (start)\n"
+    "🖱 BF6 — Mouse & Keyboard (EN)\n\n"
+    "• DPI: 800\n"
+    "• In-game sens: medium (adjust for consistent tracking)\n"
+    "• ADS multiplier: 0.8–1.0\n"
     "• Raw input: ON (if available)\n"
     "• Mouse accel: OFF\n"
-    "• Motion Blur: OFF\n"
 )
 
 def get_text(key: str) -> str:
