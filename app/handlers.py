@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-import traceback
 from typing import Dict, Any
 
 from zombies import router as zombies_router
-
 from app.kb import GAME_KB
+from app.pro_settings import get_text as pro_get_text
+
 from app.state import (
     ensure_profile, ensure_daily,
     update_memory, clear_memory,
@@ -18,77 +18,6 @@ from app.ui import (
     menu_training, menu_settings, menu_daily, thinking_line,
     menu_settings_game, menu_wz_device, menu_bo7_device, menu_bf6_device
 )
-
-
-def _wz_settings_text(device: str) -> str:
-    if device == "pad":
-        return (
-            "⚙️ Warzone (PS5/Xbox) — Controller (RU)\n\n"
-            "Главное:\n"
-            "• Deadzone: минимально без дрифта\n"
-            "• Sens: средняя (не завышай)\n"
-            "• ADS: чуть ниже sens\n"
-            "• Aim Response: Dynamic\n"
-            "• FOV: 105–120 (по комфорту)\n\n"
-            "Хочешь — дай свои значения, я подгоню точнее."
-        )
-    return (
-        "⚙️ Warzone (PC) — Mouse & Keyboard (RU)\n\n"
-        "Главное:\n"
-        "• DPI: 800 (или 1600) + sens ниже\n"
-        "• eDPI цель: ~2400–4800 (старт)\n"
-        "• ADS multiplier: 0.85–1.00\n"
-        "• FOV: 105–120\n"
-        "• Motion blur OFF\n\n"
-        "Напиши DPI и sens — соберу точный блок."
-    )
-
-
-def _bo7_settings_text(device: str) -> str:
-    if device == "pad":
-        return (
-            "⚙️ BO7 (PS5/Xbox) — Controller (RU)\n\n"
-            "• Deadzone: минимально без дрифта\n"
-            "• Aim response: Dynamic (если есть)\n"
-            "• Sens: средняя, ADS чуть ниже\n"
-            "• FOV: выше среднего\n\n"
-            "Если скажешь стиль (агро/позиционка) — докручу."
-        )
-    return (
-        "⚙️ BO7 (PC) — Mouse & Keyboard (RU)\n\n"
-        "• DPI 800/1600, sens ниже\n"
-        "• ADS 0.85–1.00\n"
-        "• FOV комфортный\n"
-        "• Blur OFF\n\n"
-        "Дай DPI+sense — соберу точный набор."
-    )
-
-
-def _bf6_settings_text(device: str) -> str:
-    # BF6 просил на английском
-    if device == "pad":
-        return (
-            "BF6 Controller (PS5/Xbox) — Settings (EN)\n\n"
-            "Core:\n"
-            "• Stick Deadzone: as low as possible without drift\n"
-            "• Response Curve: Linear / Default (pick the most consistent)\n"
-            "• Sensitivity: medium, ADS slightly lower\n"
-            "• Aim Assist: ON (default)\n"
-            "• FOV: 90–105 (console comfort) or higher if you can track well\n"
-            "• Motion Blur: OFF\n\n"
-            "Tell me if you have stick drift (yes/no) — I’ll tune deadzones."
-        )
-    return (
-        "BF6 Mouse & Keyboard (PC) — Settings (EN)\n\n"
-        "Core:\n"
-        "• DPI: 800 or 1600\n"
-        "• In-game sens: keep eDPI reasonable (start ~2400–4800)\n"
-        "• ADS multiplier: 0.85–1.00\n"
-        "• FOV: 100–110 (start), adjust for tracking\n"
-        "• Raw input: ON (if available)\n"
-        "• Motion Blur: OFF\n\n"
-        "Send your DPI + current sens — I’ll calculate a clean setup."
-    )
 
 
 class BotHandlers:
@@ -244,7 +173,6 @@ class BotHandlers:
             elif data == "nav:settings":
                 self.api.edit_message(chat_id, message_id, "⚙️ Настройки:", reply_markup=menu_settings(chat_id))
 
-            # ✅ ВОЗВРАЩАЕМ “старое” + ДОБАВЛЯЕМ BF6 аккуратно:
             elif data == "nav:settings_game":
                 self.api.edit_message(chat_id, message_id, "🎮 Настройки игр:", reply_markup=menu_settings_game(chat_id))
 
@@ -259,15 +187,18 @@ class BotHandlers:
 
             elif data.startswith("wzdev:"):
                 dev = data.split(":", 1)[1]
-                self.api.edit_message(chat_id, message_id, _wz_settings_text(dev), reply_markup=menu_wz_device(chat_id))
+                key = f"wz:{'pad' if dev=='pad' else 'mnk'}"
+                self.api.edit_message(chat_id, message_id, pro_get_text(key), reply_markup=menu_wz_device(chat_id))
 
             elif data.startswith("bo7dev:"):
                 dev = data.split(":", 1)[1]
-                self.api.edit_message(chat_id, message_id, _bo7_settings_text(dev), reply_markup=menu_bo7_device(chat_id))
+                key = f"bo7:{'pad' if dev=='pad' else 'mnk'}"
+                self.api.edit_message(chat_id, message_id, pro_get_text(key), reply_markup=menu_bo7_device(chat_id))
 
             elif data.startswith("bf6dev:"):
                 dev = data.split(":", 1)[1]
-                self.api.edit_message(chat_id, message_id, _bf6_settings_text(dev), reply_markup=menu_bf6_device(chat_id))
+                key = f"bf6:{'pad' if dev=='pad' else 'mnk'}"
+                self.api.edit_message(chat_id, message_id, pro_get_text(key), reply_markup=menu_bf6_device(chat_id))
 
             # ============= TOGGLES =============
             elif data == "toggle:memory":
