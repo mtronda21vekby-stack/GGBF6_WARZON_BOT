@@ -1,20 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 KB (Knowledge Base) for games.
-Важно: этот файл должен экспортировать:
+Экспортирует:
 - GAME_KB (dict)
-- GAMES (list/tuple)
-Чтобы imports вида `from app.kb import GAME_KB, GAMES` не падали.
+- GAMES (tuple)
 """
 
 from typing import Dict, Any
 
-# Список игр (используется в ai.py / ui.py где удобно)
 GAMES = ("warzone", "bf6", "bo7")
 
-# Главная база знаний
 GAME_KB: Dict[str, Dict[str, Any]] = {
     "warzone": {
+        "name": "Warzone",
         "title": "Warzone",
         "drills": {
             "aim": (
@@ -50,6 +48,7 @@ GAME_KB: Dict[str, Dict[str, Any]] = {
     },
 
     "bf6": {
+        "name": "BF6",
         "title": "BF6",
         "drills": {
             "aim": (
@@ -85,6 +84,7 @@ GAME_KB: Dict[str, Dict[str, Any]] = {
     },
 
     "bo7": {
+        "name": "BO7",
         "title": "BO7",
         "drills": {
             "aim": (
