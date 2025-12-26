@@ -1,29 +1,28 @@
+# -*- coding: utf-8 -*-
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        return
-    def _ok(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain; charset=utf-8")
-        self.end_headers()
-    def do_HEAD(self):
-        if self.path in ("/", "/healthz"):
-            self._ok()
-        else:
-            self.send_response(404)
-            self.end_headers()
+
+class _H(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path in ("/", "/healthz", "/"):
-            self._ok()
-            self.wfile.write(b"OK")
-        else:
-            self.send_response(404)
-            self.end_headers()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"OK")
 
-def run_http_server(log) -> None:
+    def log_message(self, *args, **kwargs):
+        return  # без лишнего спама в логах
+
+
+def start_health_server(log=None) -> None:
     port = int(os.environ.get("PORT", "10000"))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    log.info("HTTP server listening on :%s", port)
-    server.serve_forever()
+    httpd = HTTPServer(("0.0.0.0", port), _H)
+
+    def _run():
+        if log:
+            log.info("Health server listening on 0.0.0.0:%s", port)
+        httpd.serve_forever()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
