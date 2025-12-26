@@ -2,8 +2,6 @@
 from typing import Dict, Any
 from app.state import ensure_profile
 
-PERSONA_HINT = {"spicy": "Дерзко 😈", "chill": "Спокойно 😌", "pro": "Профи 🎯"}
-VERB_HINT = {"short": "Коротко", "normal": "Норм", "talkative": "Подробно"}
 GAME_HINT = {"auto": "AUTO", "warzone": "Warzone", "bf6": "BF6", "bo7": "BO7"}
 
 def _badge(ok: bool) -> str:
@@ -17,21 +15,21 @@ def main_text(chat_id: int, ai_enabled: bool, model: str) -> str:
     g = p.get("game", "auto")
     mode = p.get("mode", "chat")
     return (
-        f"🌑 FPS Coach Bot v2 | 🎮 {GAME_HINT.get(g, g)} | 🔁 {mode.upper()} | 🤖 AI {'ON' if ai_enabled else 'OFF'}\n\n"
-        "Напиши ситуацию/смерть — разберу.\n"
-        "Или жми меню 👇"
+        f"FPS Coach Bot v2 | 🎮 {GAME_HINT.get(g, g)} | 🔁 {mode.upper()} | 🤖 {'ON' if ai_enabled else 'OFF'}\n\n"
+        "Напиши как другу/тиммейту: что бесит, где умираешь, что хочешь улучшить.\n"
+        "Я буду задавать вопросы и вести тебя к решению.\n\n"
+        "Жми кнопки ниже 👇"
     )
 
 def help_text() -> str:
     return (
-        "❓ Помощь\n"
         "Команды:\n"
-        "• /start или /menu — меню\n"
-        "• /zombies — Zombies\n"
-        "• /daily — задание дня\n"
-        "• /status — статус\n"
-        "• /profile — профиль\n"
-        "• /reset — сброс\n"
+        "/start или /menu — меню\n"
+        "/zombies — раздел Zombies\n"
+        "/daily — задание дня\n"
+        "/status — статус\n"
+        "/profile — профиль\n"
+        "/reset — сброс\n"
     )
 
 def status_text(model: str, data_dir: str, ai_enabled: bool) -> str:
@@ -48,16 +46,12 @@ def profile_text(chat_id: int) -> str:
         "👤 Профиль:\n"
         f"• game: {p.get('game','auto')}\n"
         f"• mode: {p.get('mode','chat')}\n"
-        f"• persona: {p.get('persona','spicy')} ({PERSONA_HINT.get(p.get('persona','spicy'),'')})\n"
-        f"• verbosity: {p.get('verbosity','normal')} ({VERB_HINT.get(p.get('verbosity','normal'),'')})\n"
+        f"• persona: {p.get('persona','spicy')}\n"
+        f"• verbosity: {p.get('verbosity','normal')}\n"
         f"• memory: {_badge(p.get('memory','on')=='on')}\n"
         f"• speed: {p.get('speed','normal')}\n"
         f"• ui: {p.get('ui','show')}\n"
     )
-
-# =========================
-# INLINE MENUS (премиум кнопки под сообщением)
-# =========================
 
 def menu_main(chat_id: int, ai_enabled: bool) -> Dict[str, Any]:
     p = ensure_profile(chat_id)
@@ -70,7 +64,7 @@ def menu_main(chat_id: int, ai_enabled: bool) -> Dict[str, Any]:
 
     return {"inline_keyboard": [
         [{"text": f"🎮 Игра: {GAME_HINT.get(game, game)}", "callback_data": "nav:game"},
-         {"text": f"🎭 Стиль: {persona} {('😈' if persona=='spicy' else '😌' if persona=='chill' else '🎯')}", "callback_data": "nav:persona"}],
+         {"text": f"🎭 Стиль: {persona}", "callback_data": "nav:persona"}],
 
         [{"text": f"🗣 Ответ: {verbosity}", "callback_data": "nav:talk"},
          {"text": f"🧠 Память {_badge(mem_on)}", "callback_data": "toggle:memory"}],
@@ -78,11 +72,16 @@ def menu_main(chat_id: int, ai_enabled: bool) -> Dict[str, Any]:
         [{"text": f"🔁 Режим: {mode.upper()}", "callback_data": "toggle:mode"},
          {"text": f"🤖 ИИ: {'ON' if ai_enabled else 'OFF'}", "callback_data": "action:ai_status"}],
 
-        [{"text": f"⚡ Молния: {'ВКЛ' if speed == 'lightning' else 'ВЫКЛ'}", "callback_data": "toggle:lightning"},
+        # ✅ Game HUB quick access (модульная архитектура)
+        [{"text": "🟩 Warzone HUB", "callback_data": "mod:wz:hub"},
+         {"text": "🟧 BF6 HUB", "callback_data": "mod:bf6:hub"}],
+        [{"text": "🟦 BO7 HUB", "callback_data": "mod:bo7:hub"},
          {"text": "🧟 Zombies", "callback_data": "zmb:home"}],
 
-        [{"text": "⚙️ Настройки", "callback_data": "nav:settings"},
-         {"text": "📦 Ещё", "callback_data": "nav:more"}],
+        [{"text": f"⚡ Молния: {'ВКЛ' if speed == 'lightning' else 'ВЫКЛ'}", "callback_data": "toggle:lightning"},
+         {"text": "⚙️ Настройки", "callback_data": "nav:settings"}],
+
+        [{"text": "📦 Ещё", "callback_data": "nav:more"}],
     ]}
 
 def menu_more(chat_id: int) -> Dict[str, Any]:
@@ -134,7 +133,6 @@ def menu_settings(chat_id: int) -> Dict[str, Any]:
     speed = p.get("speed", "normal")
     return {"inline_keyboard": [
         [{"text": "📡 Статус", "callback_data": "action:status"}],
-        [{"text": "🎮 Настройки игр", "callback_data": "nav:settings_game"}],
         [{"text": f"🧩 UI: {'Показ' if ui == 'show' else 'Скрыт'}", "callback_data": "toggle:ui"}],
         [{"text": f"⚡ Молния: {'ВКЛ' if speed == 'lightning' else 'ВЫКЛ'}", "callback_data": "toggle:lightning"}],
         [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
@@ -145,37 +143,4 @@ def menu_daily(chat_id: int) -> Dict[str, Any]:
         [{"text": "✅ Сделал", "callback_data": "daily:done"},
          {"text": "❌ Не вышло", "callback_data": "daily:fail"}],
         [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
-    ]}
-
-# =========================
-# Настройки игр — девайсы
-# =========================
-
-def menu_settings_game(chat_id: int) -> Dict[str, Any]:
-    return {"inline_keyboard": [
-        [{"text": "⚙️ Warzone — настройки", "callback_data": "nav:wz_settings"}],
-        [{"text": "⚙️ BO7 — настройки", "callback_data": "nav:bo7_settings"}],
-        [{"text": "⚙️ BF6 — settings (EN)", "callback_data": "nav:bf6_settings"}],
-        [{"text": "⬅️ Назад", "callback_data": "nav:settings"}],
-    ]}
-
-def menu_wz_device(chat_id: int) -> Dict[str, Any]:
-    return {"inline_keyboard": [
-        [{"text": "🎮 PS5 / Xbox (Controller)", "callback_data": "wzdev:pad"}],
-        [{"text": "🖥 PC (Mouse & Keyboard)", "callback_data": "wzdev:mnk"}],
-        [{"text": "⬅️ Назад", "callback_data": "nav:settings_game"}],
-    ]}
-
-def menu_bo7_device(chat_id: int) -> Dict[str, Any]:
-    return {"inline_keyboard": [
-        [{"text": "🎮 PS5 / Xbox (Controller)", "callback_data": "bo7dev:pad"}],
-        [{"text": "🖥 PC (Mouse & Keyboard)", "callback_data": "bo7dev:mnk"}],
-        [{"text": "⬅️ Назад", "callback_data": "nav:settings_game"}],
-    ]}
-
-def menu_bf6_device(chat_id: int) -> Dict[str, Any]:
-    return {"inline_keyboard": [
-        [{"text": "🎮 PS5 / Xbox (Controller)", "callback_data": "bf6dev:pad"}],
-        [{"text": "🖥 PC (Mouse & Keyboard)", "callback_data": "bf6dev:mnk"}],
-        [{"text": "⬅️ Back", "callback_data": "nav:settings_game"}],
     ]}
