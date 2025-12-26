@@ -71,13 +71,6 @@ def edit_message(chat_id: int, message_id: int, text: str, reply_markup=None) ->
     tg_request("editMessageText", payload=payload, is_post=True)
 
 
-def edit_reply_markup(chat_id: int, message_id: int, reply_markup=None) -> None:
-    payload = {"chat_id": chat_id, "message_id": message_id}
-    if reply_markup is not None:
-        payload["reply_markup"] = reply_markup
-    tg_request("editMessageReplyMarkup", payload=payload, is_post=True)
-
-
 def answer_callback(callback_id: str | None) -> None:
     if not callback_id:
         return
@@ -88,6 +81,7 @@ def answer_callback(callback_id: str | None) -> None:
 
 
 def delete_webhook_on_start() -> None:
+    # важно для long polling на Render
     try:
         tg_request("deleteWebhook", payload={"drop_pending_updates": True}, is_post=True, retries=3)
         log.info("Webhook deleted (drop_pending_updates=true)")
@@ -135,6 +129,7 @@ def run_telegram_bot_forever() -> None:
                 retries=config.TG_RETRIES,
             )
 
+            # ⛔️ импортируем handlers ТОЛЬКО здесь (иначе будет цикл импорта)
             from app.handlers import handle_message, handle_callback
 
             for upd in data.get("result", []):
@@ -150,9 +145,15 @@ def run_telegram_bot_forever() -> None:
                     continue
 
                 msg = upd.get("message") or upd.get("edited_message") or {}
-                chat_id = (msg.get("chat") or {}).get("id")
-                text = (msg.get("text") or "").strip()
-                if not chat_id or not text:
+                chat = msg.get("chat") or {}
+                chat_id = chat.get("id")
+
+                text = msg.get("text")
+                if not chat_id or not isinstance(text, str):
+                    continue
+
+                text = text.strip()
+                if not text:
                     continue
 
                 try:
