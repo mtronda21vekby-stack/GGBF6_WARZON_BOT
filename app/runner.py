@@ -1,119 +1,51 @@
 # -*- coding: utf-8 -*-
-"""
-Главный runner бота.
-Без веб-сервера Telegram, только polling + health-check для Render.
-Максимально совместим со старым кодом.
-"""
-
+import sys
 import os
 import time
-import traceback
+import logging
 
-from app.log import log
-from app.health import start_health_server
-from app.telegram_api import TelegramAPI
-from app.ai import AIEngine
+# гарантируем корректный путь
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
 
-# handlers может иметь разную сигнатуру — учитываем это
-from app.handlers import BotHandlers
+from app.health import start_health
 
+log = logging.getLogger("runner")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
 
 def main():
-    log.info("=" * 50)
-    log.info("STARTING BOT RUNNER")
+    log.info("========== BOOT ==========")
 
-    # ----------------------------
-    # ENV
-    # ----------------------------
-    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    # ✅ ВАЖНО: старт health-сервера (Render PORT)
+    start_health(log)
 
-    HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "30"))
+    # ⏳ небольшая пауза чтобы порт точно поднялся
+    time.sleep(0.5)
 
-    if not TELEGRAM_BOT_TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is missing")
-
-    # ----------------------------
-    # HEALTH SERVER (Render fix)
-    # ----------------------------
-    start_health_server(log)
-
-    # ----------------------------
-    # Telegram API
-    # ----------------------------
-    api = TelegramAPI(
-        token=TELEGRAM_BOT_TOKEN,
-        http_timeout=HTTP_TIMEOUT,
-        user_agent="ggbf6-warzone-bot",
-        log=log,
-    )
-
-    api.delete_webhook_on_start()
-    api.get_me_forever()
-
-    # ----------------------------
-    # AI ENGINE
-    # ----------------------------
-    ai_engine = AIEngine(
-        openai_key=OPENAI_API_KEY,
-        base_url=OPENAI_BASE_URL,
-        model=OPENAI_MODEL,
-        log=log,
-    )
-
-    log.info("openai enabled: %s", ai_engine.enabled)
-
-    # ----------------------------
-    # HANDLERS (SAFE INIT)
-    # ----------------------------
+    # 🔁 дальше запускаем ТВОЮ текущую логику бота
     try:
-        handlers = BotHandlers(api=api, ai_engine=ai_engine)
-    except TypeError:
-        # fallback для старых версий handlers.py
-        try:
-            handlers = BotHandlers(api, ai_engine)
-        except Exception:
-            handlers = BotHandlers(api)
+        from app.tg import start_bot
+        log.info("Starting Telegram bot via app.tg.start_bot()")
+        start_bot()
+        return
+    except ImportError:
+        log.warning("app.tg.start_bot not found")
 
-    # ----------------------------
-    # POLLING LOOP
-    # ----------------------------
-    offset = 0
-    log.info("Polling started")
+    try:
+        from app.telegram_api import run
+        log.info("Starting Telegram bot via app.telegram_api.run()")
+        run()
+        return
+    except ImportError:
+        log.warning("app.telegram_api.run not found")
 
+    # ❌ если ни один запуск не найден — не падаем
+    log.error("No Telegram entrypoint found. Bot is idle.")
     while True:
-        try:
-            updates = api.request(
-                "getUpdates",
-                params={
-                    "timeout": 30,
-                    "offset": offset,
-                    "allowed_updates": ["message", "callback_query"],
-                },
-            )
-
-            for upd in updates.get("result", []):
-                offset = upd["update_id"] + 1
-
-                # callback кнопки
-                if "callback_query" in upd:
-                    handlers.on_callback(upd["callback_query"])
-                    continue
-
-                # обычные сообщения
-                if "message" in upd:
-                    handlers.on_message(upd["message"])
-
-        except KeyboardInterrupt:
-            log.warning("Bot stopped by keyboard")
-            break
-
-        except Exception as e:
-            log.error("Polling error: %r", e)
-            traceback.print_exc()
-            time.sleep(2)
+        time.sleep(60)
 
 
 if __name__ == "__main__":
