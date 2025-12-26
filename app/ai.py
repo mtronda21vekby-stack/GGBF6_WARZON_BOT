@@ -1,31 +1,40 @@
 # app/ai.py
 # -*- coding: utf-8 -*-
 
+import os
 import re
-from typing import Dict, List, Optional
-from app import config
-from app.log import log
-from app.state import ensure_profile, USER_MEMORY, update_memory, USER_STATS
+import random
+from typing import List, Dict, Optional
 
+from app.state import ensure_profile, USER_MEMORY, update_memory
+
+# OpenAI optional
 try:
     from openai import OpenAI
 except Exception:
     OpenAI = None
 
-openai_client = None
-if OpenAI and config.OPENAI_API_KEY:
+
+# ===== OpenAI init (optional) =====
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+
+_client = None
+if OpenAI and OPENAI_API_KEY:
     try:
-        openai_client = OpenAI(api_key=config.OPENAI_API_KEY, base_url=config.OPENAI_BASE_URL, timeout=30, max_retries=0)
-        log.info("OpenAI client: ON")
-    except Exception as e:
-        log.warning("OpenAI init failed: %r", e)
-        openai_client = None
-else:
-    log.warning("OpenAI: OFF (missing key or package). Bot still works.")
+        _client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL, timeout=30, max_retries=0)
+    except Exception:
+        _client = None
 
 
+def ai_is_on() -> bool:
+    return _client is not None
+
+
+# ===== small detectors =====
 _SMALLTALK_RX = re.compile(r"^\s*(привет|здаров|здравствуйте|йо|ку|qq|hello|hi|хай)\s*[!.\-–—]*\s*$", re.I)
-_TILT_RX = re.compile(r"(я\s+говно|я\s+дно|не\s+прёт|не\s+идёт|вечно\s+не\s+везёт|тильт|бесит|ненавижу|заеб|сука|бля)", re.I)
+_TILT_RX = re.compile(r"(я\s+говно|я\s+дно|не\s+прёт|не\s+идёт|тильт|бесит|сука|бля|заеб)", re.I)
 
 def is_smalltalk(text: str) -> bool:
     return bool(_SMALLTALK_RX.match(text or ""))
@@ -35,16 +44,8 @@ def is_tilt(text: str) -> bool:
 
 def is_cheat_request(text: str) -> bool:
     t = (text or "").lower()
-    banned = ["чит", "cheat", "hack", "обход", "античит", "exploit", "эксплойт", "аимбот", "wallhack", "вх", "спуфер"]
+    banned = ["чит", "cheat", "hack", "обход", "античит", "exploit", "аимбот", "wallhack", "вх", "спуфер"]
     return any(w in t for w in banned)
-
-
-GAME_KB = {
-    "warzone": {"name": "Call of Duty: Warzone"},
-    "bf6": {"name": "Battlefield 6 (BF6)"},
-    "bo7": {"name": "Call of Duty: Black Ops 7 (BO7)"},
-}
-GAMES = tuple(GAME_KB.keys())
 
 def detect_game(text: str) -> Optional[str]:
     t = (text or "").lower()
@@ -55,6 +56,7 @@ def detect_game(text: str) -> Optional[str]:
     if any(x in t for x in ["warzone", "wz", "варзон", "verdansk", "rebirth", "gulag", "бр"]):
         return "warzone"
     return None
+
 
 CAUSES = ("info", "timing", "position", "discipline", "mechanics")
 CAUSE_LABEL = {
@@ -68,124 +70,195 @@ CAUSE_LABEL = {
 def classify_cause(text: str) -> str:
     t = (text or "").lower()
     score = {c: 0 for c in CAUSES}
-    for k in ["не слыш", "звук", "шаг", "радар", "пинг", "инфо", "увидел поздно"]:
+    for k in ["не слыш", "звук", "шаг", "радар", "пинг", "инфо"]:
         if k in t: score["info"] += 2
-    for k in ["тайм", "поздно", "рано", "репик", "пикнул", "вышел", "задержал"]:
+    for k in ["тайм", "поздно", "рано", "репик", "пикнул", "вышел"]:
         if k in t: score["timing"] += 2
     for k in ["пози", "угол", "высот", "открыт", "прострел", "линия", "укрыт"]:
         if k in t: score["position"] += 2
-    for k in ["жадн", "ресурс", "плейт", "пласти", "хил", "перезар", "вдвоём", "в соло", "погнал"]:
+    for k in ["жадн", "ресурс", "плейт", "перезар", "в соло", "погнал"]:
         if k in t: score["discipline"] += 2
-    for k in ["аим", "отдач", "сенс", "фов", "перел", "дрейф", "не попал", "мимо"]:
+    for k in ["аим", "отдач", "сенс", "фов", "дрейф", "не попал", "мимо"]:
         if k in t: score["mechanics"] += 2
     best = max(score.items(), key=lambda kv: kv[1])[0]
-    return best if score[best] else "position"
+    return best if score[best] > 0 else "position"
 
-def stat_inc(chat_id: int, cause: str) -> None:
-    st = USER_STATS.setdefault(chat_id, {})
-    st[cause] = int(st.get(cause, 0)) + 1
+
+def looks_like_scene(text: str) -> bool:
+    t = (text or "").lower()
+    keys = ["умер", "снесли", "убили", "проиграл", "пикнул", "вышел", "зауглили", "в спину", "1v", "2v", "3v"]
+    return any(k in t for k in keys) or ("|" in t and len(t) > 15)
+
+
+# ===== anti-repeat =====
+def _tokenize(s: str) -> List[str]:
+    return re.findall(r"[а-яa-z0-9]+", (s or "").lower())
+
+def _jaccard(a: str, b: str) -> float:
+    sa = set(_tokenize(a))
+    sb = set(_tokenize(b))
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / max(1, len(sa | sb))
+
+def _is_too_similar(a: str, b: str) -> bool:
+    return _jaccard(a, b) >= 0.55
+
+
+# ===== “живые” шаблоны на случай AI OFF =====
+def _offline_chat(chat_id: int, text: str) -> str:
+    cause = classify_cause(text)
+    p = ensure_profile(chat_id)
+    lightning = (p.get("lightning", "off") == "on")
+
+    if is_cheat_request(text):
+        return "Читы = бан. Давай без магии 😈 Скажи: где чаще ломает — инфо/тайминг/позиция/аим?"
+
+    if lightning:
+        return (
+            f"⚡ Сейчас — упрись в {CAUSE_LABEL[cause].lower()} (один конкретный фикс на 3 файта).\n"
+            "⚡ Дальше — после первого контакта всегда меняй угол (не репикай лоб).\n"
+            "В каком режиме играешь и где чаще умираешь: ближка или средняя?"
+        )
+
+    if is_smalltalk(text):
+        return "Йо 😄 Ок, по какой игре вопрос — WZ/BF6/BO7? И что болит: позиция, аим или тайминг?"
+
+    if is_tilt(text):
+        return "Слышу тильт 😈 Давай быстро: 1) где умер 2) кто видел первым 3) почему думаешь что так вышло?"
+
+    variants = [
+        f"Ок. По ощущениям тут {CAUSE_LABEL[cause]}. Дай одну сцену: где был/что видел/как пикнул — и я соберу план.",
+        f"Понял. Скорее всего сыпет {CAUSE_LABEL[cause].lower()}. Скажи: ты чаще умираешь от спины или лоб-в-лоб?",
+        f"Схватил мысль. Вероятная причина — {CAUSE_LABEL[cause].lower()}. Какой у тебя стиль: агро или аккуратно от инфо?",
+    ]
+    return random.choice(variants)
+
 
 SYSTEM_CHAT = (
-    "Ты FPS-коуч/тиммейт. Пишешь по-русски.\n"
-    "Без токсичности. Без читов/хака/обхода античита.\n"
-    "Отвечай живо, но практично.\n"
-    "Если данных мало — задай 1 короткий уточняющий вопрос.\n"
+    "Ты тиммейт/коуч. Русский язык. Без токсичности.\n"
+    "Никаких читов/хакинга.\n"
+    "Не будь шаблонным: меняй структуру и формулировки.\n"
+    "Задавай максимум 1 короткий вопрос в конце (если нужен).\n"
 )
 
 SYSTEM_COACH = (
-    "Ты FPS-коуч. Пишешь по-русски. Без токсичности.\n"
-    "Запрещено: читы/хаки/обход античита/эксплойты.\n"
-    "Если режим COACH: дай 4 блока:\n"
-    "🎯 Диагноз\n✅ Что делать (2 строки: Сейчас—..., Дальше—...)\n🧪 Дрилл\n😈 Панчик\n"
+    "Ты FPS-коуч. Русский язык. Без токсичности.\n"
+    "Никаких читов/хакинга.\n"
+    "Формат COACH (коротко, мощно):\n"
+    "1) 🎯 Диагноз (1–2 строки)\n"
+    "2) ✅ Сейчас / Дальше (2 строки)\n"
+    "3) 🧪 Дрилл (1 мини-дрилл)\n"
+    "4) ❓ 1 вопрос (один!)\n"
 )
 
-def resolve_game(chat_id: int, user_text: str) -> str:
-    p = ensure_profile(chat_id)
-    forced = p.get("game", "auto")
-    if forced in GAMES:
-        return forced
-    d = detect_game(user_text)
-    return d if d in GAMES else "warzone"
+PERSONA_HINT = {
+    "spicy": "Стиль: дерзко и смешно, но без унижений. Сленг уместен.",
+    "chill": "Стиль: спокойно, дружелюбно, мягко.",
+    "pro": "Стиль: строго по делу, структурно.",
+}
+VERBOSITY_HINT = {
+    "short": "Длина: очень коротко.",
+    "normal": "Длина: нормально, без воды.",
+    "talkative": "Длина: подробнее, но без занудства.",
+}
 
-def _openai_chat(messages: List[Dict[str, str]], max_tokens: int, lightning: bool) -> str:
-    if not openai_client:
+STRUCTURES_CHAT = [
+    "Сделай ответ как разговор: 2-4 предложения + 1 вопрос.",
+    "Сделай ответ как 'план на 2 шага': Сейчас/Дальше + 1 вопрос.",
+    "Сделай ответ через метафору/шутку (аккуратно) + 1 совет + 1 вопрос.",
+    "Сделай ответ как 'разбор ошибки': что произошло → почему → что поменять, и 1 вопрос.",
+]
+
+STRUCTURES_COACH = [
+    "Дай максимально практичный COACH, без списков больше 4 пунктов.",
+    "COACH очень коротко, но жёстко по делу.",
+    "COACH в стиле 'диагноз врача': причина → лечение → контроль.",
+]
+
+def _openai(messages: List[Dict[str, str]], max_tokens: int) -> str:
+    if not _client:
         return ""
-    temp = 0.7 if lightning else 0.9
     try:
-        resp = openai_client.chat.completions.create(
-            model=config.OPENAI_MODEL,
+        r = _client.chat.completions.create(
+            model=OPENAI_MODEL,
             messages=messages,
-            temperature=temp,
-            presence_penalty=0.6,
-            frequency_penalty=0.3,
+            temperature=0.9,
+            presence_penalty=0.7,
+            frequency_penalty=0.4,
             max_completion_tokens=max_tokens,
         )
     except TypeError:
-        resp = openai_client.chat.completions.create(
-            model=config.OPENAI_MODEL,
+        r = _client.chat.completions.create(
+            model=OPENAI_MODEL,
             messages=messages,
-            temperature=temp,
-            presence_penalty=0.6,
-            frequency_penalty=0.3,
+            temperature=0.9,
+            presence_penalty=0.7,
+            frequency_penalty=0.4,
             max_tokens=max_tokens,
         )
-    return (resp.choices[0].message.content or "").strip()
+    return (r.choices[0].message.content or "").strip()
 
-def chat_reply(chat_id: int, user_text: str) -> str:
+
+def generate_reply(chat_id: int, user_text: str) -> str:
     p = ensure_profile(chat_id)
-    lightning = (p.get("lightning") == "on")
-    cause = classify_cause(user_text)
-    stat_inc(chat_id, cause)
+    text = (user_text or "").strip()
+    if not text:
+        return ""
 
-    if is_cheat_request(user_text):
-        return "С читами не помогаю. Скажи лучше: где умираешь — инфо/тайминг/позиция/аим?"
+    # lightning = ультра-коротко всегда
+    lightning = (p.get("lightning", "off") == "on")
 
-    if not openai_client:
-        return "ИИ сейчас OFF. Напиши 1 сцену: где был, кто увидел, как умер — и я разберу."
+    # AUTO выбор режима
+    mode = p.get("mode", "chat")
+    if mode == "auto":
+        mode = "coach" if looks_like_scene(text) else "chat"
 
-    game = resolve_game(chat_id, user_text)
+    if not _client:
+        return _offline_chat(chat_id, text)
 
-    msgs = [{"role": "system", "content": SYSTEM_CHAT + f"\nИгра: {GAME_KB[game]['name']}. Причина: {CAUSE_LABEL.get(cause)}."}]
-    if p.get("memory") == "on":
-        msgs.extend(USER_MEMORY.get(chat_id, []))
-    last_ans = (p.get("last_answer") or "")[:700]
+    cause = classify_cause(text)
+    persona = p.get("persona", "spicy")
+    verbosity = p.get("verbosity", "normal")
+
+    sys = SYSTEM_COACH if mode == "coach" else SYSTEM_CHAT
+
+    # ⚡ Молния заставляет формат “Сейчас/Дальше” даже в CHAT
+    if lightning:
+        sys += "\nЕсли включена ⚡ Молния: ответ строго в 2 строки (Сейчас/Дальше) + 1 вопрос."
+    sys += f"\nПредполагаемая причина: {CAUSE_LABEL[cause]}."
+
+    msgs: List[Dict[str, str]] = [
+        {"role": "system", "content": sys},
+        {"role": "system", "content": PERSONA_HINT.get(persona, PERSONA_HINT["spicy"])},
+        {"role": "system", "content": VERBOSITY_HINT.get(verbosity, VERBOSITY_HINT["normal"])},
+    ]
+
+    # вариативная структура
+    if mode == "coach":
+        msgs.append({"role": "system", "content": random.choice(STRUCTURES_COACH)})
+    else:
+        msgs.append({"role": "system", "content": random.choice(STRUCTURES_CHAT)})
+
+    # память
+    if p.get("memory", "on") == "on":
+        msgs.extend(USER_MEMORY.get(chat_id, [])[-16:])
+
+    last_ans = (p.get("last_answer") or "")[:900]
     if last_ans:
-        msgs.append({"role": "system", "content": "Не повторяй прошлый ответ. Прошлый ответ:\n" + last_ans})
-    msgs.append({"role": "user", "content": user_text})
+        msgs.append({"role": "system", "content": "Не повторяй прошлый ответ и не копируй его фразы.\nПрошлый ответ:\n" + last_ans})
 
-    max_out = 260 if lightning else 600
-    out = _openai_chat(msgs, max_out, lightning=lightning)
-    return out[:3500] if out else "Напиши ещё раз коротко: где умер и почему думаешь?"
+    msgs.append({"role": "user", "content": text})
 
-def coach_reply(chat_id: int, user_text: str) -> str:
-    p = ensure_profile(chat_id)
-    lightning = (p.get("lightning") == "on")
-    cause = classify_cause(user_text)
-    stat_inc(chat_id, cause)
+    max_out = 420 if verbosity == "short" else (650 if verbosity == "normal" else 850)
+    out = _openai(msgs, max_out)
 
-    if is_cheat_request(user_text):
-        return (
-            "🎯 Диагноз\nЧиты = бан.\n\n"
-            "✅ Что делать\nСейчас — скажи, где сыпешься.\nДальше — соберём план.\n\n"
-            "🧪 Дрилл\n7 минут: 3×2 минуты + 1 минута разбор.\n\n"
-            "😈 Панчик\nКачаем руки, не софт. 😈"
-        )
+    # анти-повтор: если слишком похоже — пробуем ещё раз другой структурой
+    if last_ans and _is_too_similar(out, last_ans):
+        msgs.append({"role": "system", "content": "Ответ слишком похож. Перефразируй полностью и измени структуру."})
+        msgs.append({"role": "system", "content": random.choice(STRUCTURES_CHAT if mode != "coach" else STRUCTURES_COACH)})
+        out2 = _openai(msgs, max_out)
+        if out2:
+            out = out2
 
-    if not openai_client:
-        return (
-            "🎯 Диагноз\nИИ OFF.\n\n"
-            "✅ Что делать\nСейчас — дай 1 сцену смерти.\nДальше — разберём.\n\n"
-            "🧪 Дрилл\n7 минут: 3 файта → после каждого 1 фраза «почему умер».\n\n"
-            "😈 Панчик\nСтабильность = дисциплина. 😈"
-        )
-
-    game = resolve_game(chat_id, user_text)
-
-    msgs = [{"role": "system", "content": SYSTEM_COACH + f"\nИгра: {GAME_KB[game]['name']}. Причина: {CAUSE_LABEL.get(cause)}."}]
-    if p.get("memory") == "on":
-        msgs.extend(USER_MEMORY.get(chat_id, []))
-    msgs.append({"role": "user", "content": user_text})
-
-    max_out = 420 if lightning else 750
-    out = _openai_chat(msgs, max_out, lightning=lightning)
-    return out[:3500] if out else "Опиши 1 сцену: где был, кто увидел, как умер."
+    return (out or "").strip()
