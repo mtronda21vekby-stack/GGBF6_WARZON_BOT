@@ -2,9 +2,9 @@
 from typing import Dict, Any
 
 from zombies import router as zombies_router
-from app.kb import GAME_KB
-
-from app.modules import registry as modules_registry
+from app.kb import GAME_KB  # твой старый GAME_KB оставляем как был
+from app.kb import reply_kb_main  # ✅ снизу
+from app.pro_settings import get_text as pro_get_text
 
 from app.state import (
     ensure_profile, ensure_daily,
@@ -16,8 +16,36 @@ from app.state import (
 from app.ui import (
     main_text, help_text, status_text, profile_text,
     menu_main, menu_more, menu_game, menu_persona, menu_talk,
-    menu_training, menu_settings, menu_daily, thinking_line
+    menu_training, menu_settings, menu_daily, thinking_line,
+    menu_settings_game, menu_wz_device, menu_bo7_device, menu_bf6_device
 )
+
+
+def _is_cmd(t: str, cmd: str) -> bool:
+    t = (t or "").strip().lower()
+    return t == cmd or t.startswith(cmd + " ")
+
+
+def _normalize_quick_buttons(t: str) -> str:
+    """
+    Превращаем кнопки снизу в команды/действия.
+    Ничего не ломает — просто удобные алиасы.
+    """
+    s = (t or "").strip().lower()
+
+    mapping = {
+        "📋 меню": "/menu",
+        "⚙️ настройки": "/menu",      # откроем меню, дальше юзер жмёт ⚙️
+        "🎮 warzone": "/menu warzone",
+        "🎮 bf6": "/menu bf6",
+        "🎮 bo7": "/menu bo7",
+        "🧟 zombies": "/zombies",
+        "🎯 daily": "/daily",
+        "👤 профиль": "/profile",
+        "🧽 память": "/clear_memory",
+        "🧨 сброс": "/reset",
+    }
+    return mapping.get(s, t)
 
 
 class BotHandlers:
@@ -36,63 +64,109 @@ class BotHandlers:
                 return
 
             p = ensure_profile(chat_id)
-            t = (text or "").strip()
+            t = _normalize_quick_buttons(text)
+            t = (t or "").strip()
             if not t:
                 return
 
-            # ✅ Zombies text routing
+            # ✅ Zombies: если мы в меню Zombies — любой текст = поиск по карте
             if not t.startswith("/") and p.get("page") == "zombies":
                 z = zombies_router.handle_text(t, current_map=p.get("zmb_map", "ashes"))
                 if z is not None:
-                    self.api.send_message(chat_id, z["text"], reply_markup=z.get("reply_markup"), max_text_len=self.s.MAX_TEXT_LEN)
+                    self.api.send_message(
+                        chat_id, z["text"],
+                        reply_markup=z.get("reply_markup") or reply_kb_main(),  # ✅ снизу всегда
+                        max_text_len=self.s.MAX_TEXT_LEN
+                    )
                     return
 
-            # ✅ NEW: game module text routing (future)
-            if not t.startswith("/") and p.get("page") in ("wz", "bf6", "bo7"):
-                z = modules_registry.route_text(chat_id, t, p.get("page"))
-                if z is not None:
-                    self.api.send_message(chat_id, z["text"], reply_markup=z.get("reply_markup"), max_text_len=self.s.MAX_TEXT_LEN)
-                    return
+            # ====== БЫСТРЫЕ ТЕХ-КОМАНДЫ (снизу) ======
+            if _is_cmd(t, "/clear_memory"):
+                clear_memory(chat_id)
+                save_state(self.s.STATE_PATH, self.log)
+                self.api.send_message(
+                    chat_id, "🧽 Память очищена.",
+                    reply_markup=reply_kb_main(),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
+                return
 
-            # Команды
-            if t.startswith("/start") or t.startswith("/menu"):
+            # ====== Команды ======
+            if _is_cmd(t, "/start") or _is_cmd(t, "/menu"):
+                # /menu warzone | /menu bf6 | /menu bo7 (быстрый выбор)
+                parts = t.split()
+                if len(parts) >= 2:
+                    g = parts[1].strip().lower()
+                    if g in ("warzone", "bf6", "bo7"):
+                        p["game"] = g
+
                 p["page"] = "main"
                 ensure_daily(chat_id)
                 self.api.send_message(
                     chat_id,
                     main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                    reply_markup=reply_kb_main(),  # ✅ нижняя клава
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
+                # отдельным сообщением — inline меню (как раньше)
+                self.api.send_message(
+                    chat_id,
+                    "👇 Меню:",
                     reply_markup=menu_main(chat_id, self.ai.enabled),
                     max_text_len=self.s.MAX_TEXT_LEN
                 )
                 save_state(self.s.STATE_PATH, self.log)
                 return
 
-            if t.startswith("/help"):
-                self.api.send_message(chat_id, help_text(), reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+            if _is_cmd(t, "/help"):
+                self.api.send_message(
+                    chat_id, help_text(),
+                    reply_markup=reply_kb_main(),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
+                self.api.send_message(chat_id, "👇 Меню:", reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
                 return
 
-            if t.startswith("/status"):
-                self.api.send_message(chat_id, status_text(self.s.OPENAI_MODEL, self.s.DATA_DIR, self.ai.enabled),
-                                      reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+            if _is_cmd(t, "/status"):
+                self.api.send_message(
+                    chat_id, status_text(self.s.OPENAI_MODEL, self.s.DATA_DIR, self.ai.enabled),
+                    reply_markup=reply_kb_main(),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
+                self.api.send_message(chat_id, "👇 Меню:", reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
                 return
 
-            if t.startswith("/profile"):
-                self.api.send_message(chat_id, profile_text(chat_id), reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+            if _is_cmd(t, "/profile"):
+                self.api.send_message(
+                    chat_id, profile_text(chat_id),
+                    reply_markup=reply_kb_main(),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
+                self.api.send_message(chat_id, "👇 Меню:", reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
                 return
 
-            if t.startswith("/daily"):
+            if _is_cmd(t, "/daily"):
                 d = ensure_daily(chat_id)
-                self.api.send_message(chat_id, "🎯 Задание дня:\n• " + d["text"], reply_markup=menu_daily(chat_id), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(
+                    chat_id, "🎯 Задание дня:\n• " + d["text"],
+                    reply_markup=reply_kb_main(),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
+                self.api.send_message(chat_id, "👇 Daily кнопки:", reply_markup=menu_daily(chat_id), max_text_len=self.s.MAX_TEXT_LEN)
                 return
 
-            if t.startswith("/zombies"):
+            if _is_cmd(t, "/zombies"):
                 p["page"] = "zombies"
                 save_state(self.s.STATE_PATH, self.log)
                 z = zombies_router.handle_callback("zmb:home")
-                self.api.send_message(chat_id, z["text"], reply_markup=z.get("reply_markup"), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(
+                    chat_id, z["text"],
+                    reply_markup=z.get("reply_markup") or reply_kb_main(),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
                 return
 
-            if t.startswith("/reset"):
+            if _is_cmd(t, "/reset"):
                 USER_PROFILE.pop(chat_id, None)
                 USER_MEMORY.pop(chat_id, None)
                 USER_STATS.pop(chat_id, None)
@@ -100,12 +174,22 @@ class BotHandlers:
                 ensure_profile(chat_id)
                 ensure_daily(chat_id)
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.send_message(chat_id, "🧨 Сброс выполнен.", reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(
+                    chat_id, "🧨 Сброс выполнен.",
+                    reply_markup=reply_kb_main(),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
+                self.api.send_message(chat_id, "👇 Меню:", reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
                 return
 
-            # обычный диалог (AI)
+            # ====== обычный диалог ======
             update_memory(chat_id, "user", t, self.s.MEMORY_MAX_TURNS)
-            tmp_id = self.api.send_message(chat_id, thinking_line(), reply_markup=None, max_text_len=self.s.MAX_TEXT_LEN)
+
+            tmp_id = self.api.send_message(
+                chat_id, thinking_line(),
+                reply_markup=None,
+                max_text_len=self.s.MAX_TEXT_LEN
+            )
 
             mode = p.get("mode", "chat")
             try:
@@ -118,13 +202,17 @@ class BotHandlers:
             p["last_answer"] = reply[:2000]
             save_state(self.s.STATE_PATH, self.log)
 
+            # Ответ + нижняя клава + inline меню
             if tmp_id:
                 try:
-                    self.api.edit_message(chat_id, tmp_id, reply, reply_markup=menu_main(chat_id, self.ai.enabled))
+                    self.api.edit_message(chat_id, tmp_id, reply, reply_markup=reply_kb_main())
+                    self.api.send_message(chat_id, "👇 Меню:", reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
                 except Exception:
-                    self.api.send_message(chat_id, reply, reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+                    self.api.send_message(chat_id, reply, reply_markup=reply_kb_main(), max_text_len=self.s.MAX_TEXT_LEN)
+                    self.api.send_message(chat_id, "👇 Меню:", reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
             else:
-                self.api.send_message(chat_id, reply, reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(chat_id, reply, reply_markup=reply_kb_main(), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(chat_id, "👇 Меню:", reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
 
         finally:
             lock.release()
@@ -142,7 +230,7 @@ class BotHandlers:
         try:
             p = ensure_profile(chat_id)
 
-            # ✅ Zombies router
+            # ✅ Zombies router перехватывает ВСЕ zmb:* кнопки
             z = zombies_router.handle_callback(data)
             if z is not None:
                 sp = z.get("set_profile") or {}
@@ -153,16 +241,7 @@ class BotHandlers:
                 self.api.edit_message(chat_id, message_id, z["text"], reply_markup=z.get("reply_markup"))
                 return
 
-            # ✅ NEW: Modules router (Warzone/BF6/BO7)
-            z = modules_registry.route_callback(data, chat_id)
-            if z is not None:
-                # модуль мог поменять профиль через ensure_profile напрямую (как мы сделали),
-                # тут просто сохраняем
-                save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(chat_id, message_id, z["text"], reply_markup=z.get("reply_markup"))
-                return
-
-            # ============= OLD MENUS (ничего не ломаем) =============
+            # ============= NAV / MENUS =============
             if data == "nav:main":
                 p["page"] = "main"
                 save_state(self.s.STATE_PATH, self.log)
@@ -188,6 +267,34 @@ class BotHandlers:
             elif data == "nav:settings":
                 self.api.edit_message(chat_id, message_id, "⚙️ Настройки:", reply_markup=menu_settings(chat_id))
 
+            elif data == "nav:settings_game":
+                self.api.edit_message(chat_id, message_id, "🎮 Настройки игр:", reply_markup=menu_settings_game(chat_id))
+
+            elif data == "nav:wz_settings":
+                self.api.edit_message(chat_id, message_id, "⚙️ Warzone — выбери устройство:", reply_markup=menu_wz_device(chat_id))
+
+            elif data == "nav:bo7_settings":
+                self.api.edit_message(chat_id, message_id, "⚙️ BO7 — выбери устройство:", reply_markup=menu_bo7_device(chat_id))
+
+            elif data == "nav:bf6_settings":
+                self.api.edit_message(chat_id, message_id, "⚙️ BF6 — choose device:", reply_markup=menu_bf6_device(chat_id))
+
+            elif data.startswith("wzdev:"):
+                dev = data.split(":", 1)[1]
+                key = f"wz:{'pad' if dev=='pad' else 'mnk'}"
+                self.api.edit_message(chat_id, message_id, pro_get_text(key), reply_markup=menu_wz_device(chat_id))
+
+            elif data.startswith("bo7dev:"):
+                dev = data.split(":", 1)[1]
+                key = f"bo7:{'pad' if dev=='pad' else 'mnk'}"
+                self.api.edit_message(chat_id, message_id, pro_get_text(key), reply_markup=menu_bo7_device(chat_id))
+
+            elif data.startswith("bf6dev:"):
+                dev = data.split(":", 1)[1]
+                key = f"bf6:{'pad' if dev=='pad' else 'mnk'}"
+                self.api.edit_message(chat_id, message_id, pro_get_text(key), reply_markup=menu_bf6_device(chat_id))
+
+            # ============= TOGGLES =============
             elif data == "toggle:memory":
                 p["memory"] = "off" if p.get("memory", "on") == "on" else "on"
                 if p["memory"] == "off":
@@ -218,6 +325,7 @@ class BotHandlers:
                                       main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
                                       reply_markup=menu_main(chat_id, self.ai.enabled))
 
+            # ============= SETTERS =============
             elif data.startswith("set:game:"):
                 g = data.split(":", 2)[2]
                 if g in ("auto", "warzone", "bf6", "bo7"):
@@ -245,6 +353,7 @@ class BotHandlers:
                                       main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
                                       reply_markup=menu_main(chat_id, self.ai.enabled))
 
+            # ============= ACTIONS =============
             elif data == "action:status":
                 self.api.edit_message(chat_id, message_id,
                                       status_text(self.s.OPENAI_MODEL, self.s.DATA_DIR, self.ai.enabled),
