@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 import os
 import threading
@@ -16,6 +17,16 @@ USER_DAILY: Dict[int, Dict[str, Any]] = {}
 LAST_MSG_TS: Dict[int, float] = {}
 CHAT_LOCKS: Dict[int, threading.Lock] = {}
 
+# ===== Death causes (used by ai.py / analytics / coach logic) =====
+CAUSES = ("info", "timing", "position", "discipline", "mechanics")
+CAUSE_LABEL = {
+    "info": "Инфо (звук/радар/пинги)",
+    "timing": "Тайминг (когда пикнул/вышел)",
+    "position": "Позиция (угол/высота/линия обзора)",
+    "discipline": "Дисциплина (жадность/ресурсы/ресет)",
+    "mechanics": "Механика (аим/отдача/сенса)",
+}
+
 DAILY_POOL = [
     ("angles", "5 файтов подряд — не репикай тот же угол. После первого хита меняй позицию."),
     ("info", "3 файта подряд — сначала инфо (звук/радар), потом выход. Без ‘на авось’."),
@@ -23,14 +34,17 @@ DAILY_POOL = [
     ("reset", "Каждый файт — после контакта 1 раз: ‘плейты/перезар/ресет’ перед репиком."),
 ]
 
+
 def _today_key() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d")
+
 
 def get_lock(chat_id: int) -> threading.Lock:
     with LOCKS_GUARD:
         if chat_id not in CHAT_LOCKS:
             CHAT_LOCKS[chat_id] = threading.Lock()
         return CHAT_LOCKS[chat_id]
+
 
 def ensure_profile(chat_id: int) -> Dict[str, Any]:
     # ⚠️ Важно: ничего не удаляем, только добавляем новые поля для будущего.
@@ -60,6 +74,7 @@ def ensure_profile(chat_id: int) -> Dict[str, Any]:
         "player_level": "normal", # normal | demon | pro (общий уровень игрока)
     })
 
+
 def load_state(state_path: str, log) -> None:
     global USER_PROFILE, USER_MEMORY, USER_STATS, USER_DAILY
     try:
@@ -70,10 +85,13 @@ def load_state(state_path: str, log) -> None:
             USER_MEMORY = {int(k): v for k, v in (data.get("memory") or {}).items()}
             USER_STATS = {int(k): v for k, v in (data.get("stats") or {}).items()}
             USER_DAILY = {int(k): v for k, v in (data.get("daily") or {}).items()}
-            log.info("State loaded: profiles=%d memory=%d stats=%d daily=%d",
-                     len(USER_PROFILE), len(USER_MEMORY), len(USER_STATS), len(USER_DAILY))
+            log.info(
+                "State loaded: profiles=%d memory=%d stats=%d daily=%d",
+                len(USER_PROFILE), len(USER_MEMORY), len(USER_STATS), len(USER_DAILY)
+            )
     except Exception as e:
         log.warning("State load failed: %r (starting clean)", e)
+
 
 def save_state(state_path: str, log) -> None:
     try:
@@ -92,12 +110,14 @@ def save_state(state_path: str, log) -> None:
     except Exception as e:
         log.warning("State save failed: %r", e)
 
+
 def autosave_loop(stop: threading.Event, state_path: str, log, interval_s: int = 60) -> None:
     while not stop.is_set():
         stop.wait(interval_s)
         if stop.is_set():
             break
         save_state(state_path, log)
+
 
 def throttle(chat_id: int, min_seconds_between_msg: float) -> bool:
     now = time.time()
@@ -106,6 +126,7 @@ def throttle(chat_id: int, min_seconds_between_msg: float) -> bool:
         return True
     LAST_MSG_TS[chat_id] = now
     return False
+
 
 def update_memory(chat_id: int, role: str, content: str, memory_max_turns: int) -> None:
     p = ensure_profile(chat_id)
@@ -117,11 +138,21 @@ def update_memory(chat_id: int, role: str, content: str, memory_max_turns: int) 
     if len(mem) > max_len:
         USER_MEMORY[chat_id] = mem[-max_len:]
 
+
 def clear_memory(chat_id: int) -> None:
     USER_MEMORY.pop(chat_id, None)
     p = ensure_profile(chat_id)
     p["last_answer"] = ""
     p["last_question"] = ""
+
+
+def stat_inc(chat_id: int, cause: str) -> None:
+    """
+    Старый функционал: счётчик причин смертей/ошибок (info/timing/position/discipline/mechanics).
+    """
+    st = USER_STATS.setdefault(chat_id, {})
+    st[cause] = int(st.get(cause, 0)) + 1
+
 
 def ensure_daily(chat_id: int) -> Dict[str, Any]:
     d = USER_DAILY.setdefault(chat_id, {})
