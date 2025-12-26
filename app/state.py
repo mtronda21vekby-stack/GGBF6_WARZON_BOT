@@ -1,119 +1,74 @@
-# app/state.py
-# -*- coding: utf-8 -*-
-
 import json
 import os
-import threading
 import time
-from datetime import datetime
 from typing import Dict, Any, List
-from app import config
-from app.log import log
 
-USER_PROFILE: Dict[int, Dict[str, Any]] = {}
-USER_MEMORY: Dict[int, List[Dict[str, str]]] = {}
-USER_STATS: Dict[int, Dict[str, int]] = {}
-USER_DAILY: Dict[int, Dict[str, Any]] = {}
-LAST_MSG_TS: Dict[int, float] = {}
 
-STATE_GUARD = threading.Lock()
+class StateStore:
+    """
+    Простая память:
+    - режим пользователя
+    - история последних сообщений (контекст)
+    Хранение: data/state.json
+    """
 
-def ensure_profile(chat_id: int) -> Dict[str, Any]:
-    return USER_PROFILE.setdefault(chat_id, {
-        "game": "auto",
-        "persona": "spicy",
-        "verbosity": "normal",
-        "memory": "on",
-        "ui": "show",
-        "mode": "chat",
-        "page": "main",        # main | more | zombies
-        "zmb_map": "ashes",
-        "lightning": "off",    # off/on
-        "ai": "on",            # on/off
+    def __init__(self, path: str, history_limit: int = 12):
+        self.path = path
+        self.history_limit = history_limit
+        self.db: Dict[str, Any] = {"users": {}}
+        self._load()
 
-        "menu_msg_id": None,   # ⬅️ ВАЖНО: храним ID “главного меню” чтобы редактировать, а не спамить
+    def _load(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        if not os.path.exists(self.path):
+            self._save()
+            return
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                self.db = json.load(f)
+            if "users" not in self.db:
+                self.db = {"users": {}}
+        except Exception:
+            self.db = {"users": {}}
+            self._save()
 
-        "last_answer": "",
-        "last_question": "",
-    })
-
-def load_state() -> None:
-    global USER_PROFILE, USER_MEMORY, USER_STATS, USER_DAILY
-    try:
-        if os.path.exists(config.STATE_PATH):
-            with open(config.STATE_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            USER_PROFILE = {int(k): v for k, v in (data.get("profiles") or {}).items()}
-            USER_MEMORY = {int(k): v for k, v in (data.get("memory") or {}).items()}
-            USER_STATS = {int(k): v for k, v in (data.get("stats") or {}).items()}
-            USER_DAILY = {int(k): v for k, v in (data.get("daily") or {}).items()}
-            log.info("State loaded: profiles=%d memory=%d stats=%d daily=%d",
-                     len(USER_PROFILE), len(USER_MEMORY), len(USER_STATS), len(USER_DAILY))
-    except Exception as e:
-        log.warning("State load failed: %r (starting clean)", e)
-
-def save_state() -> None:
-    try:
-        with STATE_GUARD:
-            data = {
-                "profiles": {str(k): v for k, v in USER_PROFILE.items()},
-                "memory": {str(k): v for k, v in USER_MEMORY.items()},
-                "stats": {str(k): v for k, v in USER_STATS.items()},
-                "daily": {str(k): v for k, v in USER_DAILY.items()},
-                "saved_at": int(time.time()),
-            }
-        tmp = config.STATE_PATH + ".tmp"
+    def _save(self):
+        tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp, config.STATE_PATH)
-    except Exception as e:
-        log.warning("State save failed: %r", e)
+            json.dump(self.db, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, self.path)
 
-def autosave_loop(stop: threading.Event, interval_s: int = 60) -> None:
-    while not stop.is_set():
-        stop.wait(interval_s)
-        if stop.is_set():
-            break
-        save_state()
+    def get_mode(self, user_id: int) -> str:
+        u = self.db["users"].get(str(user_id), {})
+        return u.get("mode", "chat")
 
-def throttle(chat_id: int) -> bool:
-    now = time.time()
-    last = LAST_MSG_TS.get(chat_id, 0.0)
-    if now - last < config.MIN_SECONDS_BETWEEN_MSG:
-        return True
-    LAST_MSG_TS[chat_id] = now
-    return False
+    def set_mode(self, user_id: int, mode: str):
+        u = self.db["users"].setdefault(str(user_id), {})
+        u["mode"] = mode
+        u["updated_at"] = time.time()
+        self._save()
 
-def update_memory(chat_id: int, role: str, content: str) -> None:
-    p = ensure_profile(chat_id)
-    if p.get("memory", "on") != "on":
-        return
-    mem = USER_MEMORY.setdefault(chat_id, [])
-    mem.append({"role": role, "content": content})
-    max_len = max(2, config.MEMORY_MAX_TURNS * 2)
-    if len(mem) > max_len:
-        USER_MEMORY[chat_id] = mem[-max_len:]
+    def get_history(self, user_id: int) -> List[Dict[str, str]]:
+        u = self.db["users"].get(str(user_id), {})
+        h = u.get("history", [])
+        if not isinstance(h, list):
+            return []
+        return h[-self.history_limit:]
 
-def clear_memory(chat_id: int) -> None:
-    USER_MEMORY.pop(chat_id, None)
-    p = ensure_profile(chat_id)
-    p["last_answer"] = ""
-    p["last_question"] = ""
+    def push(self, user_id: int, role: str, content: str):
+        u = self.db["users"].setdefault(str(user_id), {})
+        h = u.setdefault("history", [])
+        if not isinstance(h, list):
+            h = []
+            u["history"] = h
+        h.append({"role": role, "content": content})
+        u["updated_at"] = time.time()
+        if len(h) > self.history_limit * 3:
+            u["history"] = h[-self.history_limit * 2 :]
+        self._save()
 
-DAILY_POOL = [
-    ("angles", "5 файтов подряд — не репикай тот же угол. После первого хита меняй позицию."),
-    ("info", "3 файта подряд — сначала инфо (звук/радар), потом выход. Без ‘на авось’."),
-    ("center", "10 минут — держи прицел на уровне головы/плеч. Без ‘в пол’."),
-    ("reset", "Каждый файт — после контакта 1 раз: ‘плейты/перезар/ресет’ перед репиком."),
-]
-
-def _today_key() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d")
-
-def ensure_daily(chat_id: int) -> Dict[str, Any]:
-    d = USER_DAILY.setdefault(chat_id, {})
-    if d.get("day") != _today_key() or not d.get("id"):
-        import random
-        cid, text = random.choice(DAILY_POOL)
-        USER_DAILY[chat_id] = {"day": _today_key(), "id": cid, "text": text, "done": 0, "fail": 0}
-    return USER_DAILY[chat_id]
+    def clear(self, user_id: int):
+        u = self.db["users"].setdefault(str(user_id), {})
+        u["history"] = []
+        u["updated_at"] = time.time()
+        self._save()
