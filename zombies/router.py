@@ -3,7 +3,6 @@ from typing import Dict, Any, Optional, List
 
 from zombies import ashes_of_damned, astra_malorum
 
-
 MAPS = {
     ashes_of_damned.MAP_ID: ashes_of_damned,
     astra_malorum.MAP_ID: astra_malorum,
@@ -21,6 +20,11 @@ def _map_name(map_id: str) -> str:
     return getattr(m, "MAP_NAME", map_id)
 
 
+def _profile_zmb(map_id: str) -> Dict[str, Any]:
+    # ВАЖНО: ставим page=zombies и выбранную карту всегда
+    return {"page": "zombies", "zmb_map": _safe_map_id(map_id)}
+
+
 def _menu_kb_buttons(map_id: str) -> Dict[str, Any]:
     map_id = _safe_map_id(map_id)
     m = MAPS[map_id]
@@ -29,7 +33,6 @@ def _menu_kb_buttons(map_id: str) -> Dict[str, Any]:
     rows: List[List[Dict[str, str]]] = []
 
     for sid, title in btns:
-        # sid должен быть строкой
         if not sid or sid == "intro":
             continue
         rows.append([{"text": title, "callback_data": f"zmb:sec:{map_id}:{sid}"}])
@@ -63,8 +66,9 @@ def _text_home(map_id: str) -> str:
 
 
 def handle_callback(data: str) -> Optional[Dict[str, Any]]:
-    if not (data or "").startswith("zmb:"):
-        return None
+    data = (data or "").strip()
+    if not data.startswith("zmb:"):
+        return None  # это НЕ зомби-кнопка, пусть основной роутер обработает
 
     parts = data.split(":")
 
@@ -75,12 +79,16 @@ def handle_callback(data: str) -> Optional[Dict[str, Any]]:
         return {
             "text": _text_home(map_id) + "\n" + (intro.get("text") or ""),
             "reply_markup": _menu_kb_buttons(map_id),
-            "set_profile": {"page": "zombies", "zmb_map": map_id},
+            "set_profile": _profile_zmb(map_id),
         }
 
     # zmb:maps
     if data == "zmb:maps":
-        return {"text": "🗺 Выбери карту:", "reply_markup": _maps_kb()}
+        return {
+            "text": "🗺 Выбери карту:",
+            "reply_markup": _maps_kb(),
+            "set_profile": _profile_zmb(DEFAULT_MAP_ID),
+        }
 
     # zmb:set:<map_id>
     if len(parts) == 3 and parts[1] == "set":
@@ -89,7 +97,7 @@ def handle_callback(data: str) -> Optional[Dict[str, Any]]:
         return {
             "text": _text_home(map_id) + "\n" + (intro.get("text") or ""),
             "reply_markup": _menu_kb_buttons(map_id),
-            "set_profile": {"page": "zombies", "zmb_map": map_id},
+            "set_profile": _profile_zmb(map_id),
         }
 
     # zmb:sec:<map_id>:<section_id>
@@ -98,20 +106,36 @@ def handle_callback(data: str) -> Optional[Dict[str, Any]]:
         sec = MAPS[map_id].get_section(sec_id)
         if not sec:
             sec = MAPS[map_id].get_section("intro") or {"text": "Раздел не найден."}
-        return {"text": sec.get("text") or "—", "reply_markup": _menu_kb_buttons(map_id)}
+        return {
+            "text": sec.get("text") or "—",
+            "reply_markup": _menu_kb_buttons(map_id),
+            "set_profile": _profile_zmb(map_id),
+        }
 
     # zmb:search:<map_id>
     if len(parts) == 3 and parts[1] == "search":
         map_id = _safe_map_id(parts[2])
-        return {"text": _text_home(map_id), "reply_markup": _menu_kb_buttons(map_id)}
+        return {
+            "text": _text_home(map_id),
+            "reply_markup": _menu_kb_buttons(map_id),
+            "set_profile": _profile_zmb(map_id),
+        }
 
     # zmb:quick:<map_id>:<what>
     if len(parts) == 4 and parts[1] == "quick":
         map_id, what = _safe_map_id(parts[2]), parts[3]
         sec = MAPS[map_id].get_section(what) or MAPS[map_id].get_section("intro") or {"text": "—"}
-        return {"text": sec.get("text") or "—", "reply_markup": _menu_kb_buttons(map_id)}
+        return {
+            "text": sec.get("text") or "—",
+            "reply_markup": _menu_kb_buttons(map_id),
+            "set_profile": _profile_zmb(map_id),
+        }
 
-    return {"text": "Zombies: не понял кнопку.", "reply_markup": _maps_kb()}
+    return {
+        "text": "Zombies: не понял кнопку.",
+        "reply_markup": _maps_kb(),
+        "set_profile": _profile_zmb(DEFAULT_MAP_ID),
+    }
 
 
 def handle_text(query: str, current_map: str) -> Optional[Dict[str, Any]]:
@@ -120,12 +144,18 @@ def handle_text(query: str, current_map: str) -> Optional[Dict[str, Any]]:
 
     q = (query or "").strip()
     if not q:
-        return {"text": _text_home(map_id), "reply_markup": _menu_kb_buttons(map_id)}
+        return {
+            "text": _text_home(map_id),
+            "reply_markup": _menu_kb_buttons(map_id),
+            "set_profile": _profile_zmb(map_id),
+        }
 
+    # основной поиск из модуля карты
     search_fn = getattr(mod, "search_sections", None)
     if callable(search_fn):
         hits = search_fn(q) or []
     else:
+        # запасной (почти не нужен, но пусть будет)
         hits = []
         for s in getattr(mod, "SECTIONS", []) or []:
             if not isinstance(s, dict):
@@ -141,18 +171,23 @@ def handle_text(query: str, current_map: str) -> Optional[Dict[str, Any]]:
         return {
             "text": f"❌ Не нашёл по запросу: «{q}»\n\nПопробуй: чеклист / перки / босс / квест / ловушки / деньги",
             "reply_markup": _menu_kb_buttons(map_id),
+            "set_profile": _profile_zmb(map_id),
         }
 
+    # один хит — сразу текст
     if len(hits) == 1:
-        return {"text": (hits[0].get("text") or "—"), "reply_markup": _menu_kb_buttons(map_id)}
+        return {
+            "text": hits[0].get("text") or "—",
+            "reply_markup": _menu_kb_buttons(map_id),
+            "set_profile": _profile_zmb(map_id),
+        }
 
+    # много — список кнопками
     rows: List[List[Dict[str, str]]] = []
     for s in hits[:10]:
         sid = s.get("id") or ""
         title = s.get("title") or "Раздел"
         if not sid:
-            # если id нет — даём просмотр без перехода, чтобы не было битых кнопок
-            rows.append([{"text": title, "callback_data": f"zmb:search:{map_id}"}])
             continue
         rows.append([{"text": title, "callback_data": f"zmb:sec:{map_id}:{sid}"}])
 
@@ -161,4 +196,5 @@ def handle_text(query: str, current_map: str) -> Optional[Dict[str, Any]]:
     return {
         "text": f"🔎 Нашёл {len(hits)} совпадений по «{q}». Выбери раздел:",
         "reply_markup": {"inline_keyboard": rows},
+        "set_profile": _profile_zmb(map_id),
     }
