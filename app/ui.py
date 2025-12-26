@@ -1,56 +1,38 @@
 # -*- coding: utf-8 -*-
 from typing import Dict, Any
-
 from app.state import ensure_profile
 
 PERSONA_HINT = {"spicy": "Дерзко 😈", "chill": "Спокойно 😌", "pro": "Профи 🎯"}
 VERB_HINT = {"short": "Коротко", "normal": "Норм", "talkative": "Подробно"}
 GAME_HINT = {"auto": "AUTO", "warzone": "Warzone", "bf6": "BF6", "bo7": "BO7"}
 
-
 def _badge(ok: bool) -> str:
     return "✅" if ok else "❌"
 
-
 def thinking_line() -> str:
-    return "Анализирую..."
-
+    return "🧠 Анализирую..."
 
 def main_text(chat_id: int, ai_enabled: bool, model: str) -> str:
     p = ensure_profile(chat_id)
     g = p.get("game", "auto")
     mode = p.get("mode", "chat")
-    persona = p.get("persona", "spicy")
-    v = p.get("verbosity", "normal")
-    mem = (p.get("memory", "on") == "on")
-
-    lines = [
-        f"FPS Coach Bot v2 | 🎮 {GAME_HINT.get(g, g)} | 🔁 {mode.upper()} | 🤖 AI {'ON' if ai_enabled else 'OFF'}",
-        "",
-        "Напиши как другу/тиммейту: что бесит, где умираешь, что хочешь улучшить.",
-        "Я буду задавать вопросы и вести тебя к решению.",
-        "",
-        "Или жми меню 👇",
-        "",
-        f"🎭 Стиль: {persona} ({PERSONA_HINT.get(persona,'')})",
-        f"🗣 Ответ: {v} ({VERB_HINT.get(v,'')})",
-        f"🧠 Память: {_badge(mem)}",
-        f"🤖 Модель: {model}",
-    ]
-    return "\n".join(lines)
-
+    return (
+        f"🌑 FPS Coach Bot v2 | 🎮 {GAME_HINT.get(g, g)} | 🔁 {mode.upper()} | 🤖 AI {'ON' if ai_enabled else 'OFF'}\n\n"
+        "Напиши ситуацию/смерть — разберу.\n"
+        "Или жми меню 👇"
+    )
 
 def help_text() -> str:
     return (
+        "❓ Помощь\n"
         "Команды:\n"
-        "/start или /menu — меню\n"
-        "/zombies — раздел Zombies\n"
-        "/daily — задание дня\n"
-        "/status — статус\n"
-        "/profile — профиль\n"
-        "/reset — сброс\n"
+        "• /start или /menu — меню\n"
+        "• /zombies — Zombies\n"
+        "• /daily — задание дня\n"
+        "• /status — статус\n"
+        "• /profile — профиль\n"
+        "• /reset — сброс\n"
     )
-
 
 def status_text(model: str, data_dir: str, ai_enabled: bool) -> str:
     return (
@@ -60,20 +42,18 @@ def status_text(model: str, data_dir: str, ai_enabled: bool) -> str:
         f"• Data dir: {data_dir}\n"
     )
 
-
 def profile_text(chat_id: int) -> str:
     p = ensure_profile(chat_id)
     return (
         "👤 Профиль:\n"
         f"• game: {p.get('game','auto')}\n"
         f"• mode: {p.get('mode','chat')}\n"
-        f"• persona: {p.get('persona','spicy')}\n"
-        f"• verbosity: {p.get('verbosity','normal')}\n"
-        f"• memory: {p.get('memory','on')}\n"
+        f"• persona: {p.get('persona','spicy')} ({PERSONA_HINT.get(p.get('persona','spicy'),'')})\n"
+        f"• verbosity: {p.get('verbosity','normal')} ({VERB_HINT.get(p.get('verbosity','normal'),'')})\n"
+        f"• memory: {_badge(p.get('memory','on')=='on')}\n"
         f"• speed: {p.get('speed','normal')}\n"
         f"• ui: {p.get('ui','show')}\n"
     )
-
 
 # =========================
 # INLINE MENUS (премиум кнопки под сообщением)
@@ -90,7 +70,7 @@ def menu_main(chat_id: int, ai_enabled: bool) -> Dict[str, Any]:
 
     return {"inline_keyboard": [
         [{"text": f"🎮 Игра: {GAME_HINT.get(game, game)}", "callback_data": "nav:game"},
-         {"text": f"🎭 Стиль: {persona}", "callback_data": "nav:persona"}],
+         {"text": f"🎭 Стиль: {persona} {('😈' if persona=='spicy' else '😌' if persona=='chill' else '🎯')}", "callback_data": "nav:persona"}],
 
         [{"text": f"🗣 Ответ: {verbosity}", "callback_data": "nav:talk"},
          {"text": f"🧠 Память {_badge(mem_on)}", "callback_data": "toggle:memory"}],
@@ -105,7 +85,6 @@ def menu_main(chat_id: int, ai_enabled: bool) -> Dict[str, Any]:
          {"text": "📦 Ещё", "callback_data": "nav:more"}],
     ]}
 
-
 def menu_more(chat_id: int) -> Dict[str, Any]:
     return {"inline_keyboard": [
         [{"text": "🎬 VOD / Разбор", "callback_data": "action:vod"}],
@@ -116,7 +95,6 @@ def menu_more(chat_id: int) -> Dict[str, Any]:
         [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
     ]}
 
-
 def menu_game(chat_id: int) -> Dict[str, Any]:
     return {"inline_keyboard": [
         [{"text": "🎮 AUTO", "callback_data": "set:game:auto"}],
@@ -126,7 +104,6 @@ def menu_game(chat_id: int) -> Dict[str, Any]:
         [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
     ]}
 
-
 def menu_persona(chat_id: int) -> Dict[str, Any]:
     return {"inline_keyboard": [
         [{"text": "😈 spicy", "callback_data": "set:persona:spicy"}],
@@ -134,7 +111,6 @@ def menu_persona(chat_id: int) -> Dict[str, Any]:
         [{"text": "🎯 pro", "callback_data": "set:persona:pro"}],
         [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
     ]}
-
 
 def menu_talk(chat_id: int) -> Dict[str, Any]:
     return {"inline_keyboard": [
@@ -144,7 +120,6 @@ def menu_talk(chat_id: int) -> Dict[str, Any]:
         [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
     ]}
 
-
 def menu_training(chat_id: int) -> Dict[str, Any]:
     return {"inline_keyboard": [
         [{"text": "🎯 Aim", "callback_data": "action:drill:aim"}],
@@ -152,7 +127,6 @@ def menu_training(chat_id: int) -> Dict[str, Any]:
         [{"text": "🏃 Movement", "callback_data": "action:drill:movement"}],
         [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
     ]}
-
 
 def menu_settings(chat_id: int) -> Dict[str, Any]:
     p = ensure_profile(chat_id)
@@ -166,14 +140,12 @@ def menu_settings(chat_id: int) -> Dict[str, Any]:
         [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
     ]}
 
-
 def menu_daily(chat_id: int) -> Dict[str, Any]:
     return {"inline_keyboard": [
         [{"text": "✅ Сделал", "callback_data": "daily:done"},
          {"text": "❌ Не вышло", "callback_data": "daily:fail"}],
         [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
     ]}
-
 
 # =========================
 # Настройки игр — девайсы
@@ -187,7 +159,6 @@ def menu_settings_game(chat_id: int) -> Dict[str, Any]:
         [{"text": "⬅️ Назад", "callback_data": "nav:settings"}],
     ]}
 
-
 def menu_wz_device(chat_id: int) -> Dict[str, Any]:
     return {"inline_keyboard": [
         [{"text": "🎮 PS5 / Xbox (Controller)", "callback_data": "wzdev:pad"}],
@@ -195,14 +166,12 @@ def menu_wz_device(chat_id: int) -> Dict[str, Any]:
         [{"text": "⬅️ Назад", "callback_data": "nav:settings_game"}],
     ]}
 
-
 def menu_bo7_device(chat_id: int) -> Dict[str, Any]:
     return {"inline_keyboard": [
         [{"text": "🎮 PS5 / Xbox (Controller)", "callback_data": "bo7dev:pad"}],
         [{"text": "🖥 PC (Mouse & Keyboard)", "callback_data": "bo7dev:mnk"}],
         [{"text": "⬅️ Назад", "callback_data": "nav:settings_game"}],
     ]}
-
 
 def menu_bf6_device(chat_id: int) -> Dict[str, Any]:
     return {"inline_keyboard": [
