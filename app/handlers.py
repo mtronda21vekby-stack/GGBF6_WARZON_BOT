@@ -5,6 +5,9 @@ from zombies import router as zombies_router
 from app.kb import GAME_KB
 from app.pro_settings import get_text as pro_get_text
 
+# ✅ BF6 module (ReplyKeyboard roles/deaths + inline hub)
+from app import bf6_module
+
 from app.state import (
     ensure_profile, ensure_daily,
     update_memory, clear_memory,
@@ -44,10 +47,36 @@ class BotHandlers:
             if not t.startswith("/") and p.get("page") == "zombies":
                 z = zombies_router.handle_text(t, current_map=p.get("zmb_map", "ashes"))
                 if z is not None:
-                    self.api.send_message(chat_id, z["text"], reply_markup=z.get("reply_markup"), max_text_len=self.s.MAX_TEXT_LEN)
+                    self.api.send_message(
+                        chat_id,
+                        z["text"],
+                        reply_markup=z.get("reply_markup"),
+                        max_text_len=self.s.MAX_TEXT_LEN
+                    )
                     return
 
+            # ✅ BF6 ReplyKeyboard (roles/deaths) — перехват ДО AI
+            # НИЧЕГО не режет: срабатывает только если page=bf6_roles/bf6_deaths
+            bf = bf6_module.handle_text(chat_id, t)
+            if bf is not None:
+                # если модуль просит выставить профиль
+                sp = bf.get("set_profile") or {}
+                if isinstance(sp, dict) and sp:
+                    for k, v in sp.items():
+                        p[k] = v
+                save_state(self.s.STATE_PATH, self.log)
+
+                self.api.send_message(
+                    chat_id,
+                    bf["text"],
+                    reply_markup=bf.get("reply_markup"),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
+                return
+
+            # -------------------------
             # Команды
+            # -------------------------
             if t.startswith("/start") or t.startswith("/menu"):
                 p["page"] = "main"
                 ensure_daily(chat_id)
@@ -61,28 +90,52 @@ class BotHandlers:
                 return
 
             if t.startswith("/help"):
-                self.api.send_message(chat_id, help_text(), reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(
+                    chat_id,
+                    help_text(),
+                    reply_markup=menu_main(chat_id, self.ai.enabled),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
                 return
 
             if t.startswith("/status"):
-                self.api.send_message(chat_id, status_text(self.s.OPENAI_MODEL, self.s.DATA_DIR, self.ai.enabled),
-                                      reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(
+                    chat_id,
+                    status_text(self.s.OPENAI_MODEL, self.s.DATA_DIR, self.ai.enabled),
+                    reply_markup=menu_main(chat_id, self.ai.enabled),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
                 return
 
             if t.startswith("/profile"):
-                self.api.send_message(chat_id, profile_text(chat_id), reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(
+                    chat_id,
+                    profile_text(chat_id),
+                    reply_markup=menu_main(chat_id, self.ai.enabled),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
                 return
 
             if t.startswith("/daily"):
                 d = ensure_daily(chat_id)
-                self.api.send_message(chat_id, "🎯 Задание дня:\n• " + d["text"], reply_markup=menu_daily(chat_id), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(
+                    chat_id,
+                    "🎯 Задание дня:\n• " + d["text"],
+                    reply_markup=menu_daily(chat_id),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
                 return
 
             if t.startswith("/zombies"):
                 p["page"] = "zombies"
                 save_state(self.s.STATE_PATH, self.log)
                 z = zombies_router.handle_callback("zmb:home")
-                self.api.send_message(chat_id, z["text"], reply_markup=z.get("reply_markup"), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(
+                    chat_id,
+                    z["text"],
+                    reply_markup=z.get("reply_markup"),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
                 return
 
             if t.startswith("/reset"):
@@ -93,13 +146,25 @@ class BotHandlers:
                 ensure_profile(chat_id)
                 ensure_daily(chat_id)
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.send_message(chat_id, "🧨 Сброс выполнен.", reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(
+                    chat_id,
+                    "🧨 Сброс выполнен.",
+                    reply_markup=menu_main(chat_id, self.ai.enabled),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
                 return
 
-            # обычный диалог
+            # -------------------------
+            # Обычный диалог (AI)
+            # -------------------------
             update_memory(chat_id, "user", t, self.s.MEMORY_MAX_TURNS)
 
-            tmp_id = self.api.send_message(chat_id, thinking_line(), reply_markup=None, max_text_len=self.s.MAX_TEXT_LEN)
+            tmp_id = self.api.send_message(
+                chat_id,
+                thinking_line(),
+                reply_markup=None,
+                max_text_len=self.s.MAX_TEXT_LEN
+            )
 
             mode = p.get("mode", "chat")
             try:
@@ -114,11 +179,26 @@ class BotHandlers:
 
             if tmp_id:
                 try:
-                    self.api.edit_message(chat_id, tmp_id, reply, reply_markup=menu_main(chat_id, self.ai.enabled))
+                    self.api.edit_message(
+                        chat_id,
+                        tmp_id,
+                        reply,
+                        reply_markup=menu_main(chat_id, self.ai.enabled)
+                    )
                 except Exception:
-                    self.api.send_message(chat_id, reply, reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+                    self.api.send_message(
+                        chat_id,
+                        reply,
+                        reply_markup=menu_main(chat_id, self.ai.enabled),
+                        max_text_len=self.s.MAX_TEXT_LEN
+                    )
             else:
-                self.api.send_message(chat_id, reply, reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
+                self.api.send_message(
+                    chat_id,
+                    reply,
+                    reply_markup=menu_main(chat_id, self.ai.enabled),
+                    max_text_len=self.s.MAX_TEXT_LEN
+                )
 
         finally:
             lock.release()
@@ -147,13 +227,30 @@ class BotHandlers:
                 self.api.edit_message(chat_id, message_id, z["text"], reply_markup=z.get("reply_markup"))
                 return
 
+            # ✅ BF6 router перехватывает bf6:* (HUB/roles/deaths)
+            bf = bf6_module.handle_callback(data)
+            if bf is not None:
+                sp = bf.get("set_profile") or {}
+                if isinstance(sp, dict) and sp:
+                    for k, v in sp.items():
+                        p[k] = v
+                    save_state(self.s.STATE_PATH, self.log)
+
+                # BF6 может захотеть ReplyKeyboard (нижнюю)
+                # В callback лучше редактировать сообщение + отдавать reply_markup
+                self.api.edit_message(chat_id, message_id, bf["text"], reply_markup=bf.get("reply_markup"))
+                return
+
             # ============= NAV / MENUS =============
             if data == "nav:main":
                 p["page"] = "main"
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(chat_id, message_id,
-                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                                      reply_markup=menu_main(chat_id, self.ai.enabled))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                    reply_markup=menu_main(chat_id, self.ai.enabled)
+                )
 
             elif data == "nav:more":
                 self.api.edit_message(chat_id, message_id, "📦 Ещё:", reply_markup=menu_more(chat_id))
@@ -183,6 +280,9 @@ class BotHandlers:
                 self.api.edit_message(chat_id, message_id, "⚙️ BO7 — выбери устройство:", reply_markup=menu_bo7_device(chat_id))
 
             elif data == "nav:bf6_settings":
+                # ✅ Добавляем “BF6 hub” по кнопке настроек BF6 (ничего не режем!)
+                # Если хочешь оставить старое устройство меню — можно, но хаб удобнее.
+                # Сейчас сделаем так: показываем девайс меню как было + оставляем возможность зайти в bf6:hub через отдельную кнопку (в ui.py добавим позже)
                 self.api.edit_message(chat_id, message_id, "⚙️ BF6 — choose device:", reply_markup=menu_bf6_device(chat_id))
 
             elif data.startswith("wzdev:"):
@@ -206,30 +306,42 @@ class BotHandlers:
                 if p["memory"] == "off":
                     clear_memory(chat_id)
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(chat_id, message_id,
-                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                                      reply_markup=menu_main(chat_id, self.ai.enabled))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                    reply_markup=menu_main(chat_id, self.ai.enabled)
+                )
 
             elif data == "toggle:mode":
                 p["mode"] = "coach" if p.get("mode", "chat") == "chat" else "chat"
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(chat_id, message_id,
-                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                                      reply_markup=menu_main(chat_id, self.ai.enabled))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                    reply_markup=menu_main(chat_id, self.ai.enabled)
+                )
 
             elif data == "toggle:ui":
                 p["ui"] = "hide" if p.get("ui", "show") == "show" else "show"
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(chat_id, message_id,
-                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                                      reply_markup=menu_main(chat_id, self.ai.enabled))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                    reply_markup=menu_main(chat_id, self.ai.enabled)
+                )
 
             elif data == "toggle:lightning":
                 p["speed"] = "normal" if p.get("speed", "normal") == "lightning" else "lightning"
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(chat_id, message_id,
-                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                                      reply_markup=menu_main(chat_id, self.ai.enabled))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                    reply_markup=menu_main(chat_id, self.ai.enabled)
+                )
 
             # ============= SETTERS =============
             elif data.startswith("set:game:"):
@@ -237,41 +349,57 @@ class BotHandlers:
                 if g in ("auto", "warzone", "bf6", "bo7"):
                     p["game"] = g
                     save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(chat_id, message_id,
-                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                                      reply_markup=menu_main(chat_id, self.ai.enabled))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                    reply_markup=menu_main(chat_id, self.ai.enabled)
+                )
 
             elif data.startswith("set:persona:"):
                 v = data.split(":", 2)[2]
                 if v in ("spicy", "chill", "pro"):
                     p["persona"] = v
                     save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(chat_id, message_id,
-                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                                      reply_markup=menu_main(chat_id, self.ai.enabled))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                    reply_markup=menu_main(chat_id, self.ai.enabled)
+                )
 
             elif data.startswith("set:talk:"):
                 v = data.split(":", 2)[2]
                 if v in ("short", "normal", "talkative"):
                     p["verbosity"] = v
                     save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(chat_id, message_id,
-                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                                      reply_markup=menu_main(chat_id, self.ai.enabled))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                    reply_markup=menu_main(chat_id, self.ai.enabled)
+                )
 
             # ============= ACTIONS =============
             elif data == "action:status":
-                self.api.edit_message(chat_id, message_id,
-                                      status_text(self.s.OPENAI_MODEL, self.s.DATA_DIR, self.ai.enabled),
-                                      reply_markup=menu_settings(chat_id))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    status_text(self.s.OPENAI_MODEL, self.s.DATA_DIR, self.ai.enabled),
+                    reply_markup=menu_settings(chat_id)
+                )
 
             elif data == "action:profile":
                 self.api.edit_message(chat_id, message_id, profile_text(chat_id), reply_markup=menu_more(chat_id))
 
             elif data == "action:ai_status":
                 ai = "ON" if self.ai.enabled else "OFF"
-                self.api.edit_message(chat_id, message_id, f"🤖 ИИ: {ai}\nМодель: {self.s.OPENAI_MODEL}",
-                                      reply_markup=menu_main(chat_id, self.ai.enabled))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    f"🤖 ИИ: {ai}\nМодель: {self.s.OPENAI_MODEL}",
+                    reply_markup=menu_main(chat_id, self.ai.enabled)
+                )
 
             elif data == "action:clear_memory":
                 clear_memory(chat_id)
@@ -310,22 +438,31 @@ class BotHandlers:
                 d = ensure_daily(chat_id)
                 d["done"] = int(d.get("done", 0)) + 1
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(chat_id, message_id,
-                                      f"✅ Засчитал.\n\n🎯 Задание дня:\n• {d['text']}\n(сделано={d['done']} / не вышло={d['fail']})",
-                                      reply_markup=menu_daily(chat_id))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    f"✅ Засчитал.\n\n🎯 Задание дня:\n• {d['text']}\n(сделано={d['done']} / не вышло={d['fail']})",
+                    reply_markup=menu_daily(chat_id)
+                )
 
             elif data == "daily:fail":
                 d = ensure_daily(chat_id)
                 d["fail"] = int(d.get("fail", 0)) + 1
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(chat_id, message_id,
-                                      f"❌ Ок.\n\n🎯 Задание дня:\n• {d['text']}\n(сделано={d['done']} / не вышло={d['fail']})",
-                                      reply_markup=menu_daily(chat_id))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    f"❌ Ок.\n\n🎯 Задание дня:\n• {d['text']}\n(сделано={d['done']} / не вышло={d['fail']})",
+                    reply_markup=menu_daily(chat_id)
+                )
 
             else:
-                self.api.edit_message(chat_id, message_id,
-                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                                      reply_markup=menu_main(chat_id, self.ai.enabled))
+                self.api.edit_message(
+                    chat_id,
+                    message_id,
+                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                    reply_markup=menu_main(chat_id, self.ai.enabled)
+                )
 
         finally:
             self.api.answer_callback(cb_id)
