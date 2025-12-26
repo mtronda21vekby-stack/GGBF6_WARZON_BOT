@@ -1,24 +1,57 @@
 # app/ui.py
 # -*- coding: utf-8 -*-
 
+from app.state import ensure_profile
+from app.ai import ai_is_on
+
+
 def _badge(ok: bool) -> str:
     return "✅" if ok else "🚫"
 
-def main_menu_markup(p: dict, ai_on: bool):
-    """
-    Главное меню:
-    - оставляем верхние настройки
-    - оставляем Zombies
-    - всё остальное прячем под кнопку 📦 Ещё
-    """
-    game = (p.get("game", "auto") or "auto").upper()
+
+def header(chat_id: int) -> str:
+    p = ensure_profile(chat_id)
+    ai = "ON" if ai_is_on() else "OFF"
+    mode = p.get("mode", "chat").upper()
+    game = p.get("game", "auto").upper()
+    return f"🌑 FPS Coach Bot | 🎮 {game} | 🔁 {mode} | 🤖 AI {ai}"
+
+
+def main_text(chat_id: int) -> str:
+    p = ensure_profile(chat_id)
+    mode = p.get("mode", "chat")
+    if mode == "coach":
+        return (
+            f"{header(chat_id)}\n\n"
+            "COACH режим: опиши 1 сцену:\n"
+            "• где был • кто первый увидел • на чём умер • что хотел сделать\n\n"
+            "Или жми меню 👇"
+        )
+    if mode == "auto":
+        return (
+            f"{header(chat_id)}\n\n"
+            "AUTO режим: я сам выберу CHAT/COACH по твоему сообщению.\n"
+            "Напиши как тиммейту: что бесит, где умираешь, что хочешь улучшить.\n\n"
+            "Или жми меню 👇"
+        )
+    return (
+        f"{header(chat_id)}\n\n"
+        "Напиши как другу/тиммейту: что бесит, где умираешь, что хочешь улучшить.\n"
+        "Я буду задавать вопросы и вести тебя к решению.\n\n"
+        "Или жми меню 👇"
+    )
+
+
+def main_menu_markup(chat_id: int):
+    p = ensure_profile(chat_id)
+    game = p.get("game", "auto").upper()
     persona = p.get("persona", "spicy")
     talk = p.get("verbosity", "normal")
-    mode = (p.get("mode", "chat") or "chat").upper()
-
     mem_on = (p.get("memory", "on") == "on")
+    mode = p.get("mode", "chat").upper()
     lightning_on = (p.get("lightning", "off") == "on")
 
+    # ✅ НИЖНИЕ КНОПКИ СПРЯТАНЫ В "📦 ЕЩЁ"
     return {
         "inline_keyboard": [
             [
@@ -26,24 +59,26 @@ def main_menu_markup(p: dict, ai_on: bool):
                 {"text": f"🎭 Стиль: {persona}", "callback_data": "nav:persona"},
             ],
             [
-                {"text": f"💬 Ответ: {talk}", "callback_data": "nav:talk"},
+                {"text": f"🗣 Ответ: {talk}", "callback_data": "nav:talk"},
                 {"text": f"{_badge(mem_on)} Память", "callback_data": "toggle:memory"},
             ],
             [
                 {"text": f"🔁 Режим: {mode}", "callback_data": "toggle:mode"},
-                {"text": f"🤖 ИИ: {'ON' if ai_on else 'OFF'}", "callback_data": "action:ai_status"},
+                {"text": f"🤖 ИИ: {'ON' if ai_is_on() else 'OFF'}", "callback_data": "action:ai_status"},
             ],
             [
                 {"text": f"⚡ Молния: {'ВКЛ' if lightning_on else 'ВЫКЛ'}", "callback_data": "toggle:lightning"},
-                {"text": "🧟 Zombies", "callback_data": "zmb:home"},  # ВАЖНО: zmb:home
+                {"text": "🧟 Zombies", "callback_data": "zmb:home"},
             ],
             [
-                {"text": "📦 Ещё", "callback_data": "ui:more"},
+                {"text": "📦 Ещё", "callback_data": "nav:more"},
             ],
         ]
     }
 
-def more_menu_markup():
+
+def more_menu_markup(chat_id: int):
+    # Всё, что было “снизу” — теперь здесь
     return {
         "inline_keyboard": [
             [
@@ -60,7 +95,73 @@ def more_menu_markup():
                 {"text": "🧨 Сбросить всё", "callback_data": "action:reset_all"},
             ],
             [
-                {"text": "⬅️ Назад", "callback_data": "ui:main"},
+                {"text": "⬅️ Назад", "callback_data": "nav:main"},
             ],
         ]
     }
+
+
+def menu_game(chat_id: int):
+    p = ensure_profile(chat_id)
+    cur = p.get("game", "auto")
+
+    def b(key, label):
+        return {"text": ("✅ " if cur == key else "") + label, "callback_data": f"set:game:{key}"}
+
+    return {"inline_keyboard": [
+        [b("auto", "АВТО"), b("warzone", "WZ"), b("bf6", "BF6"), b("bo7", "BO7")],
+        [{"text": "⬅️ Назад", "callback_data": "nav:main"}]
+    ]}
+
+
+def menu_persona(chat_id: int):
+    p = ensure_profile(chat_id)
+    cur = p.get("persona", "spicy")
+
+    def b(key, label):
+        return {"text": ("✅ " if cur == key else "") + label, "callback_data": f"set:persona:{key}"}
+
+    return {"inline_keyboard": [
+        [b("spicy", "Дерзко 😈"), b("chill", "Спокойно 🙂"), b("pro", "Профи 🧠")],
+        [{"text": "⬅️ Назад", "callback_data": "nav:main"}]
+    ]}
+
+
+def menu_talk(chat_id: int):
+    p = ensure_profile(chat_id)
+    cur = p.get("verbosity", "normal")
+
+    def b(key, label):
+        return {"text": ("✅ " if cur == key else "") + label, "callback_data": f"set:talk:{key}"}
+
+    return {"inline_keyboard": [
+        [b("short", "Коротко"), b("normal", "Норм"), b("talkative", "Подробно")],
+        [{"text": "⬅️ Назад", "callback_data": "nav:main"}]
+    ]}
+
+
+def menu_settings(chat_id: int):
+    p = ensure_profile(chat_id)
+    ui = p.get("ui", "show")
+    return {"inline_keyboard": [
+        [{"text": f"{_badge(ui=='show')} Показ меню", "callback_data": "toggle:ui"},
+         {"text": "🧾 Статус", "callback_data": "action:status"}],
+        [{"text": "⬅️ Назад", "callback_data": "nav:more"}],
+    ]}
+
+
+def menu_training(chat_id: int):
+    return {"inline_keyboard": [
+        [{"text": "🎯 Аим", "callback_data": "action:drill:aim"},
+         {"text": "🔫 Отдача", "callback_data": "action:drill:recoil"},
+         {"text": "🕹 Мувмент", "callback_data": "action:drill:movement"}],
+        [{"text": "⬅️ Назад", "callback_data": "nav:more"}],
+    ]}
+
+
+def menu_daily(chat_id: int):
+    return {"inline_keyboard": [
+        [{"text": "✅ Сделал", "callback_data": "daily:done"},
+         {"text": "❌ Не вышло", "callback_data": "daily:fail"}],
+        [{"text": "⬅️ Назад", "callback_data": "nav:more"}],
+    ]}
