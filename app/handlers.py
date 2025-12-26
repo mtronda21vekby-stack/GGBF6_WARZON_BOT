@@ -1,118 +1,84 @@
 # -*- coding: utf-8 -*-
-"""
-SAFE HANDLERS v1
-Цель:
-- 100% старт на Render
-- совместимость со старым runner.py
-- не ломаем архитектуру
-- база под Brain v3 / UI Premium
-"""
 
-from typing import Any, Dict, Optional
-import traceback
-
-# UI / KB — если есть, используем, если нет — не падаем
-try:
-    from app.ui import main_text, menu_main
-except Exception:
-    main_text = None
-    menu_main = None
-
-try:
-    from app.state import ensure_profile
-except Exception:
-    ensure_profile = None
+from app.ui import (
+    show_main_menu,
+    show_game_menu,
+    show_style_menu,
+    show_settings_menu,
+)
+from app.state import ensure_profile
+from app.log import log
 
 
 class BotHandlers:
-    """
-    ❗ КЛЮЧЕВОЕ:
-    __init__ принимает ЛЮБЫЕ аргументы
-    => runner.py больше НИКОГДА не упадёт
-    """
+    def __init__(self, api, ai_engine):
+        self.api = api
+        self.ai = ai_engine
 
-    def __init__(self, *args, **kwargs):
-        # ничего не предполагаем — просто сохраняем
-        self.args = args
-        self.kwargs = kwargs
+    def handle_text(self, chat_id: int, text: str):
+        text = text.strip()
 
-        # часто передают так — аккуратно вытащим
-        self.api = kwargs.get("api")
-        self.ai_engine = kwargs.get("ai_engine")
-        self.log = kwargs.get("log")
-
-        if self.log:
-            self.log.info("✅ BotHandlers initialized (SAFE MODE)")
-
-    # =========================
-    # ENTRY POINTS
-    # =========================
-
-    def on_start(self, chat_id: int) -> None:
-        """
-        /start или первый вход
-        """
-        try:
-            if ensure_profile:
-                ensure_profile(chat_id)
-
-            text = (
-                "🎮 FPS Coach Bot\n"
-                "🧠 Brain v3 (SAFE BOOT)\n\n"
-                "Напиши ситуацию или жми меню 👇"
+        # ===== МЕНЮ =====
+        if text in ("Меню", "📋 Меню"):
+            return self.api.send_message(
+                chat_id,
+                "📋 Главное меню",
+                reply_markup=show_main_menu()
             )
 
-            if main_text and self.ai_engine:
-                text = main_text(
-                    chat_id=chat_id,
-                    ai_enabled=bool(self.ai_engine),
-                    model=getattr(self.ai_engine, "model", "unknown"),
-                )
+        # ===== ИГРА =====
+        if text in ("Игра", "🎮 Игра"):
+            return self.api.send_message(
+                chat_id,
+                "🎮 Выбери игру",
+                reply_markup=show_game_menu()
+            )
 
-            kb = menu_main(chat_id, bool(self.ai_engine)) if menu_main else None
+        # ===== СТИЛЬ =====
+        if text in ("Стиль", "🎭 Стиль"):
+            return self.api.send_message(
+                chat_id,
+                "🎭 Выбери стиль игры",
+                reply_markup=show_style_menu()
+            )
 
-            if self.api:
-                self.api.send_message(chat_id, text, reply_markup=kb)
+        # ===== НАСТРОЙКИ =====
+        if text in ("Настройки", "⚙️ Настройки"):
+            return self.api.send_message(
+                chat_id,
+                "⚙️ Настройки бота",
+                reply_markup=show_settings_menu()
+            )
 
-        except Exception as e:
-            if self.log:
-                self.log.error("on_start failed: %r", e)
-                self.log.error(traceback.format_exc())
+        # ===== ZOMBIES =====
+        if text in ("Zombies", "🧟 Zombies"):
+            return self.api.send_message(
+                chat_id,
+                "🧟 Zombies режим активирован"
+            )
 
-    def on_message(self, chat_id: int, text: str) -> None:
-        """
-        Любое текстовое сообщение
-        SAFE: даже если AI/KB отсутствуют
-        """
-        try:
-            if self.ai_engine:
-                reply = self.ai_engine.chat_reply(chat_id, text)
-            else:
-                reply = (
-                    "🧠 AI временно OFF\n"
-                    "Опиши: где умер и почему думаешь?"
-                )
+        # ===== ПРОФИЛЬ =====
+        if text == "Профиль":
+            p = ensure_profile(chat_id)
+            return self.api.send_message(
+                chat_id,
+                f"👤 Профиль:\n"
+                f"Игра: {p.get('game','auto')}\n"
+                f"Стиль: {p.get('persona','spicy')}\n"
+                f"Ответы: {p.get('verbosity','normal')}"
+            )
 
-            if self.api:
-                self.api.send_message(chat_id, reply)
+        # ===== ОЧИСТКА ПАМЯТИ =====
+        if text == "Очистить память":
+            p = ensure_profile(chat_id)
+            p["memory"] = []
+            return self.api.send_message(chat_id, "🧹 Память очищена")
 
-        except Exception as e:
-            if self.log:
-                self.log.error("on_message failed: %r", e)
-                self.log.error(traceback.format_exc())
+        # ===== СБРОС =====
+        if text == "Сброс":
+            ensure_profile(chat_id, reset=True)
+            return self.api.send_message(chat_id, "🔄 Всё сброшено")
 
-    def on_callback(self, chat_id: int, data: str) -> None:
-        """
-        Inline кнопки
-        Пока SAFE-заглушка — UI не ломается
-        """
-        try:
-            if self.api:
-                self.api.send_message(
-                    chat_id,
-                    f"⚙️ Опция принята: `{data}`",
-                )
-        except Exception as e:
-            if self.log:
-                self.log.error("on_callback failed: %r", e)
-                self.log.error(traceback.format_exc())
+        # ===== FALLBACK → BRAIN v3 =====
+        log.info("Brain v3 handling message")
+        return self.ai.reply(chat_id, text)
