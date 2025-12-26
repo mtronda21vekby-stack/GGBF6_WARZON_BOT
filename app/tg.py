@@ -1,6 +1,7 @@
 # app/tg.py
 # -*- coding: utf-8 -*-
 
+import os
 import random
 import time
 import requests
@@ -11,7 +12,9 @@ from app import config
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "render-fps-coach-bot/modular-v2"})
-SESSION.mount("https://", requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20))
+adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
+SESSION.mount("https://", adapter)
+SESSION.mount("http://", adapter)
 
 
 def _sleep_backoff(i: int):
@@ -37,12 +40,14 @@ def tg_request(method: str, *, params=None, payload=None, is_post: bool = False,
                 r = SESSION.get(url, params=params, timeout=config.HTTP_TIMEOUT)
 
             data = r.json()
+
             if r.status_code == 200 and data.get("ok"):
                 return data
 
             desc = data.get("description", f"Telegram HTTP {r.status_code}")
             last = RuntimeError(desc)
 
+            # 429 retry_after
             params_ = data.get("parameters") or {}
             retry_after = params_.get("retry_after")
             if isinstance(retry_after, int) and retry_after > 0:
@@ -58,25 +63,49 @@ def tg_request(method: str, *, params=None, payload=None, is_post: bool = False,
 
 
 def send_message(chat_id: int, text: str, reply_markup=None) -> int | None:
-    payload = {"chat_id": chat_id, "text": (text or "")}
+    payload = {
+        "chat_id": chat_id,
+        "text": (text or ""),
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
+
     res = tg_request("sendMessage", payload=payload, is_post=True)
     return (res.get("result") or {}).get("message_id")
 
 
 def edit_message(chat_id: int, message_id: int, text: str, reply_markup=None) -> None:
-    payload = {"chat_id": chat_id, "message_id": message_id, "text": (text or "")}
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": (text or ""),
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
-    tg_request("editMessageText", payload=payload, is_post=True)
+
+    try:
+        tg_request("editMessageText", payload=payload, is_post=True)
+    except Exception as e:
+        # Частая телеграм-ошибка, когда текст не изменился
+        if "message is not modified" in str(e).lower():
+            return
+        raise
 
 
 def answer_callback(callback_id: str | None) -> None:
     if not callback_id:
         return
     try:
-        tg_request("answerCallbackQuery", payload={"callback_query_id": callback_id}, is_post=True, retries=2)
+        tg_request(
+            "answerCallbackQuery",
+            payload={"callback_query_id": callback_id},
+            is_post=True,
+            retries=2
+        )
     except Exception:
         pass
 
@@ -103,7 +132,6 @@ def save_offset(offset: int) -> None:
         tmp = config.OFFSET_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(str(int(offset)))
-        import os
         os.replace(tmp, config.OFFSET_PATH)
     except Exception:
         pass
