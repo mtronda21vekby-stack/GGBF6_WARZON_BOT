@@ -1,18 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-BF6 MODULE
-Роли + Почему я умираю
-Работает в 3 стилях: spicy / chill / pro
-Работает в 3 режимах: chat / coach / lightning
-Не зависит от AI. Безопасно.
+BF6 MODULE (Premium wrapper)
+НЕ УРЕЗАЕТ старый функционал.
+Добавляет:
+- HUB (inline)
+- Навигацию на роли/смерти
+- Поддержку ReplyKeyboard (нижние кнопки) для BF6 экранов
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
+from app.state import ensure_profile
 
 
 # =========================
-# Helpers
+# ТВОЙ СТАРЫЙ BF6 КОД — ВСТАВЛЕН 1:1
+# (ничего не вырезано, только чуть адаптированы id-карты для клавиатуры)
 # =========================
+
 def _style_prefix(style: str) -> str:
     if style == "spicy":
         return "😈"
@@ -36,9 +41,6 @@ def _lightning(text: str) -> str:
     return "⚡ " + text
 
 
-# =========================
-# ROLES
-# =========================
 BF6_ROLES = {
     "assault": {
         "title": "🟠 Assault",
@@ -110,9 +112,6 @@ BF6_ROLES = {
 }
 
 
-# =========================
-# DEATH REASONS
-# =========================
 BF6_DEATHS = {
     "no_vision": {
         "title": "👁 Меня не вижу",
@@ -168,9 +167,6 @@ BF6_DEATHS = {
 }
 
 
-# =========================
-# PUBLIC API
-# =========================
 def get_role_text(role_id: str, style: str, mode: str) -> str:
     role = BF6_ROLES.get(role_id)
     if not role:
@@ -215,3 +211,120 @@ def deaths_keyboard() -> Dict[str, Any]:
         ],
         "resize_keyboard": True
     }
+
+
+# =========================
+# PREMIUM UI (INLINE HUB)
+# =========================
+
+def bf6_menu_hub() -> Dict[str, Any]:
+    return {"inline_keyboard": [
+        [{"text": "🎭 Роли (нижние кнопки)", "callback_data": "bf6:roles"}],
+        [{"text": "💀 Почему умираю (нижние кнопки)", "callback_data": "bf6:deaths"}],
+        [{"text": "⚙️ Settings (device)", "callback_data": "bf6:settings"}],  # можно привязать к твоему pro_settings если хочешь
+        [{"text": "⬅️ Назад", "callback_data": "nav:settings_game"}],
+    ]}
+
+
+def _bf6_hub_text() -> str:
+    return (
+        "🎮 BF6 — премиум модуль\n\n"
+        "Тут всё отдельно и не режет Warzone/BO7.\n"
+        "Выбери раздел:"
+    )
+
+
+# =========================
+# Маппинг текста кнопок -> id
+# =========================
+
+_ROLE_TEXT_TO_ID = {
+    "🟠 assault": "assault",
+    "🟢 support": "support",
+    "🔵 engineer": "engineer",
+    "🟣 recon": "recon",
+}
+
+_DEATH_TEXT_TO_ID = {
+    "👁 меня не вижу": "no_vision",
+    "🔙 со спины": "backstab",
+    "🔁 сразу": "instadeath",
+    "⚔️ дуэли": "duel",
+}
+
+
+# =========================
+# PUBLIC ROUTER API (для handlers.py)
+# =========================
+
+def handle_callback(data: str) -> Optional[Dict[str, Any]]:
+    if not data.startswith("bf6:"):
+        return None
+
+    out: Dict[str, Any] = {"set_profile": {"page": "bf6"}}
+
+    if data == "bf6:hub":
+        out.update({"text": _bf6_hub_text(), "reply_markup": bf6_menu_hub()})
+        return out
+
+    if data == "bf6:roles":
+        # ВАЖНО: это ReplyKeyboard (нижние кнопки)
+        out.update({
+            "text": "🎭 BF6 — Роли\nВыбери роль снизу 👇",
+            "reply_markup": roles_keyboard(),
+            "set_profile": {"page": "bf6_roles"}
+        })
+        return out
+
+    if data == "bf6:deaths":
+        out.update({
+            "text": "💀 BF6 — Почему умираю\nВыбери причину снизу 👇",
+            "reply_markup": deaths_keyboard(),
+            "set_profile": {"page": "bf6_deaths"}
+        })
+        return out
+
+    if data == "bf6:settings":
+        # Сейчас просто хабовая заглушка. Можно подключить твой pro_settings позже
+        out.update({
+            "text": "⚙️ BF6 Settings\nСкоро добавим отдельный премиум-раздел настроек, без урезаний.",
+            "reply_markup": bf6_menu_hub()
+        })
+        return out
+
+    out.update({"text": _bf6_hub_text(), "reply_markup": bf6_menu_hub()})
+    return out
+
+
+def handle_text(chat_id: int, text: str) -> Optional[Dict[str, Any]]:
+    """
+    Обработка НИЖНИХ кнопок (ReplyKeyboard) для BF6 ролей/смертей.
+    Вызывается из handlers.py ДО AI.
+    """
+    p = ensure_profile(chat_id)
+    page = p.get("page", "main")
+    t = (text or "").strip().lower()
+
+    # Назад из нижней клавы BF6 -> вернуть BF6 HUB (inline)
+    if t in ("⬅️ назад", "назад", "back", "⬅️ back"):
+        p["page"] = "bf6"
+        return {"text": _bf6_hub_text(), "reply_markup": bf6_menu_hub()}
+
+    style = p.get("persona", "spicy")
+    mode = p.get("mode", "chat")
+    if p.get("speed", "normal") == "lightning":
+        mode = "lightning"
+
+    if page == "bf6_roles":
+        rid = _ROLE_TEXT_TO_ID.get(t)
+        if rid:
+            return {"text": get_role_text(rid, style, mode), "reply_markup": roles_keyboard()}
+        return None
+
+    if page == "bf6_deaths":
+        did = _DEATH_TEXT_TO_ID.get(t)
+        if did:
+            return {"text": get_death_text(did, style, mode), "reply_markup": deaths_keyboard()}
+        return None
+
+    return None
