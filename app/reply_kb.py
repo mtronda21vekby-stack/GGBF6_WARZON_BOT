@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from typing import Dict, Any
 
-# Стабильные префиксы (handlers ловит startswith)
 BTN_HOME = "🏠 Главная"
 BTN_MORE = "➡️ Ещё"
 BTN_BACK = "⬅️ Назад"
@@ -18,6 +17,9 @@ BTN_VOD = "📼 VOD"
 BTN_PROFILE = "📊 Профиль"
 BTN_PRO = "🎮 PRO"
 
+# ✅ Новое: настройки девайсов
+BTN_DEVICE = "🎮 Настройки"
+
 BTN_FINE = "✨ Тонкая настройка"
 BTN_SETTINGS = "⚙️ Настройки"
 BTN_CLEAR_MEM = "🧽 Очистить память"
@@ -32,10 +34,6 @@ def _row(*buttons: str):
 
 
 def reply_kb(profile: dict, ai_enabled: bool) -> Dict[str, Any]:
-    """
-    Reply Keyboard (кнопки снизу).
-    Премиальная логика: 2 страницы (main/more).
-    """
     page = (profile.get("rk_page") or "main").lower()
     if page not in ("main", "more"):
         page = "main"
@@ -51,18 +49,18 @@ def reply_kb(profile: dict, ai_enabled: bool) -> Dict[str, Any]:
         keyboard = [
             _row(f"{BTN_GAME}: {game}", f"{BTN_MODE}: {mode}"),
             _row(f"{BTN_LIGHTNING}: {lightning}", f"{BTN_MEMORY}: {mem}"),
-            _row(BTN_ZOMBIES, BTN_PRO),
-            _row(BTN_TRAINING, BTN_DAILY),
-            _row(BTN_VOD, BTN_PROFILE),
-            _row(BTN_FINE, BTN_SETTINGS),
+            _row(BTN_DEVICE, BTN_PRO),
+            _row(BTN_ZOMBIES, BTN_TRAINING),
+            _row(BTN_DAILY, BTN_VOD),
+            _row(BTN_PROFILE, BTN_FINE),
             _row(BTN_MORE),
         ]
     else:
         keyboard = [
             _row(BTN_STATUS, f"{BTN_AI}: {ai}"),
+            _row(BTN_SETTINGS, BTN_HELP),
             _row(BTN_CLEAR_MEM, BTN_RESET),
-            _row(BTN_HELP, BTN_HOME),
-            _row(BTN_BACK),
+            _row(BTN_HOME, BTN_BACK),
         ]
 
     return {
