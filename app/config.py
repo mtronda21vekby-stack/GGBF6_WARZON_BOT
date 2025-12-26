@@ -1,45 +1,74 @@
 import os
 from dataclasses import dataclass
-from typing import List
-
-
-def _must(name: str) -> str:
-    v = os.getenv(name, "").strip()
-    if not v:
-        raise RuntimeError(f"Missing env var: {name}")
-    return v
-
-
-def _int_list(name: str) -> List[int]:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return []
-    out: List[int] = []
-    for p in raw.split(","):
-        p = p.strip()
-        if not p:
-            continue
-        try:
-            out.append(int(p))
-        except ValueError:
-            pass
-    return out
-
 
 @dataclass(frozen=True)
 class Settings:
-    telegram_token: str
-    openai_api_key: str
-    openai_model: str
-    data_dir: str
-    admin_ids: List[int]
+    TELEGRAM_BOT_TOKEN: str
+    OPENAI_API_KEY: str
+    OPENAI_BASE_URL: str
+    OPENAI_MODEL: str
+
+    DATA_DIR: str
+    STATE_PATH: str
+    OFFSET_PATH: str
+
+    HTTP_TIMEOUT: float
+    TG_LONGPOLL_TIMEOUT: int
+    TG_RETRIES: int
+
+    CONFLICT_BACKOFF_MIN: int
+    CONFLICT_BACKOFF_MAX: int
+
+    MIN_SECONDS_BETWEEN_MSG: float
+    MEMORY_MAX_TURNS: int
+    MAX_TEXT_LEN: int
 
 
 def load_settings() -> Settings:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        # не падаем сразу — логика polling сама будет ждать, но лучше явно
+        raise RuntimeError("Missing ENV: TELEGRAM_BOT_TOKEN")
+
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+
+    data_dir = os.getenv("DATA_DIR", "/tmp").strip() or "/tmp"
+
+    http_timeout = float(os.getenv("HTTP_TIMEOUT", "25"))
+    longpoll_timeout = int(os.getenv("TG_LONGPOLL_TIMEOUT", "50"))
+    retries = int(os.getenv("TG_RETRIES", "6"))
+
+    conflict_min = int(os.getenv("CONFLICT_BACKOFF_MIN", "12"))
+    conflict_max = int(os.getenv("CONFLICT_BACKOFF_MAX", "30"))
+
+    min_between = float(os.getenv("MIN_SECONDS_BETWEEN_MSG", "0.25"))
+    mem_turns = int(os.getenv("MEMORY_MAX_TURNS", "10"))
+
+    max_text = int(os.getenv("MAX_TEXT_LEN", "3900"))
+
+    state_path = os.path.join(data_dir, "fps_coach_state.json")
+    offset_path = os.path.join(data_dir, "tg_offset.txt")
+
     return Settings(
-        telegram_token=_must("TELEGRAM_BOT_TOKEN"),
-        openai_api_key=_must("OPENAI_API_KEY"),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
-        data_dir=os.getenv("DATA_DIR", "./data").strip() or "./data",
-        admin_ids=_int_list("ADMIN_IDS"),
+        TELEGRAM_BOT_TOKEN=token,
+        OPENAI_API_KEY=openai_key,
+        OPENAI_BASE_URL=base_url,
+        OPENAI_MODEL=model,
+
+        DATA_DIR=data_dir,
+        STATE_PATH=state_path,
+        OFFSET_PATH=offset_path,
+
+        HTTP_TIMEOUT=http_timeout,
+        TG_LONGPOLL_TIMEOUT=longpoll_timeout,
+        TG_RETRIES=retries,
+
+        CONFLICT_BACKOFF_MIN=conflict_min,
+        CONFLICT_BACKOFF_MAX=conflict_max,
+
+        MIN_SECONDS_BETWEEN_MSG=min_between,
+        MEMORY_MAX_TURNS=mem_turns,
+        MAX_TEXT_LEN=max_text,
     )
