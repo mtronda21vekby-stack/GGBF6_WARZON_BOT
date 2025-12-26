@@ -1,55 +1,69 @@
 # -*- coding: utf-8 -*-
 """
-SAFE BOOT HANDLERS
-Цель: гарантированный старт бота без TypeError
-Логика будет расширена на следующем шаге
+SAFE BOOT HANDLERS v2
+Цель: гарантированный старт при ЛЮБОМ runner.py
 """
 
-from typing import Any
-
-
 class BotHandlers:
-    def __init__(
-        self,
-        api,
-        ai_engine=None,
-        state=None,
-        ui=None,
-        metrics=None,
-        **kwargs
-    ):
-        self.api = api
-        self.ai = ai_engine
-        self.state = state
-        self.ui = ui
-        self.metrics = metrics
+    def __init__(self, *args, **kwargs):
+        """
+        runner.py может передавать:
+        - api
+        - ai_engine
+        - state
+        - ui
+        - metrics
+        - config
+        - log
+        и ещё что угодно
 
-    # ===== SAFE FALLBACK HANDLERS =====
+        Мы принимаем ВСЁ без падений
+        """
 
-    def on_message(self, update: dict) -> None:
-        try:
-            chat_id = update["message"]["chat"]["id"]
-            text = update["message"].get("text", "")
-            self.api.send_message(
-                chat_id,
-                "🧠 Бот запущен.\n"
-                "Brain v3 загружается...\n\n"
-                "Следующий шаг — активация логики."
-            )
-        except Exception:
-            pass
+        # --- безопасное извлечение ---
+        self.api = kwargs.get("api") or (args[0] if len(args) > 0 else None)
+        self.ai = kwargs.get("ai_engine")
+        self.state = kwargs.get("state")
+        self.ui = kwargs.get("ui")
+        self.metrics = kwargs.get("metrics")
+        self.log = kwargs.get("log")
 
-    def on_callback(self, update: dict) -> None:
-        try:
-            cb = update.get("callback_query", {})
-            cid = cb.get("id")
-            if cid:
-                self.api.answer_callback(cid)
-        except Exception:
-            pass
+        if self.log:
+            self.log.info("BotHandlers SAFE INIT OK")
+
+    # ============================
+    # SAFE HANDLERS
+    # ============================
 
     def handle_update(self, update: dict) -> None:
-        if "message" in update:
-            self.on_message(update)
-        elif "callback_query" in update:
-            self.on_callback(update)
+        try:
+            if "message" in update:
+                self._on_message(update["message"])
+            elif "callback_query" in update:
+                self._on_callback(update["callback_query"])
+        except Exception as e:
+            if self.log:
+                self.log.error("handle_update error: %r", e)
+
+    def _on_message(self, message: dict) -> None:
+        chat_id = message["chat"]["id"]
+        text = message.get("text", "")
+
+        if not self.api:
+            return
+
+        self.api.send_message(
+            chat_id,
+            "🧠 FPS Coach Bot запущен\n\n"
+            "Brain v3: LOADING...\n"
+            "UI Premium: NEXT STEP\n\n"
+            "Бот жив. Двигаемся дальше."
+        )
+
+    def _on_callback(self, cb: dict) -> None:
+        cid = cb.get("id")
+        if cid and self.api:
+            try:
+                self.api.answer_callback(cid)
+            except Exception:
+                pass
