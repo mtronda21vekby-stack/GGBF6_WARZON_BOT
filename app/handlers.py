@@ -1,13 +1,9 @@
 # -*- coding: utf-8 -*-
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from zombies import router as zombies_router
+
 from app.kb import GAME_KB
-from app.pro_settings import get_text as pro_get_text
-
-# ✅ BF6 module (ReplyKeyboard roles/deaths + inline hub)
-from app import bf6_module
-
 from app.state import (
     ensure_profile, ensure_daily,
     update_memory, clear_memory,
@@ -18,9 +14,60 @@ from app.state import (
 from app.ui import (
     main_text, help_text, status_text, profile_text,
     menu_main, menu_more, menu_game, menu_persona, menu_talk,
-    menu_training, menu_settings, menu_daily, thinking_line,
-    menu_settings_game, menu_wz_device, menu_bo7_device, menu_bf6_device
+    menu_training, menu_settings, menu_daily, thinking_line
 )
+
+# ✅ отдельные модули ReplyKeyboard (каждый сам по себе, никто никого не режет)
+from app import warzone_module, bo7_module, bf6_module
+
+
+def _remove_reply_kb() -> Dict[str, Any]:
+    return {"remove_keyboard": True}
+
+
+def _sync_game_reply_kb(self_api, chat_id: int, p: Dict[str, Any], max_text_len: int) -> None:
+    """
+    Включает нижнюю ReplyKeyboard в зависимости от выбранной игры.
+    INLINE меню (под сообщением) не трогаем — оно живёт отдельно.
+    """
+    g = p.get("game", "auto")
+
+    # Warzone
+    if g == "warzone":
+        p["page"] = "wz_home"
+        self_api.send_message(
+            chat_id,
+            "🎮 Warzone панель включена 👇",
+            reply_markup=warzone_module.home_keyboard(),
+            max_text_len=max_text_len
+        )
+        return
+
+    # BO7
+    if g == "bo7":
+        p["page"] = "bo7_home"
+        self_api.send_message(
+            chat_id,
+            "🎮 BO7 панель включена 👇",
+            reply_markup=bo7_module.home_keyboard(),
+            max_text_len=max_text_len
+        )
+        return
+
+    # BF6
+    if g == "bf6":
+        p["page"] = "bf6_home"
+        self_api.send_message(
+            chat_id,
+            "🎮 BF6 панель включена 👇",
+            reply_markup=bf6_module.home_keyboard(),
+            max_text_len=max_text_len
+        )
+        return
+
+    # AUTO / другое
+    p["page"] = "main"
+    self_api.send_message(chat_id, " ", reply_markup=_remove_reply_kb(), max_text_len=max_text_len)
 
 
 class BotHandlers:
@@ -47,38 +94,33 @@ class BotHandlers:
             if not t.startswith("/") and p.get("page") == "zombies":
                 z = zombies_router.handle_text(t, current_map=p.get("zmb_map", "ashes"))
                 if z is not None:
+                    self.api.send_message(chat_id, z["text"], reply_markup=z.get("reply_markup"), max_text_len=self.s.MAX_TEXT_LEN)
+                    return
+
+            # ✅ Game Modules: Warzone/BO7/BF6 (ReplyKeyboard) — перехват ДО AI
+            # Работает только когда p["page"] стоит в страницах модулей
+            for mod in (warzone_module, bo7_module, bf6_module):
+                r = mod.handle_text(chat_id, t)
+                if r is not None:
+                    sp = r.get("set_profile") or {}
+                    if isinstance(sp, dict) and sp:
+                        for k, v in sp.items():
+                            p[k] = v
+                    save_state(self.s.STATE_PATH, self.log)
+
                     self.api.send_message(
                         chat_id,
-                        z["text"],
-                        reply_markup=z.get("reply_markup"),
+                        r["text"],
+                        reply_markup=r.get("reply_markup"),
                         max_text_len=self.s.MAX_TEXT_LEN
                     )
                     return
 
-            # ✅ BF6 ReplyKeyboard (roles/deaths) — перехват ДО AI
-            # НИЧЕГО не режет: срабатывает только если page=bf6_roles/bf6_deaths
-            bf = bf6_module.handle_text(chat_id, t)
-            if bf is not None:
-                # если модуль просит выставить профиль
-                sp = bf.get("set_profile") or {}
-                if isinstance(sp, dict) and sp:
-                    for k, v in sp.items():
-                        p[k] = v
-                save_state(self.s.STATE_PATH, self.log)
-
-                self.api.send_message(
-                    chat_id,
-                    bf["text"],
-                    reply_markup=bf.get("reply_markup"),
-                    max_text_len=self.s.MAX_TEXT_LEN
-                )
-                return
-
-            # -------------------------
+            # =========================
             # Команды
-            # -------------------------
+            # =========================
             if t.startswith("/start") or t.startswith("/menu"):
-                p["page"] = "main"
+                # не ломаем приветствие — возвращаем главное сообщение
                 ensure_daily(chat_id)
                 self.api.send_message(
                     chat_id,
@@ -86,16 +128,15 @@ class BotHandlers:
                     reply_markup=menu_main(chat_id, self.ai.enabled),
                     max_text_len=self.s.MAX_TEXT_LEN
                 )
+
+                # синхронизируем нижнюю панель по выбранной игре
+                _sync_game_reply_kb(self.api, chat_id, p, self.s.MAX_TEXT_LEN)
+
                 save_state(self.s.STATE_PATH, self.log)
                 return
 
             if t.startswith("/help"):
-                self.api.send_message(
-                    chat_id,
-                    help_text(),
-                    reply_markup=menu_main(chat_id, self.ai.enabled),
-                    max_text_len=self.s.MAX_TEXT_LEN
-                )
+                self.api.send_message(chat_id, help_text(), reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
                 return
 
             if t.startswith("/status"):
@@ -130,12 +171,10 @@ class BotHandlers:
                 p["page"] = "zombies"
                 save_state(self.s.STATE_PATH, self.log)
                 z = zombies_router.handle_callback("zmb:home")
-                self.api.send_message(
-                    chat_id,
-                    z["text"],
-                    reply_markup=z.get("reply_markup"),
-                    max_text_len=self.s.MAX_TEXT_LEN
-                )
+                self.api.send_message(chat_id, z["text"], reply_markup=z.get("reply_markup"), max_text_len=self.s.MAX_TEXT_LEN)
+
+                # чтобы нижняя панель не мешала Zombies — убираем
+                self.api.send_message(chat_id, " ", reply_markup=_remove_reply_kb(), max_text_len=self.s.MAX_TEXT_LEN)
                 return
 
             if t.startswith("/reset"):
@@ -152,19 +191,16 @@ class BotHandlers:
                     reply_markup=menu_main(chat_id, self.ai.enabled),
                     max_text_len=self.s.MAX_TEXT_LEN
                 )
+                # после сброса убираем нижнюю панель
+                self.api.send_message(chat_id, " ", reply_markup=_remove_reply_kb(), max_text_len=self.s.MAX_TEXT_LEN)
                 return
 
-            # -------------------------
+            # =========================
             # Обычный диалог (AI)
-            # -------------------------
+            # =========================
             update_memory(chat_id, "user", t, self.s.MEMORY_MAX_TURNS)
 
-            tmp_id = self.api.send_message(
-                chat_id,
-                thinking_line(),
-                reply_markup=None,
-                max_text_len=self.s.MAX_TEXT_LEN
-            )
+            tmp_id = self.api.send_message(chat_id, thinking_line(), reply_markup=None, max_text_len=self.s.MAX_TEXT_LEN)
 
             mode = p.get("mode", "chat")
             try:
@@ -179,26 +215,11 @@ class BotHandlers:
 
             if tmp_id:
                 try:
-                    self.api.edit_message(
-                        chat_id,
-                        tmp_id,
-                        reply,
-                        reply_markup=menu_main(chat_id, self.ai.enabled)
-                    )
+                    self.api.edit_message(chat_id, tmp_id, reply, reply_markup=menu_main(chat_id, self.ai.enabled))
                 except Exception:
-                    self.api.send_message(
-                        chat_id,
-                        reply,
-                        reply_markup=menu_main(chat_id, self.ai.enabled),
-                        max_text_len=self.s.MAX_TEXT_LEN
-                    )
+                    self.api.send_message(chat_id, reply, reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
             else:
-                self.api.send_message(
-                    chat_id,
-                    reply,
-                    reply_markup=menu_main(chat_id, self.ai.enabled),
-                    max_text_len=self.s.MAX_TEXT_LEN
-                )
+                self.api.send_message(chat_id, reply, reply_markup=menu_main(chat_id, self.ai.enabled), max_text_len=self.s.MAX_TEXT_LEN)
 
         finally:
             lock.release()
@@ -227,21 +248,6 @@ class BotHandlers:
                 self.api.edit_message(chat_id, message_id, z["text"], reply_markup=z.get("reply_markup"))
                 return
 
-            # ✅ BF6 router перехватывает bf6:* (HUB/roles/deaths)
-            bf = bf6_module.handle_callback(data)
-            if bf is not None:
-                sp = bf.get("set_profile") or {}
-                if isinstance(sp, dict) and sp:
-                    for k, v in sp.items():
-                        p[k] = v
-                    save_state(self.s.STATE_PATH, self.log)
-
-                # BF6 может захотеть ReplyKeyboard (нижнюю)
-                # В callback лучше редактировать сообщение + отдавать reply_markup
-                self.api.edit_message(chat_id, message_id, bf["text"], reply_markup=bf.get("reply_markup"))
-                return
-
-            # ============= NAV / MENUS =============
             if data == "nav:main":
                 p["page"] = "main"
                 save_state(self.s.STATE_PATH, self.log)
@@ -270,136 +276,76 @@ class BotHandlers:
             elif data == "nav:settings":
                 self.api.edit_message(chat_id, message_id, "⚙️ Настройки:", reply_markup=menu_settings(chat_id))
 
-            elif data == "nav:settings_game":
-                self.api.edit_message(chat_id, message_id, "🎮 Настройки игр:", reply_markup=menu_settings_game(chat_id))
-
-            elif data == "nav:wz_settings":
-                self.api.edit_message(chat_id, message_id, "⚙️ Warzone — выбери устройство:", reply_markup=menu_wz_device(chat_id))
-
-            elif data == "nav:bo7_settings":
-                self.api.edit_message(chat_id, message_id, "⚙️ BO7 — выбери устройство:", reply_markup=menu_bo7_device(chat_id))
-
-            elif data == "nav:bf6_settings":
-                # ✅ Добавляем “BF6 hub” по кнопке настроек BF6 (ничего не режем!)
-                # Если хочешь оставить старое устройство меню — можно, но хаб удобнее.
-                # Сейчас сделаем так: показываем девайс меню как было + оставляем возможность зайти в bf6:hub через отдельную кнопку (в ui.py добавим позже)
-                self.api.edit_message(chat_id, message_id, "⚙️ BF6 — choose device:", reply_markup=menu_bf6_device(chat_id))
-
-            elif data.startswith("wzdev:"):
-                dev = data.split(":", 1)[1]
-                key = f"wz:{'pad' if dev=='pad' else 'mnk'}"
-                self.api.edit_message(chat_id, message_id, pro_get_text(key), reply_markup=menu_wz_device(chat_id))
-
-            elif data.startswith("bo7dev:"):
-                dev = data.split(":", 1)[1]
-                key = f"bo7:{'pad' if dev=='pad' else 'mnk'}"
-                self.api.edit_message(chat_id, message_id, pro_get_text(key), reply_markup=menu_bo7_device(chat_id))
-
-            elif data.startswith("bf6dev:"):
-                dev = data.split(":", 1)[1]
-                key = f"bf6:{'pad' if dev=='pad' else 'mnk'}"
-                self.api.edit_message(chat_id, message_id, pro_get_text(key), reply_markup=menu_bf6_device(chat_id))
-
-            # ============= TOGGLES =============
             elif data == "toggle:memory":
                 p["memory"] = "off" if p.get("memory", "on") == "on" else "on"
                 if p["memory"] == "off":
                     clear_memory(chat_id)
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(
-                    chat_id,
-                    message_id,
-                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                    reply_markup=menu_main(chat_id, self.ai.enabled)
-                )
+                self.api.edit_message(chat_id, message_id, main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                                      reply_markup=menu_main(chat_id, self.ai.enabled))
 
             elif data == "toggle:mode":
                 p["mode"] = "coach" if p.get("mode", "chat") == "chat" else "chat"
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(
-                    chat_id,
-                    message_id,
-                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                    reply_markup=menu_main(chat_id, self.ai.enabled)
-                )
+                self.api.edit_message(chat_id, message_id, main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                                      reply_markup=menu_main(chat_id, self.ai.enabled))
 
             elif data == "toggle:ui":
                 p["ui"] = "hide" if p.get("ui", "show") == "show" else "show"
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(
-                    chat_id,
-                    message_id,
-                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                    reply_markup=menu_main(chat_id, self.ai.enabled)
-                )
+                self.api.edit_message(chat_id, message_id, main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                                      reply_markup=menu_main(chat_id, self.ai.enabled))
 
             elif data == "toggle:lightning":
                 p["speed"] = "normal" if p.get("speed", "normal") == "lightning" else "lightning"
                 save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(
-                    chat_id,
-                    message_id,
-                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                    reply_markup=menu_main(chat_id, self.ai.enabled)
-                )
+                self.api.edit_message(chat_id, message_id, main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                                      reply_markup=menu_main(chat_id, self.ai.enabled))
 
-            # ============= SETTERS =============
             elif data.startswith("set:game:"):
                 g = data.split(":", 2)[2]
                 if g in ("auto", "warzone", "bf6", "bo7"):
                     p["game"] = g
+
+                    # ✅ при смене игры — включаем нужный модульный ReplyKeyboard
+                    _sync_game_reply_kb(self.api, chat_id, p, self.s.MAX_TEXT_LEN)
+
                     save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(
-                    chat_id,
-                    message_id,
-                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                    reply_markup=menu_main(chat_id, self.ai.enabled)
-                )
+
+                self.api.edit_message(chat_id, message_id,
+                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                                      reply_markup=menu_main(chat_id, self.ai.enabled))
 
             elif data.startswith("set:persona:"):
                 v = data.split(":", 2)[2]
                 if v in ("spicy", "chill", "pro"):
                     p["persona"] = v
                     save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(
-                    chat_id,
-                    message_id,
-                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                    reply_markup=menu_main(chat_id, self.ai.enabled)
-                )
+                self.api.edit_message(chat_id, message_id,
+                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                                      reply_markup=menu_main(chat_id, self.ai.enabled))
 
             elif data.startswith("set:talk:"):
                 v = data.split(":", 2)[2]
                 if v in ("short", "normal", "talkative"):
                     p["verbosity"] = v
                     save_state(self.s.STATE_PATH, self.log)
-                self.api.edit_message(
-                    chat_id,
-                    message_id,
-                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                    reply_markup=menu_main(chat_id, self.ai.enabled)
-                )
+                self.api.edit_message(chat_id, message_id,
+                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                                      reply_markup=menu_main(chat_id, self.ai.enabled))
 
-            # ============= ACTIONS =============
             elif data == "action:status":
-                self.api.edit_message(
-                    chat_id,
-                    message_id,
-                    status_text(self.s.OPENAI_MODEL, self.s.DATA_DIR, self.ai.enabled),
-                    reply_markup=menu_settings(chat_id)
-                )
+                self.api.edit_message(chat_id, message_id,
+                                      status_text(self.s.OPENAI_MODEL, self.s.DATA_DIR, self.ai.enabled),
+                                      reply_markup=menu_settings(chat_id))
 
             elif data == "action:profile":
                 self.api.edit_message(chat_id, message_id, profile_text(chat_id), reply_markup=menu_more(chat_id))
 
             elif data == "action:ai_status":
                 ai = "ON" if self.ai.enabled else "OFF"
-                self.api.edit_message(
-                    chat_id,
-                    message_id,
-                    f"🤖 ИИ: {ai}\nМодель: {self.s.OPENAI_MODEL}",
-                    reply_markup=menu_main(chat_id, self.ai.enabled)
-                )
+                self.api.edit_message(chat_id, message_id, f"🤖 ИИ: {ai}\nМодель: {self.s.OPENAI_MODEL}",
+                                      reply_markup=menu_main(chat_id, self.ai.enabled))
 
             elif data == "action:clear_memory":
                 clear_memory(chat_id)
@@ -415,6 +361,7 @@ class BotHandlers:
                 ensure_daily(chat_id)
                 save_state(self.s.STATE_PATH, self.log)
                 self.api.edit_message(chat_id, message_id, "🧨 Сброс выполнен.", reply_markup=menu_more(chat_id))
+                self.api.send_message(chat_id, " ", reply_markup=_remove_reply_kb(), max_text_len=self.s.MAX_TEXT_LEN)
 
             elif data.startswith("action:drill:"):
                 kind = data.split(":", 2)[2]
@@ -439,8 +386,7 @@ class BotHandlers:
                 d["done"] = int(d.get("done", 0)) + 1
                 save_state(self.s.STATE_PATH, self.log)
                 self.api.edit_message(
-                    chat_id,
-                    message_id,
+                    chat_id, message_id,
                     f"✅ Засчитал.\n\n🎯 Задание дня:\n• {d['text']}\n(сделано={d['done']} / не вышло={d['fail']})",
                     reply_markup=menu_daily(chat_id)
                 )
@@ -450,19 +396,15 @@ class BotHandlers:
                 d["fail"] = int(d.get("fail", 0)) + 1
                 save_state(self.s.STATE_PATH, self.log)
                 self.api.edit_message(
-                    chat_id,
-                    message_id,
+                    chat_id, message_id,
                     f"❌ Ок.\n\n🎯 Задание дня:\n• {d['text']}\n(сделано={d['done']} / не вышло={d['fail']})",
                     reply_markup=menu_daily(chat_id)
                 )
 
             else:
-                self.api.edit_message(
-                    chat_id,
-                    message_id,
-                    main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
-                    reply_markup=menu_main(chat_id, self.ai.enabled)
-                )
+                self.api.edit_message(chat_id, message_id,
+                                      main_text(chat_id, self.ai.enabled, self.s.OPENAI_MODEL),
+                                      reply_markup=menu_main(chat_id, self.ai.enabled))
 
         finally:
             self.api.answer_callback(cb_id)
