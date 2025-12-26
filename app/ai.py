@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import re
 from typing import Dict, List, Any, Optional
 
@@ -49,7 +50,6 @@ SYSTEM_LIGHTNING = (
     "• Без воды и длинных списков.\n"
 )
 
-
 def classify_cause(text: str) -> str:
     t = (text or "").lower()
     score = {c: 0 for c in CAUSES}
@@ -67,7 +67,6 @@ def classify_cause(text: str) -> str:
     if score[best] == 0:
         return "position"
     return best
-
 
 class AIEngine:
     def __init__(self, openai_key: str, base_url: str, model: str, log):
