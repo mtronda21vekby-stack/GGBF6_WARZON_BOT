@@ -1,9 +1,18 @@
+# -*- coding: utf-8 -*-
 import random
-from app.state import ensure_profile, USER_STATS, USER_MEMORY, CAUSE_LABEL, ensure_daily
-from app.kb import GAME_KB, GAMES
-from app.ai import PERSONA_HINT, VERBOSITY_HINT
+from typing import Dict, Any
+
+from app.state import ensure_profile, ensure_daily, USER_STATS, USER_MEMORY
 
 THINKING_LINES = ["🧠 Думаю…", "⌛ Секунду…", "🎮 Окей, ща разложу…", "🌑 Анализирую…"]
+
+CAUSE_LABEL = {
+    "info": "Инфо (звук/радар/пинги)",
+    "timing": "Тайминг (когда пикнул/вышел)",
+    "position": "Позиция (угол/высота/линия обзора)",
+    "discipline": "Дисциплина (жадность/ресурсы/ресет)",
+    "mechanics": "Механика (аим/отдача/сенса)",
+}
 
 def thinking_line() -> str:
     return random.choice(THINKING_LINES)
@@ -11,23 +20,23 @@ def thinking_line() -> str:
 def _badge(ok: bool) -> str:
     return "✅" if ok else "🚫"
 
-def header(chat_id: int, ai_enabled: bool, model: str) -> str:
+def header(chat_id: int, ai_enabled: bool, model_name: str) -> str:
     p = ensure_profile(chat_id)
     ai = "ON" if ai_enabled else "OFF"
     return f"🌑 FPS Coach Bot v2 | 🎮 {p.get('game','auto').upper()} | 🔁 {p.get('mode','chat').upper()} | 🤖 AI {ai}"
 
-def main_text(chat_id: int, ai_enabled: bool, model: str) -> str:
+def main_text(chat_id: int, ai_enabled: bool, model_name: str) -> str:
     p = ensure_profile(chat_id)
     mode = p.get("mode", "chat")
     if mode == "chat":
         return (
-            f"{header(chat_id, ai_enabled, model)}\n\n"
+            f"{header(chat_id, ai_enabled, model_name)}\n\n"
             "Напиши как другу/тиммейту: что бесит, где умираешь, что хочешь улучшить.\n"
             "Я буду задавать вопросы и вести тебя к решению.\n\n"
             "Или жми меню 👇"
         )
     return (
-        f"{header(chat_id, ai_enabled, model)}\n\n"
+        f"{header(chat_id, ai_enabled, model_name)}\n\n"
         "COACH режим: опиши 1 сцену:\n"
         "• где был • кто первый увидел • на чём умер • что хотел сделать\n\n"
         "Или жми меню 👇"
@@ -47,10 +56,10 @@ def help_text() -> str:
         "/reset\n"
     )
 
-def status_text(openai_model: str, data_dir: str, ai_enabled: bool) -> str:
+def status_text(model_name: str, data_dir: str, ai_enabled: bool) -> str:
     return (
         "🧾 Статус\n"
-        f"OPENAI_MODEL: {openai_model}\n"
+        f"OPENAI_MODEL: {model_name}\n"
         f"DATA_DIR: {data_dir}\n"
         f"ИИ: {'ON' if ai_enabled else 'OFF'}\n"
         "Если Conflict 409 — у тебя два инстанса или где-то ещё включён getUpdates.\n"
@@ -61,6 +70,7 @@ def profile_text(chat_id: int) -> str:
     st = USER_STATS.get(chat_id, {})
     mem_len = len(USER_MEMORY.get(chat_id, []))
     daily = ensure_daily(chat_id)
+
     top = sorted(st.items(), key=lambda kv: kv[1], reverse=True)[:3]
 
     lines = [
@@ -88,18 +98,18 @@ def profile_text(chat_id: int) -> str:
     ]
     return "\n".join(lines)
 
-def menu_main(chat_id: int, ai_enabled: bool) -> dict | None:
+# -------------------------
+# MENUS (INLINE)
+# -------------------------
+def menu_main(chat_id: int, ai_enabled: bool):
     p = ensure_profile(chat_id)
-    if p.get("ui") == "hide":
-        return None
-
     game = p.get("game", "auto").upper()
     persona = p.get("persona", "spicy")
     talk = p.get("verbosity", "normal")
     mem_on = (p.get("memory", "on") == "on")
     mode = p.get("mode", "chat").upper()
-    ai = "ON" if ai_enabled else "OFF"
     lightning_on = (p.get("speed", "normal") == "lightning")
+    ai = "ON" if ai_enabled else "OFF"
 
     return {
         "inline_keyboard": [
@@ -119,17 +129,20 @@ def menu_main(chat_id: int, ai_enabled: bool) -> dict | None:
                 {"text": f"⚡ Молния: {'ВКЛ' if lightning_on else 'ВЫКЛ'}", "callback_data": "toggle:lightning"},
                 {"text": "🧟 Zombies", "callback_data": "zmb:home"},
             ],
-            [{"text": "📦 Ещё", "callback_data": "nav:more"}],
+            [
+                {"text": "📦 Ещё", "callback_data": "nav:more"},
+            ],
         ]
     }
 
 def menu_more(chat_id: int):
     return {"inline_keyboard": [
+        [{"text": "🎛️ Настройки игры (WZ/BF6/BO7)", "callback_data": "action:game_settings"}],
         [{"text": "💪 Тренировка", "callback_data": "nav:training"}],
         [{"text": "🎯 Задание дня", "callback_data": "action:daily"}],
         [{"text": "📼 VOD-разбор", "callback_data": "action:vod"}],
         [{"text": "📊 Профиль", "callback_data": "action:profile"}],
-        [{"text": "⚙️ Настройки", "callback_data": "nav:settings"}],
+        [{"text": "⚙️ Настройки бота", "callback_data": "nav:settings"}],
         [{"text": "🧽 Очистить память", "callback_data": "action:clear_memory"}],
         [{"text": "🧨 Сбросить всё", "callback_data": "action:reset_all"}],
         [{"text": "⬅️ Назад", "callback_data": "nav:main"}],
