@@ -1,6 +1,6 @@
 services:
-  - type: web
-    name: ggbf6-warzon-bot
+  - type: worker
+    name: fps-coach-bot
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
