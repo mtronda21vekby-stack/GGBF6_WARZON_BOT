@@ -1,18 +1,8 @@
 services:
-  - type: worker
-    name: ggbf6-warzon-bot
+  - type: web
+    name: GGBF6_WARZON_BOT
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
-    envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: OPENAI_BASE_URL
-        value: https://api.openai.com/v1
-      - key: OPENAI_MODEL
-        value: gpt-4o-mini
-      - key: DATA_DIR
-        value: /tmp/data
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python main.py"
+    autoDeploy: true
