@@ -1,31 +1,21 @@
+# app/web.py
 from fastapi import FastAPI, Request, HTTPException
-from telegram import Update
-
 from app.config import get_settings
-from app.log import setup_logger
-from app.telegram_bot import build_application
 
-logger = setup_logger()
-settings = get_settings()
+app = FastAPI(title="GGBF6 WARZON BOT")
 
-fastapi_app = FastAPI()
-tg_app = build_application()
+@app.get("/")
+def root():
+    return {"ok": True, "service": "ggbf6-warzon-bot"}
 
-@fastapi_app.get("/healthz")
-async def healthz():
-    return {"ok": True}
-
-@fastapi_app.post("/telegram/{secret}")
+@app.post("/telegram/webhook/{secret}")
 async def telegram_webhook(secret: str, request: Request):
-    if secret != settings.WEBHOOK_SECRET:
-        raise HTTPException(status_code=403, detail="forbidden")
+    s = get_settings()
+    if secret != s.WEBHOOK_SECRET:
+        raise HTTPException(status_code=401, detail="unauthorized")
 
-    data = await request.json()
-    update = Update.de_json(data, tg_app.bot)
+    update = await request.json()
 
-    # Важно: PTB должен быть “инициализирован”
-    await tg_app.initialize()
-    await tg_app.process_update(update)
+    # TODO: сюда подключим твоего "brain + ai + ui premium"
+    # пока просто чтобы Telegram видел 200 OK:
     return {"ok": True}
-
-app = fastapi_app
