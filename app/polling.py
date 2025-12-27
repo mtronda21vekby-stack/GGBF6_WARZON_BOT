@@ -1,45 +1,41 @@
 # -*- coding: utf-8 -*-
 import time
-from typing import Any, Dict, Optional
+from typing import Optional
 
+class PollingLoop:
+    def __init__(self, *, api, handlers, log):
+        self.api = api
+        self.handlers = handlers
+        self.log = log
 
-def poll_forever(api, handlers, log, *, timeout: int = 50):
-    """
-    Long-polling без падений + backoff.
-    """
-    # важное: при polling лучше удалить webhook
-    try:
-        api.delete_webhook_on_start()
-    except Exception as e:
-        log.warning("delete_webhook_on_start failed: %r", e)
+    def run_forever(self):
+        offset: int = 0
+        backoff: float = 1.0
 
-    offset: Optional[int] = None
-    backoff = 1.0
+        self.log.info("polling: started")
+        while True:
+            try:
+                data = self.api.get_updates(offset=offset, timeout=50)
+                if not data.get("ok"):
+                    # частая ошибка: Conflict (если запущено 2 инстанса)
+                    desc = str(data.get("description", ""))
+                    self.log.warning("polling: telegram not ok: %s", desc[:200])
+                    time.sleep(min(30, backoff))
+                    backoff = min(30, backoff * 1.7)
+                    continue
 
-    log.info("BOT STARTED (polling)")
+                backoff = 1.0
+                result = data.get("result") or []
+                for upd in result:
+                    try:
+                        update_id = upd.get("update_id")
+                        if isinstance(update_id, int):
+                            offset = update_id + 1
+                        self.handlers.handle_update(upd)
+                    except Exception as e:
+                        self.log.warning("update handling error: %r", e)
 
-    while True:
-        try:
-            params = {"timeout": timeout}
-            if offset is not None:
-                params["offset"] = offset
-
-            data = api.request("getUpdates", params=params, retries=3)  # GET
-            results = data.get("result") or []
-
-            for upd in results:
-                try:
-                    handlers.handle_update(upd)
-                except Exception as e:
-                    log.exception("handler error: %r", e)
-
-                upd_id = upd.get("update_id")
-                if isinstance(upd_id, int):
-                    offset = upd_id + 1
-
-            backoff = 1.0
-
-        except Exception as e:
-            log.error("poll loop error: %r", e)
-            time.sleep(min(10.0, backoff))
-            backoff = min(10.0, backoff * 1.6)
+            except Exception as e:
+                self.log.warning("poll loop error: %r", e)
+                time.sleep(min(30, backoff))
+                backoff = min(30, backoff * 1.7)
