@@ -1,22 +1,18 @@
 # -*- coding: utf-8 -*-
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 def premium_reply_kb() -> Dict[str, Any]:
-    """
-    ReplyKeyboardMarkup (кнопки снизу). Без inline.
-    """
-    rows: List[List[Dict[str, str]]] = [
-        [{"text": "📋 Меню"}, {"text": "⚙️ Настройки"}],
-        [{"text": "🎮 Игра"}, {"text": "🎭 Стиль"}, {"text": "🗣 Ответ"}],
-        [{"text": "🧟 Zombies"}, {"text": "🎯 Задание дня"}, {"text": "🎬 VOD"}],
-        [{"text": "👤 Профиль"}, {"text": "📡 Статус"}, {"text": "🆘 Помощь"}],
-        [{"text": "🧽 Очистить память"}, {"text": "🧨 Сброс"}],
-    ]
+    # ReplyKeyboard (не inline) — работает в группах/личке без callback
     return {
-        "keyboard": rows,
+        "keyboard": [
+            [{"text": "📋 Меню"}, {"text": "⚙️ Настройки"}],
+            [{"text": "🎮 Игра"}, {"text": "🎭 Стиль"}, {"text": "🗣 Ответ"}],
+            [{"text": "🧟 Zombies"}, {"text": "🎯 Задание дня"}, {"text": "🎬 VOD"}],
+            [{"text": "👤 Профиль"}, {"text": "📡 Статус"}, {"text": "🆘 Помощь"}],
+            [{"text": "🧽 Очистить память"}, {"text": "🧨 Сброс"}],
+        ],
         "resize_keyboard": True,
-        "one_time_keyboard": False,
         "is_persistent": True,
-        "input_field_placeholder": "Опиши ситуацию/смерть…",
+        "one_time_keyboard": False,
         "selective": False,
     }
