@@ -63,5 +63,8 @@ def update_memory(chat_id: int, role: str, content: str, max_turns: int = 10) ->
     if len(mem) > max_len:
         USER_MEMORY[chat_id] = mem[-max_len:]
 
+def get_memory(chat_id: int) -> List[Dict[str, str]]:
+    return USER_MEMORY.get(chat_id, [])
+
 def clear_memory(chat_id: int) -> None:
     USER_MEMORY.pop(chat_id, None)
