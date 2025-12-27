@@ -1,82 +1,52 @@
 # -*- coding: utf-8 -*-
 import os
+import threading
 import time
-import inspect
 
 from app.log import log
-from app.config import (
-    TELEGRAM_BOT_TOKEN,
-    OPENAI_API_KEY,
-    OPENAI_BASE_URL,
-    OPENAI_MODEL,
-    HTTP_TIMEOUT,
-    USER_AGENT,
-    STATE_PATH,
-)
-
+import app.config as config
 from app.state import load_state, save_state
 from app.telegram_api import TelegramAPI
 from app.ai import AIEngine
 from app.handlers import BotHandlers
 from app.polling import poll_forever
-
-
-def _build_handlers_kwargs(handlers_cls, *, api, ai_engine, log, state_path):
-    """
-    Передаём в BotHandlers ТОЛЬКО те параметры, которые он реально принимает.
-    Это убирает краши "unexpected keyword argument".
-    """
-    sig = inspect.signature(handlers_cls.__init__)
-    allowed = set(sig.parameters.keys()) - {"self"}
-
-    candidates = {
-        "api": api,
-        "ai_engine": ai_engine,
-        "log": log,
-        "state_path": state_path,
-        "state_file": state_path,   # на случай если у тебя так названо
-        "data_dir": os.path.dirname(state_path),
-    }
-    return {k: v for k, v in candidates.items() if k in allowed}
+from app.health import start_health_server
 
 
 def main():
-    # 1) State
+    # state
     try:
-        load_state(STATE_PATH, log)
+        load_state(config.STATE_PATH, log)
     except Exception as e:
         log.warning("State load failed: %r", e)
 
-    # 2) Telegram API
+    # telegram
     api = TelegramAPI(
-        token=TELEGRAM_BOT_TOKEN,
-        http_timeout=HTTP_TIMEOUT,
-        user_agent=USER_AGENT,
+        token=config.TELEGRAM_BOT_TOKEN,
+        http_timeout=config.HTTP_TIMEOUT,
+        user_agent=config.USER_AGENT,
         log=log,
     )
 
-    # 3) AI engine
+    # ai
     ai_engine = AIEngine(
-        openai_key=OPENAI_API_KEY,
-        base_url=OPENAI_BASE_URL,
-        model=OPENAI_MODEL,
+        openai_key=getattr(config, "OPENAI_API_KEY", ""),
+        base_url=getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        model=getattr(config, "OPENAI_MODEL", "gpt-4o-mini"),
         log=log,
     )
 
-    # 4) Handlers (без падений по kwargs)
-    kwargs = _build_handlers_kwargs(
-        BotHandlers,
-        api=api,
-        ai_engine=ai_engine,
-        log=log,
-        state_path=STATE_PATH,
-    )
-    handlers = BotHandlers(**kwargs)
+    # handlers (ВАЖНО: передаём config)
+    handlers = BotHandlers(api=api, ai_engine=ai_engine, config=config, log=log)
 
-    # 5) Polling (без webhook-конфликтов)
+    # Render Web Service требует PORT => поднимаем health сервер
+    port = int(os.environ.get("PORT", "10000"))
+    start_health_server(port=port, log=log)
+
+    # polling
     poll_forever(api, handlers, log)
 
-    # (на всякий случай — если poll_forever когда-то вернётся)
+    # safety
     while True:
         time.sleep(60)
 
