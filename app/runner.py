@@ -1,52 +1,94 @@
 # -*- coding: utf-8 -*-
-import sys
 import os
 import time
-import logging
-
-# гарантируем корректный путь
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, BASE_DIR)
-
-from app.health import start_health
-
-log = logging.getLogger("runner")
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
+from app.config import (
+    TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL,
+    DATA_DIR, HTTP_TIMEOUT, USER_AGENT, POLL_LIMIT, POLL_TIMEOUT
 )
+from app.log import get_logger
+from app.telegram_api import TelegramAPI
+from app.state import load_state, save_state
+from app.handlers import BotHandlers
+
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
+
+class AIEngine:
+    def __init__(self, api_key: str, base_url: str, model: str, log):
+        self.log = log
+        self.model = model
+        self.client = None
+        if OpenAI and api_key:
+            try:
+                self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=30, max_retries=0)
+                self.log.info("OpenAI: ON, model=%s", model)
+            except Exception as e:
+                self.log.warning("OpenAI init failed: %r", e)
+        else:
+            self.log.warning("OpenAI: OFF")
+
+    @property
+    def enabled(self) -> bool:
+        return self.client is not None
+
+    def chat(self, messages, max_tokens: int = 500) -> str:
+        if not self.client:
+            return ""
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=0.9,
+                presence_penalty=0.6,
+                frequency_penalty=0.3,
+                max_completion_tokens=max_tokens,
+            )
+        except TypeError:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=0.9,
+                presence_penalty=0.6,
+                frequency_penalty=0.3,
+                max_tokens=max_tokens,
+            )
+        return (resp.choices[0].message.content or "").strip()
 
 def main():
-    log.info("========== BOOT ==========")
+    log = get_logger("fpsbot")
 
-    # ✅ ВАЖНО: старт health-сервера (Render PORT)
-    start_health(log)
+    os.makedirs(DATA_DIR, exist_ok=True)
+    state_path = os.path.join(DATA_DIR, "state.json")
 
-    # ⏳ небольшая пауза чтобы порт точно поднялся
-    time.sleep(0.5)
+    api = TelegramAPI(TELEGRAM_BOT_TOKEN, HTTP_TIMEOUT, USER_AGENT, log)
+    api.delete_webhook_on_start()
 
-    # 🔁 дальше запускаем ТВОЮ текущую логику бота
-    try:
-        from app.tg import start_bot
-        log.info("Starting Telegram bot via app.tg.start_bot()")
-        start_bot()
-        return
-    except ImportError:
-        log.warning("app.tg.start_bot not found")
+    load_state(state_path, log)
 
-    try:
-        from app.telegram_api import run
-        log.info("Starting Telegram bot via app.telegram_api.run()")
-        run()
-        return
-    except ImportError:
-        log.warning("app.telegram_api.run not found")
+    ai = AIEngine(OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL, log)
+    handlers = BotHandlers(api=api, ai_engine=ai, log=log, data_dir=DATA_DIR)
 
-    # ❌ если ни один запуск не найден — не падаем
-    log.error("No Telegram entrypoint found. Bot is idle.")
+    offset = 0
+    log.info("BOT STARTED (polling). DATA_DIR=%s", DATA_DIR)
+
     while True:
-        time.sleep(60)
+        try:
+            updates = api.get_updates(offset=offset, timeout=POLL_TIMEOUT, limit=POLL_LIMIT)
+            for upd in updates:
+                offset = max(offset, int(upd.get("update_id", 0)) + 1)
+                msg = upd.get("message") or {}
+                chat = msg.get("chat") or {}
+                chat_id = chat.get("id")
+                if not chat_id:
+                    continue
+                text = msg.get("text") or ""
+                handlers.on_text(int(chat_id), text)
 
+            # сохранение раз в цикл (не тяжело)
+            save_state(state_path, log)
 
-if __name__ == "__main__":
-    main()
+        except Exception as e:
+            log.error("poll loop error: %r", e)
+            time.sleep(2)
