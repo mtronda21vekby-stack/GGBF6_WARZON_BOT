@@ -1,7 +1,7 @@
+# -*- coding: utf-8 -*-
 import time
 import random
-from typing import Dict, Any, Optional
-
+from typing import Dict, Any, Optional, List
 import requests
 from requests.adapters import HTTPAdapter
 
@@ -51,17 +51,6 @@ class TelegramAPI:
 
         raise last or RuntimeError("Telegram request failed")
 
-    def get_me_forever(self) -> None:
-        while True:
-            try:
-                data = self.request("getMe", retries=3)
-                me = data.get("result") or {}
-                self.log.info("Telegram getMe OK: @%s (id=%s)", me.get("username"), me.get("id"))
-                return
-            except Exception as e:
-                self.log.error("Telegram getMe failed (will retry): %r", e)
-                time.sleep(5)
-
     def delete_webhook_on_start(self) -> None:
         try:
             self.request("deleteWebhook", payload={"drop_pending_updates": True}, is_post=True, retries=3)
@@ -69,11 +58,10 @@ class TelegramAPI:
         except Exception as e:
             self.log.warning("Could not delete webhook: %r", e)
 
-    def answer_callback(self, callback_id: str) -> None:
-        try:
-            self.request("answerCallbackQuery", payload={"callback_query_id": callback_id}, is_post=True, retries=2)
-        except Exception:
-            pass
+    def get_updates(self, offset: int, timeout: int, limit: int) -> List[Dict[str, Any]]:
+        params = {"offset": offset, "timeout": timeout, "limit": limit, "allowed_updates": ["message"]}
+        data = self.request("getUpdates", params=params, is_post=False, retries=6)
+        return data.get("result") or []
 
     def send_message(self, chat_id: int, text: str, reply_markup=None, max_text_len: int = 3900) -> Optional[int]:
         text = text or ""
@@ -86,9 +74,3 @@ class TelegramAPI:
             res = self.request("sendMessage", payload=payload, is_post=True)
             last_msg_id = res.get("result", {}).get("message_id")
         return last_msg_id
-
-    def edit_message(self, chat_id: int, message_id: int, text: str, reply_markup=None) -> None:
-        payload = {"chat_id": chat_id, "message_id": message_id, "text": text}
-        if reply_markup is not None:
-            payload["reply_markup"] = reply_markup
-        self.request("editMessageText", payload=payload, is_post=True)
