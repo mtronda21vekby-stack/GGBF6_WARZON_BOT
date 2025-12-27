@@ -5,7 +5,6 @@ from app.state import ensure_profile, update_memory, clear_memory
 from app.ui.reply import premium_reply_kb
 from app.ui.texts import main_text, help_text, status_text, profile_text
 
-
 BTN_TO_CMD = {
     "📋 Меню": "/menu",
     "⚙️ Настройки": "/settings",
@@ -22,11 +21,10 @@ BTN_TO_CMD = {
     "🧨 Сброс": "/reset",
 }
 
-
 class BotHandlers:
-    def __init__(self, *, api, ai_engine, config, log):
+    def __init__(self, *, api, brain, config, log):
         self.api = api
-        self.ai = ai_engine
+        self.brain = brain
         self.cfg = config
         self.log = log
 
@@ -47,7 +45,6 @@ class BotHandlers:
                     self.api.answer_callback(cid)
                 except Exception:
                     pass
-            return
 
     def _handle_message(self, msg: Dict[str, Any]) -> None:
         chat = msg.get("chat") or {}
@@ -59,14 +56,18 @@ class BotHandlers:
         if not text:
             return
 
-        # ReplyKeyboard кнопки -> команды
+        # кнопки -> команда
         if text in BTN_TO_CMD:
             text = BTN_TO_CMD[text]
 
-        # --- команды ---
-        if text.startswith("/start") or text.startswith("/menu"):
-            ensure_profile(chat_id)
-            self._send(chat_id, main_text(chat_id, self.ai.enabled, self.cfg.OPENAI_MODEL))
+        if text.startswith("/start"):
+            p = ensure_profile(chat_id)
+            self._send(chat_id, "🧠 Brain v3: ONLINE\n\n" + main_text(p, self.brain.ai.enabled, self.cfg.OPENAI_MODEL))
+            return
+
+        if text.startswith("/menu"):
+            p = ensure_profile(chat_id)
+            self._send(chat_id, main_text(p, self.brain.ai.enabled, self.cfg.OPENAI_MODEL))
             return
 
         if text.startswith("/help"):
@@ -74,11 +75,11 @@ class BotHandlers:
             return
 
         if text.startswith("/status"):
-            self._send(chat_id, status_text(self.cfg.OPENAI_MODEL, self.cfg.DATA_DIR, self.ai.enabled))
+            self._send(chat_id, status_text(self.cfg.OPENAI_MODEL, self.cfg.DATA_DIR, self.brain.ai.enabled))
             return
 
         if text.startswith("/profile"):
-            self._send(chat_id, profile_text(chat_id))
+            self._send(chat_id, profile_text(ensure_profile(chat_id)))
             return
 
         if text.startswith("/clear_memory"):
@@ -88,14 +89,12 @@ class BotHandlers:
 
         if text.startswith("/reset"):
             p = ensure_profile(chat_id)
-            p.update({
-                "game": "auto",
-                "persona": "spicy",
-                "verbosity": "normal",
-                "memory": "on",
-                "mode": "chat",
-                "player_level": "demon",
-            })
+            p["game"] = "auto"
+            p["persona"] = "spicy"
+            p["verbosity"] = "normal"
+            p["memory"] = "on"
+            p["mode"] = "chat"
+            p["player_level"] = "demon"
             clear_memory(chat_id)
             self._send(chat_id, "🧨 Сброс выполнен. Вернул базовые настройки.")
             return
@@ -105,17 +104,32 @@ class BotHandlers:
             return
 
         if text.startswith("/game"):
-            self._cycle_game(chat_id); return
+            self._cycle(chat_id, "game", ["auto","warzone","bf6","bo7"], "🎮 Игра")
+            return
+
         if text.startswith("/persona"):
-            self._cycle_persona(chat_id); return
+            self._cycle(chat_id, "persona", ["spicy","chill","pro"], "🎭 Стиль")
+            return
+
         if text.startswith("/verbosity"):
-            self._cycle_verbosity(chat_id); return
+            self._cycle(chat_id, "verbosity", ["short","normal","talkative"], "🗣 Ответ")
+            return
+
         if text.startswith("/mode"):
-            self._toggle_mode(chat_id); return
+            p = ensure_profile(chat_id)
+            p["mode"] = "coach" if p.get("mode","chat") == "chat" else "chat"
+            self._send(chat_id, f"🔁 Режим: {p['mode'].upper()}")
+            return
+
         if text.startswith("/memory"):
-            self._toggle_memory(chat_id); return
+            p = ensure_profile(chat_id)
+            p["memory"] = "off" if p.get("memory","on") == "on" else "on"
+            self._send(chat_id, f"🧠 Память: {p['memory']}")
+            return
+
         if text.startswith("/level"):
-            self._cycle_level(chat_id); return
+            self._cycle(chat_id, "player_level", ["normal","pro","demon"], "😈 Уровень")
+            return
 
         if text.startswith("/zombies"):
             self._send(chat_id, "🧟 Zombies: режим подключен. Напиши карту/волну/цель — и начнём.")
@@ -126,68 +140,24 @@ class BotHandlers:
             return
 
         if text.startswith("/daily"):
-            self._send(chat_id, "🎯 Задание дня: напиши 'сделал' или 'не вышло' и что мешало.")
+            self._send(chat_id, "🎯 Задание дня: напиши цель на сегодня (10 минут дрилла) — составлю план.")
             return
 
-        # --- обычный чат -> AI ---
+        # обычный текст -> Brain
         p = ensure_profile(chat_id)
+        update_memory(chat_id, "user", text, max_turns=self.cfg.MEMORY_MAX_TURNS)
 
-        mem_turns = int(getattr(self.cfg, "MEMORY_MAX_TURNS", 10))
+        out = self.brain.reply(chat_id, text)
 
-        update_memory(chat_id, "user", text, max_turns=mem_turns)
-
-        mode = p.get("mode", "chat")
-        if mode == "coach":
-            out = self.ai.coach_reply(chat_id, text)
-        else:
-            out = self.ai.chat_reply(chat_id, text)
-
-        update_memory(chat_id, "assistant", out, max_turns=mem_turns)
-
+        update_memory(chat_id, "assistant", out, max_turns=self.cfg.MEMORY_MAX_TURNS)
         p["last_question"] = text
         p["last_answer"] = out
 
         self._send(chat_id, out)
 
-    # ---------- helpers ----------
-    def _cycle_game(self, chat_id: int) -> None:
+    def _cycle(self, chat_id: int, key: str, order, title: str) -> None:
         p = ensure_profile(chat_id)
-        order = ["auto", "warzone", "bf6", "bo7"]
-        cur = p.get("game", "auto")
-        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "auto"
-        p["game"] = nxt
-        self._send(chat_id, f"🎮 Игра: {nxt} (переключил)")
-
-    def _cycle_persona(self, chat_id: int) -> None:
-        p = ensure_profile(chat_id)
-        order = ["spicy", "chill", "pro"]
-        cur = p.get("persona", "spicy")
-        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "spicy"
-        p["persona"] = nxt
-        self._send(chat_id, f"🎭 Стиль: {nxt} (переключил)")
-
-    def _cycle_verbosity(self, chat_id: int) -> None:
-        p = ensure_profile(chat_id)
-        order = ["short", "normal", "talkative"]
-        cur = p.get("verbosity", "normal")
-        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "normal"
-        p["verbosity"] = nxt
-        self._send(chat_id, f"🗣 Ответ: {nxt} (переключил)")
-
-    def _toggle_mode(self, chat_id: int) -> None:
-        p = ensure_profile(chat_id)
-        p["mode"] = "coach" if p.get("mode", "chat") == "chat" else "chat"
-        self._send(chat_id, f"🔁 Режим: {p['mode'].upper()}")
-
-    def _toggle_memory(self, chat_id: int) -> None:
-        p = ensure_profile(chat_id)
-        p["memory"] = "off" if p.get("memory", "on") == "on" else "on"
-        self._send(chat_id, f"🧠 Память: {p['memory']}")
-
-    def _cycle_level(self, chat_id: int) -> None:
-        p = ensure_profile(chat_id)
-        order = ["normal", "pro", "demon"]
-        cur = p.get("player_level", "demon")
-        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "demon"
-        p["player_level"] = nxt
-        self._send(chat_id, f"😈 Уровень игрока: {nxt} (переключил)")
+        cur = p.get(key, order[0])
+        nxt = order[(order.index(cur)+1) % len(order)] if cur in order else order[0]
+        p[key] = nxt
+        self._send(chat_id, f"{title}: {nxt} (переключил)")
