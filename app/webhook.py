@@ -1,56 +1,67 @@
-# -*- coding: utf-8 -*-
-import os
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+# app/webhook.py
+from fastapi import FastAPI, Request, Header, HTTPException
+from fastapi.responses import JSONResponse
 
-from app.config import Config
-from app.tg_api import TelegramAPI
-from app.ai import AIEngine
-from app.handlers import BotHandlers
+from app.config import get_settings
+from app.observability.log import setup_logging, get_logger
+
+from app.adapters.telegram.types import Update
+from app.adapters.telegram.client import TelegramClient
+from app.core.router import Router
+
+from app.services.brain.engine import BrainEngine
+from app.services.brain.memory import InMemoryStore
+from app.services.profiles.service import ProfileService
+
+log = get_logger("webhook")
 
 
-cfg = Config.from_env()
+def create_app() -> FastAPI:
+    settings = get_settings()
+    setup_logging(settings.log_level)
 
-api = TelegramAPI(
-    token=cfg.TELEGRAM_BOT_TOKEN,
-    http_timeout=cfg.HTTP_TIMEOUT,
-    user_agent=cfg.USER_AGENT,
-    log=cfg.log,
-)
+    app = FastAPI(title="GGBF6 Bot", version="1.0.0")
 
-ai = AIEngine(
-    openai_key=cfg.OPENAI_API_KEY,
-    base_url=cfg.OPENAI_BASE_URL,
-    model=cfg.OPENAI_MODEL,
-    log=cfg.log,
-)
+    # Telegram client
+    tg = TelegramClient(settings.BOT_TOKEN)
 
-handlers = BotHandlers(api=api, ai_engine=ai, config=cfg, log=cfg.log)
+    # Brain stack
+    store = InMemoryStore(memory_max_turns=settings.memory_max_turns)
+    profiles = ProfileService(store=store)
+    brain = BrainEngine(store=store, profiles=profiles, settings=settings)
 
-app = FastAPI(title="GGBF6_WARZON_BOT Webhook")
+    router = Router(tg=tg, brain=brain, settings=settings)
 
-@app.get("/")
-def root():
-    return PlainTextResponse("OK")
+    @app.get("/health")
+    async def health():
+        return {"ok": True}
 
-@app.get("/health")
-def health():
-    return {"ok": True, "ai": bool(ai.enabled), "mode": "webhook"}
+    @app.post("/tg/webhook")
+    async def telegram_webhook(
+        request: Request,
+        x_telegram_bot_api_secret_token: str | None = Header(default=None),
+    ):
+        if settings.WEBHOOK_SECRET:
+            if x_telegram_bot_api_secret_token != settings.WEBHOOK_SECRET:
+                raise HTTPException(status_code=401, detail="bad secret")
 
-@app.post("/tg/webhook/{secret}")
-async def telegram_webhook(secret: str, request: Request):
-    # защита от чужих запросов
-    if cfg.WEBHOOK_SECRET and secret != cfg.WEBHOOK_SECRET:
-        return JSONResponse({"ok": False, "error": "bad secret"}, status_code=403)
+        raw = await request.json()
+        update = Update.parse(raw)
 
-    try:
-        upd = await request.json()
-    except Exception:
-        return JSONResponse({"ok": False, "error": "bad json"}, status_code=400)
+        try:
+            await router.handle_update(update)
+        except Exception:
+            log.exception("Telegram update crashed")
 
-    try:
-        handlers.handle_update(upd)
-    except Exception as e:
-        cfg.log.exception("handle_update failed: %r", e)
+        # Telegram ВСЕГДА должен получать 200
+        return JSONResponse({"ok": True})
 
-    return {"ok": True}
+    @app.on_event("shutdown")
+    async def shutdown():
+        await tg.close()
+
+    return app
+
+
+# 🔴 ВАЖНО: ЭТО ОБЯЗАТЕЛЬНО
+app = create_app()
