@@ -6,7 +6,6 @@ from app.ui.reply import premium_reply_kb
 from app.ui.texts import main_text, help_text, status_text, profile_text
 
 
-# Текст кнопки (ReplyKeyboard) -> команда
 BTN_TO_CMD = {
     "📋 Меню": "/menu",
     "⚙️ Настройки": "/settings",
@@ -25,10 +24,6 @@ BTN_TO_CMD = {
 
 
 class BotHandlers:
-    """
-    ReplyKeyboard-only UI.
-    Кнопки снизу = обычный текст -> маппим в команды.
-    """
     def __init__(self, *, api, ai_engine, config, log):
         self.api = api
         self.ai = ai_engine
@@ -44,7 +39,6 @@ class BotHandlers:
             self._handle_message(msg)
             return
 
-        # если где-то остались inline callback-и — не падаем
         cb = upd.get("callback_query")
         if cb:
             cid = cb.get("id")
@@ -65,18 +59,14 @@ class BotHandlers:
         if not text:
             return
 
-        # кнопки снизу -> команда
+        # ReplyKeyboard кнопки -> команды
         if text in BTN_TO_CMD:
             text = BTN_TO_CMD[text]
 
         # --- команды ---
-        if text.startswith("/start"):
+        if text.startswith("/start") or text.startswith("/menu"):
             ensure_profile(chat_id)
-            self._send(chat_id, "🧠 Brain v3: ONLINE\n\n" + main_text(ensure_profile(chat_id), self.ai.enabled, self.cfg.OPENAI_MODEL))
-            return
-
-        if text.startswith("/menu"):
-            self._send(chat_id, main_text(ensure_profile(chat_id), self.ai.enabled, self.cfg.OPENAI_MODEL))
+            self._send(chat_id, main_text(chat_id, self.ai.enabled, self.cfg.OPENAI_MODEL))
             return
 
         if text.startswith("/help"):
@@ -88,7 +78,7 @@ class BotHandlers:
             return
 
         if text.startswith("/profile"):
-            self._send(chat_id, profile_text(ensure_profile(chat_id)))
+            self._send(chat_id, profile_text(chat_id))
             return
 
         if text.startswith("/clear_memory"):
@@ -98,12 +88,14 @@ class BotHandlers:
 
         if text.startswith("/reset"):
             p = ensure_profile(chat_id)
-            p["game"] = "auto"
-            p["persona"] = "spicy"
-            p["verbosity"] = "normal"
-            p["memory"] = "on"
-            p["mode"] = "chat"
-            p["player_level"] = "demon"
+            p.update({
+                "game": "auto",
+                "persona": "spicy",
+                "verbosity": "normal",
+                "memory": "on",
+                "mode": "chat",
+                "player_level": "demon",
+            })
             clear_memory(chat_id)
             self._send(chat_id, "🧨 Сброс выполнен. Вернул базовые настройки.")
             return
@@ -113,28 +105,17 @@ class BotHandlers:
             return
 
         if text.startswith("/game"):
-            self._cycle_game(chat_id)
-            return
-
+            self._cycle_game(chat_id); return
         if text.startswith("/persona"):
-            self._cycle_persona(chat_id)
-            return
-
+            self._cycle_persona(chat_id); return
         if text.startswith("/verbosity"):
-            self._cycle_verbosity(chat_id)
-            return
-
+            self._cycle_verbosity(chat_id); return
         if text.startswith("/mode"):
-            self._toggle_mode(chat_id)
-            return
-
+            self._toggle_mode(chat_id); return
         if text.startswith("/memory"):
-            self._toggle_memory(chat_id)
-            return
-
+            self._toggle_memory(chat_id); return
         if text.startswith("/level"):
-            self._cycle_level(chat_id)
-            return
+            self._cycle_level(chat_id); return
 
         if text.startswith("/zombies"):
             self._send(chat_id, "🧟 Zombies: режим подключен. Напиши карту/волну/цель — и начнём.")
@@ -148,15 +129,20 @@ class BotHandlers:
             self._send(chat_id, "🎯 Задание дня: напиши 'сделал' или 'не вышло' и что мешало.")
             return
 
-        # --- обычный чат -> Brain ---
+        # --- обычный чат -> AI ---
         p = ensure_profile(chat_id)
 
-        # ✅ ВАЖНО: у тебя update_memory принимает max_turns=..., не memory_max_turns
-        update_memory(chat_id, "user", text, max_turns=self.cfg.MEMORY_MAX_TURNS)
+        mem_turns = int(getattr(self.cfg, "MEMORY_MAX_TURNS", 10))
 
-        out = self.ai.reply(chat_id, text)
+        update_memory(chat_id, "user", text, max_turns=mem_turns)
 
-        update_memory(chat_id, "assistant", out, max_turns=self.cfg.MEMORY_MAX_TURNS)
+        mode = p.get("mode", "chat")
+        if mode == "coach":
+            out = self.ai.coach_reply(chat_id, text)
+        else:
+            out = self.ai.chat_reply(chat_id, text)
+
+        update_memory(chat_id, "assistant", out, max_turns=mem_turns)
 
         p["last_question"] = text
         p["last_answer"] = out
