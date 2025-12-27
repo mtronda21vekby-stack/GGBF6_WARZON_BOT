@@ -1,15 +1,27 @@
 # -*- coding: utf-8 -*-
 import os
+from dataclasses import dataclass
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+@dataclass
+class Config:
+    TELEGRAM_BOT_TOKEN: str
+    OPENAI_API_KEY: str
+    OPENAI_BASE_URL: str
+    OPENAI_MODEL: str
+    DATA_DIR: str
+    HTTP_TIMEOUT: float
+    AUTOSAVE_INTERVAL_S: int
+    MEMORY_MAX_TURNS: int
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
-
-DATA_DIR = os.getenv("DATA_DIR", "/tmp/data").strip()
-HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "25"))
-USER_AGENT = os.getenv("USER_AGENT", "render-fps-coach-bot/premium-v3").strip()
-
-POLL_LIMIT = int(os.getenv("POLL_LIMIT", "50"))
-POLL_TIMEOUT = int(os.getenv("POLL_TIMEOUT", "45"))
+    @staticmethod
+    def from_env() -> "Config":
+        return Config(
+            TELEGRAM_BOT_TOKEN=os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(),
+            OPENAI_API_KEY=os.environ.get("OPENAI_API_KEY", "").strip(),
+            OPENAI_BASE_URL=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").strip(),
+            OPENAI_MODEL=os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip(),
+            DATA_DIR=os.environ.get("DATA_DIR", "/tmp").strip(),
+            HTTP_TIMEOUT=float(os.environ.get("HTTP_TIMEOUT", "30")),
+            AUTOSAVE_INTERVAL_S=int(os.environ.get("AUTOSAVE_INTERVAL_S", "60")),
+            MEMORY_MAX_TURNS=int(os.environ.get("MEMORY_MAX_TURNS", "10")),
+        )
