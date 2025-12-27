@@ -1,34 +1,28 @@
 # app/config.py
-from __future__ import annotations
-
-import os
-from dataclasses import dataclass
+from pydantic import BaseSettings
 
 
-def _req(name: str) -> str:
-    v = os.getenv(name, "").strip()
-    if not v:
-        raise RuntimeError(f"{name} is required")
-    return v
-
-
-@dataclass(frozen=True)
-class Settings:
+class Settings(BaseSettings):
+    # Telegram
     BOT_TOKEN: str
-    WEBHOOK_SECRET: str
-    WEBHOOK_PATH: str
-    PUBLIC_URL: str
+    WEBHOOK_SECRET: str | None = None
+
+    # Memory / brain
+    memory_max_turns: int = 20
+
+    # Logs
+    log_level: str = "INFO"
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+
+
+_settings: Settings | None = None
 
 
 def get_settings() -> Settings:
-    secret = _req("WEBHOOK_SECRET")
-    path = os.getenv("WEBHOOK_PATH", f"/telegram/webhook/{secret}").strip()
-    if not path.startswith("/"):
-        path = "/" + path
-
-    return Settings(
-        BOT_TOKEN=_req("BOT_TOKEN"),
-        WEBHOOK_SECRET=secret,
-        WEBHOOK_PATH=path,
-        PUBLIC_URL=_req("PUBLIC_URL").rstrip("/"),
-    )
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
