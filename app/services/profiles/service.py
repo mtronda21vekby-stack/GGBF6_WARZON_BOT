@@ -1,3 +1,4 @@
+# app/services/profiles/service.py  (ЗАМЕНИ ЦЕЛИКОМ)
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
@@ -8,8 +9,8 @@ class Profile:
     user_id: int
 
     game: str = "warzone"          # warzone / bf6 / bo7
-    device: str | None = None      # kbm / pad
-    difficulty: str = "normal"     # normal / pro / demon
+    device: str = "ps"             # pc / ps / xbox
+    mode: str = "normal"           # normal / pro / demon
 
     ai_enabled: bool = True
     memory_enabled: bool = True
@@ -25,6 +26,6 @@ class ProfileService:
             self._profiles[user_id] = Profile(user_id=user_id)
         return self._profiles[user_id]
 
-    def clear(self, user_id: int):
+    def clear(self, user_id: int) -> None:
         if user_id in self._profiles:
             del self._profiles[user_id]
