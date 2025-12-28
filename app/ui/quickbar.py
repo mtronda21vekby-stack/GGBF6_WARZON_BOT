@@ -1,5 +1,5 @@
-# app/ui/quickbar.py
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
 
 def kb_main():
     return InlineKeyboardMarkup([
@@ -17,15 +17,16 @@ def kb_main():
         ]
     ])
 
+
 def kb_settings():
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🎮 Warzone", callback_data="set_wz"),
+            InlineKeyboardButton("🎮 Warzone", callback_data="set_warzone"),
             InlineKeyboardButton("🪖 BF6", callback_data="set_bf6"),
         ],
         [
-            InlineKeyboardButton("💻 PC", callback_data="pc"),
-            InlineKeyboardButton("🎮 PS/Xbox", callback_data="console"),
+            InlineKeyboardButton("💻 PC", callback_data="input_pc"),
+            InlineKeyboardButton("🎮 PS / Xbox", callback_data="input_console"),
         ],
         [
             InlineKeyboardButton("⬅️ Назад", callback_data="back"),
