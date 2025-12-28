@@ -1,15 +1,23 @@
 from __future__ import annotations
 
-from functools import lru_cache
+import os
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    bot_token: str = ""
-    webhook_secret: str = ""
+    # 🔐 Telegram
+    BOT_TOKEN: str
+    WEBHOOK_SECRET: str = "secret"
+    PUBLIC_URL: str | None = None
 
-    log_level: str = "INFO"
-    memory_max_turns: int = 12
+    # 🧠 AI
+    AI_ENABLED: bool = True
+    AI_MODEL: str = "gpt-4.1-mini"
+
+    # ⚙️ App
+    APP_NAME: str = "GGBF6 WARZONE BOT"
+    DEBUG: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -18,6 +26,11 @@ class Settings(BaseSettings):
     )
 
 
-@lru_cache(maxsize=1)
+_settings: Settings | None = None
+
+
 def get_settings() -> Settings:
-    return Settings()
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
