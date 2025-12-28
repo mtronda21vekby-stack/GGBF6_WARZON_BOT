@@ -1,39 +1,61 @@
 # app/config.py
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from functools import lru_cache
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+import os
+from dataclasses import dataclass
 
 
-class Settings(BaseSettings):
-    """
-    ВАЖНО:
-    - Мы используем snake_case в коде: settings.bot_token
-    - А в переменных окружения Render обычно UPPER_CASE: BOT_TOKEN
-    """
+def _env(name: str, default: str | None = None) -> str | None:
+    v = os.getenv(name)
+    if v is None or v.strip() == "":
+        return default
+    return v
 
+
+def _env_int(name: str, default: int) -> int:
+    v = _env(name)
+    if v is None:
+        return default
+    try:
+        return int(v)
+    except ValueError:
+        return default
+
+
+@dataclass(frozen=True)
+class Settings:
     # Telegram
-    bot_token: str = Field(default="", alias="BOT_TOKEN")
-    webhook_secret: str = Field(default="", alias="WEBHOOK_SECRET")
+    bot_token: str
+    webhook_secret: str | None
 
-    # App
-    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
-    memory_max_turns: int = Field(default=12, alias="MEMORY_MAX_TURNS")
+    # Brain / memory
+    memory_max_turns: int
 
-    # AI (на будущее, уже предусмотрено)
-    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
+    # Logging
+    log_level: str
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-        populate_by_name=True,  # чтобы работали alias'ы
-    )
+    # AI (на будущее, ключ держи ТОЛЬКО в переменных окружения)
+    openai_api_key: str | None
 
 
-@lru_cache(maxsize=1)
+_cached: Settings | None = None
+
+
 def get_settings() -> Settings:
-    return Settings()
+    global _cached
+    if _cached is not None:
+        return _cached
+
+    bot_token = _env("BOT_TOKEN") or _env("TELEGRAM_BOT_TOKEN")
+    if not bot_token:
+        # не падаем “непонятно где”, а даём явный текст
+        raise RuntimeError("ENV BOT_TOKEN is required (Telegram bot token).")
+
+    _cached = Settings(
+        bot_token=bot_token,
+        webhook_secret=_env("WEBHOOK_SECRET"),
+        memory_max_turns=_env_int("MEMORY_MAX_TURNS", 20),
+        log_level=_env("LOG_LEVEL", "INFO") or "INFO",
+        openai_api_key=_env("OPENAI_API_KEY"),
+    )
+    return _cached
