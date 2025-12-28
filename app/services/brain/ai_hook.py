@@ -16,50 +16,41 @@ class AIHook:
         return OpenAI(api_key=self.api_key)
 
     def generate(self, *, profile: Dict[str, Any], history: List[dict], user_text: str) -> str:
-        """
-        Возвращает “живой” ответ как тиммейт/коуч.
-        BF6: настройки и термины — EN; Warzone/BO7 — RU.
-        """
         game = (profile.get("game") or "Warzone").strip()
         platform = (profile.get("platform") or "PC").strip()
         input_ = (profile.get("input") or "Controller").strip()
         diff = (profile.get("difficulty") or "Normal").strip()
         bf6_class = (profile.get("bf6_class") or "").strip()
 
-        # язык
         is_bf6 = game.upper() == "BF6"
         lang_rule = (
-            "For BF6: keep SETTINGS TERMS in English (platform/input/settings names), but you may explain briefly in Russian if needed."
+            "BF6: settings terms in English. You may explain briefly in Russian."
             if is_bf6
-            else "Для Warzone/BO7 отвечай на русском, термины можно миксовать, но приоритет RU."
+            else "Warzone/BO7: отвечай на русском (RU first)."
         )
 
-        # стиль ответа по режиму
         if diff.lower().startswith("demon"):
-            style = "Ты ультра-агрессивный DEMON тиммейт-коуч: коротко, жёстко, конкретно, с приоритетами, без воды. Но без токсика."
+            style = "DEMON teammate-coach: aggressive, ultra-specific, no fluff, not toxic."
         elif diff.lower().startswith("pro"):
-            style = "Ты PRO тиммейт-коуч: структурно, точно, даёшь микро- и макро-решения."
+            style = "PRO teammate-coach: structured, precise, micro+macro."
         else:
-            style = "Ты NORMAL тиммейт-коуч: понятные инструкции и быстрые правки."
+            style = "NORMAL teammate-coach: clear, actionable."
 
         system = (
-            "You are an elite FPS coach & teammate. Your goal: maximize win rate and decision quality.\n"
-            f"{lang_rule}\n"
-            f"{style}\n"
-            "Правило ответа: всегда давай блоки:\n"
-            "1) СЕЙЧАС (что сделать прямо в следующем бою)\n"
-            "2) ДАЛЬШЕ (что тренировать 20-30 минут)\n"
-            "3) НАСТРОЙКИ (только если релевантно; учитывай игру/платформу/input)\n"
-            "4) 1 вопрос уточнения (максимум один) если реально нужно.\n"
-            "Никаких шаблонов-пустышек. Каждый ответ должен быть конкретным под ввод.\n"
+            "You are an elite FPS coach & teammate.\n"
+            f"{lang_rule}\n{style}\n"
+            "Answer format ALWAYS:\n"
+            "1) NOW (next fight actions)\n"
+            "2) NEXT (20–30 min training)\n"
+            "3) SETTINGS (only if relevant; respect game/platform/input)\n"
+            "4) One clarifying question (max 1) only if needed.\n"
+            "No generic templates. Must be tailored to user input.\n"
         )
 
         profile_line = f"PROFILE: game={game}; platform={platform}; input={input_}; difficulty={diff}; bf6_class={bf6_class}"
+        last = history[-14:] if history else []
 
-        # берём последние N сообщений, чтобы не раздувать
-        last = history[-12:] if history else []
-        messages = [{"role": "system", "content": system}]
-        messages.append({"role": "system", "content": profile_line})
+        messages = [{"role": "system", "content": system}, {"role": "system", "content": profile_line}]
         for t in last:
             role = t.get("role")
             if role not in ("user", "assistant", "system"):
@@ -67,16 +58,21 @@ class AIHook:
             messages.append({"role": role, "content": str(t.get("content", ""))})
         messages.append({"role": "user", "content": user_text})
 
-        # Responses API
         client = self._client()
-        resp = client.responses.create(
-            model=self.model,
-            input=messages,
-        )
-        # соберём текст
-        out = getattr(resp, "output_text", None)
-        if out:
-            return out.strip()
 
-        # fallback (редко)
-        return "Дай вводные: игра | платформа | input | от чего умираешь | дистанция. Я соберу план."
+        # 1) Try Responses API
+        try:
+            resp = client.responses.create(model=self.model, input=messages)
+            out = getattr(resp, "output_text", None)
+            if out:
+                return out.strip()
+        except Exception:
+            pass
+
+        # 2) Fallback: Chat Completions
+        try:
+            cc = client.chat.completions.create(model=self.model, messages=messages)
+            text = cc.choices[0].message.content or ""
+            return text.strip() or "AI returned empty."
+        except Exception as e:
+            return f"🧠 AI ERROR: {e}\n(Проверь OPENAI_API_KEY в Render ENV.)"
