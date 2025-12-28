@@ -5,6 +5,7 @@ from app.services.brain.worlds import WarzoneWorld, BF6World, BO7World
 from app.services.brain.memory import PlayerMemory
 from app.services.brain.detector import detect_situation
 from app.services.brain.dialogues import get_dialogue
+from app.services.brain.decision import detect_bad_decision, build_decision_feedback
 from app.services.brain.premium import get_premium_tip
 from app.services.brain.ai_hook import AIHook
 
@@ -23,7 +24,7 @@ class BrainEngine:
         self.settings = settings
 
         self.memory = PlayerMemory()
-        self.ai = AIHook(enabled=False)  # ИИ ВЫКЛЮЧЕН, ГОТОВ НА БУДУЩЕЕ
+        self.ai = AIHook(enabled=False)
 
     async def handle_text(self, user_id: int, text: str):
         profile = self.profiles.get(user_id)
@@ -35,37 +36,37 @@ class BrainEngine:
         if not world:
             return self._reply("Мир не найден.")
 
-        # ---------- AUTO DETECT ----------
-        situation = detect_situation(text)
-        dialogue = ""
+        parts = []
 
+        # ---------- AUTO SITUATION ----------
+        situation = detect_situation(text)
         if situation:
             self.memory.add_error(user_id, situation)
             dialogue = get_dialogue(style, situation)
+            if dialogue:
+                parts.append(dialogue)
+
+        # ---------- BAD DECISION ----------
+        bad = detect_bad_decision(game, text)
+        if bad:
+            self.memory.add_error(user_id, bad)
+            parts.append(build_decision_feedback(game, bad))
 
         # ---------- WORLD ANALYSIS ----------
         analysis = world.analyze(text, profile, style, self.memory)
+        parts.append(analysis)
 
-        # ---------- PREMIUM (OFF BY DEFAULT) ----------
-        premium = ""
+        # ---------- PREMIUM ----------
         if getattr(profile, "premium", False):
-            premium = get_premium_tip(game)
+            parts.append(get_premium_tip(game))
 
         # ---------- AI HOOK ----------
         ai_text = await self.ai.analyze({
             "game": game,
             "style": style,
-            "situation": situation,
-            "memory": self.memory,
             "text": text,
+            "memory": self.memory,
         })
-
-        parts = []
-        if dialogue:
-            parts.append(dialogue)
-        parts.append(analysis)
-        if premium:
-            parts.append(premium)
         if ai_text:
             parts.append(ai_text)
 
