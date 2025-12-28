@@ -3,7 +3,6 @@ from __future__ import annotations
 
 
 def kb_main() -> dict:
-    # ПРЕМИАЛЬНЫЙ НИЖНИЙ UI (reply keyboard)
     return {
         "keyboard": [
             [{"text": "🎮 Игра"}, {"text": "⚙️ Настройки"}, {"text": "🪖 Класс"}],
@@ -19,13 +18,12 @@ def kb_main() -> dict:
 
 
 def kb_settings() -> dict:
-    # “Контейнер” настроек
     return {
         "keyboard": [
             [{"text": "🎮 Выбрать игру"}],
             [{"text": "🖥 Платформа"}, {"text": "⌨️ Input"}],
             [{"text": "😈 Режим мышления"}],
-            [{"text": "🧩 Настройки игры"}],  # позже расширим под каждый “мир”
+            [{"text": "🧩 Настройки игры"}],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
@@ -79,11 +77,36 @@ def kb_difficulty() -> dict:
 
 
 def kb_classes_bf6() -> dict:
-    # BF6 классы (как ты попросил)
     return {
         "keyboard": [
             [{"text": "🟥 Assault"}, {"text": "🟦 Recon"}],
             [{"text": "🟨 Engineer"}, {"text": "🟩 Medic"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+# ---------- BF6 SETTINGS MENUS (EN) ----------
+def kb_bf6_settings_menu() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🧩 BF6: Class Settings"}],
+            [{"text": "🎯 BF6: Aim/Sens"}],
+            [{"text": "🎮 BF6: Controller Tuning"}, {"text": "⌨️ BF6: KBM Tuning"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+def kb_bf6_class_settings() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🟥 Assault Setup"}, {"text": "🟦 Recon Setup"}],
+            [{"text": "🟨 Engineer Setup"}, {"text": "🟩 Medic Setup"}],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
