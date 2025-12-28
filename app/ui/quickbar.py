@@ -5,7 +5,7 @@ from __future__ import annotations
 def kb_main() -> dict:
     return {
         "keyboard": [
-            [{"text": "🎮 Игра"}, {"text": "⚙️ Настройки"}, {"text": "🪖 Класс"}],
+            [{"text": "🎮 Игра"}, {"text": "⚙️ Настройки"}, {"text": "🪖 BF6 Класс"}],
             [{"text": "🧠 ИИ"}, {"text": "🎯 Тренировка"}, {"text": "🎬 VOD"}],
             [{"text": "🧟 Zombies"}, {"text": "📌 Профиль"}, {"text": "📊 Статус"}],
             [{"text": "💎 Premium"}, {"text": "🧹 Очистить память"}, {"text": "🧨 Сброс"}],
@@ -76,7 +76,7 @@ def kb_difficulty() -> dict:
     }
 
 
-def kb_classes_bf6() -> dict:
+def kb_bf6_classes() -> dict:
     return {
         "keyboard": [
             [{"text": "🟥 Assault"}, {"text": "🟦 Recon"}],
@@ -88,25 +88,26 @@ def kb_classes_bf6() -> dict:
     }
 
 
-# ---------- BF6 SETTINGS MENUS (EN) ----------
-def kb_bf6_settings_menu() -> dict:
+def kb_game_settings_menu(game: str) -> dict:
+    # Меню "настроек игры" по миру (режиму)
+    if (game or "").upper() == "BF6":
+        return {
+            "keyboard": [
+                [{"text": "🪖 BF6: Class Settings"}],
+                [{"text": "🎯 BF6: Aim/Sens"}],
+                [{"text": "🎮 BF6: Controller Tuning"}, {"text": "⌨️ BF6: KBM Tuning"}],
+                [{"text": "⬅️ Назад"}],
+            ],
+            "resize_keyboard": True,
+            "is_persistent": True,
+        }
+
+    # Warzone / BO7 — структура готова, детали докрутим дальше, но уже device-aware
     return {
         "keyboard": [
-            [{"text": "🧩 BF6: Class Settings"}],
-            [{"text": "🎯 BF6: Aim/Sens"}],
-            [{"text": "🎮 BF6: Controller Tuning"}, {"text": "⌨️ BF6: KBM Tuning"}],
-            [{"text": "⬅️ Назад"}],
-        ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-    }
-
-
-def kb_bf6_class_settings() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🟥 Assault Setup"}, {"text": "🟦 Recon Setup"}],
-            [{"text": "🟨 Engineer Setup"}, {"text": "🟩 Medic Setup"}],
+            [{"text": f"🎮 {game}: Loadouts"}],
+            [{"text": f"🎯 {game}: Aim/Sens"}],
+            [{"text": f"🧩 {game}: Movement/Positioning"}],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
