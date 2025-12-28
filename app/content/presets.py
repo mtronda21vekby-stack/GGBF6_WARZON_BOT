@@ -1,4 +1,3 @@
-# app/content/presets.py  (НОВЫЙ ФАЙЛ — минимальные пресеты, расширим)
 from __future__ import annotations
 
 # ЯЗЫК:
