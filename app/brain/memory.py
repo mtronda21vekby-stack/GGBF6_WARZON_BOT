@@ -3,40 +3,33 @@
 from __future__ import annotations
 
 import time
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Optional
 
 
 class InMemoryStore:
     """
-    RAM-память (на Render сбрасывается при перезапуске).
-    Совместима с любыми вызовами:
-      - InMemoryStore(memory_max_turns=20)
-      - InMemoryStore(max_turns=20)
-      - InMemoryStore(limit=20)
-      - InMemoryStore(20)
+    Максимально совместимый конструктор.
+    Не падает ни от каких аргументов:
+      InMemoryStore(memory_max_turns=20)
+      InMemoryStore(max_turns=20)
+      InMemoryStore(20)
+      InMemoryStore()
     """
 
-    def __init__(
-        self,
-        memory_max_turns: Optional[int] = None,
-        *args,
-        **kwargs,
-    ):
-        # 1) приоритет: явный memory_max_turns
-        limit = memory_max_turns
-
-        # 2) если не задан — пробуем другие имена
+    def __init__(self, *args, **kwargs):
+        # принимаем любое имя лимита
+        limit = kwargs.get("memory_max_turns", None)
         if limit is None:
             for k in ("max_turns", "limit", "max_messages", "memory_limit"):
                 if k in kwargs and kwargs[k] is not None:
                     limit = kwargs[k]
                     break
 
-        # 3) если всё ещё None — пробуем позиционный
+        # позиционный
         if limit is None and len(args) >= 1 and args[0] is not None:
             limit = args[0]
 
-        # 4) дефолт + защита
+        # дефолт + защита
         try:
             self.max_turns = int(limit) if limit is not None else 20
         except Exception:
@@ -61,7 +54,6 @@ class InMemoryStore:
     def get(self, chat_id: int) -> List[dict]:
         cid = int(chat_id)
         arr = self._data.get(cid, [])
-        # отдаём только role/content (без ts) — удобно для промпта
         return [{"role": m["role"], "content": m["content"]} for m in arr]
 
     def clear(self, chat_id: int) -> None:
