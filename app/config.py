@@ -1,30 +1,18 @@
-from functools import lru_cache
-from pydantic_settings import BaseSettings
+# app/config.py  (ЕСЛИ У ТЕБЯ НЕТ — СОЗДАЙ И ВСТАВЬ)
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
 
 
-class Settings(BaseSettings):
-    # Telegram
-    BOT_TOKEN: str
-    WEBHOOK_SECRET: str | None = None
-
-    # Brain/memory
-    memory_max_turns: int = 20
-
-    # Logs
-    log_level: str = "INFO"
-
-    # AI
-    AI_ENABLED: bool = True
-    AI_API_KEY: str | None = None
-    AI_BASE_URL: str = "https://api.openai.com/v1"
-    AI_MODEL: str = "gpt-4o-mini"
-    AI_TIMEOUT_SEC: int = 25
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+@dataclass
+class Settings:
+    bot_token: str
+    webhook_secret: str | None = None
 
 
-@lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings(
+        bot_token=os.environ.get("BOT_TOKEN", "").strip(),
+        webhook_secret=os.environ.get("WEBHOOK_SECRET", "").strip() or None,
+    )
