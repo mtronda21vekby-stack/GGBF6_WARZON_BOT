@@ -2,5 +2,5 @@ from enum import Enum
 
 
 class Device(str, Enum):
-    KBM = "kbm"           # PC Mouse & Keyboard
-    CONTROLLER = "pad"    # PS / Xbox
+    KBM = "kbm"          # PC mouse+keyboard
+    PAD = "pad"          # Controller PS/Xbox
