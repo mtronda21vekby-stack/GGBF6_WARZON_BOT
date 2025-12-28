@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from app.services.brain.memory import InMemoryStore
-from app.services.profiles.service import ProfileService
-from app.services.brain.llm import LLMClient
+
+from app.services.ai.openai_client import OpenAIClient
+from app.services.brain.coach import build_plan
 
 
 @dataclass
@@ -12,62 +12,49 @@ class BrainReply:
 
 
 class BrainEngine:
-    def __init__(self, store: InMemoryStore, profiles: ProfileService, settings):
+    def __init__(self, store, profiles, settings):
         self.store = store
         self.profiles = profiles
         self.settings = settings
-
-        self.llm: LLMClient | None = None
-        if settings.AI_ENABLED and settings.AI_API_KEY:
-            self.llm = LLMClient(
-                api_key=settings.AI_API_KEY,
-                base_url=settings.AI_BASE_URL,
-                model=settings.AI_MODEL,
-                timeout_sec=settings.AI_TIMEOUT_SEC,
-            )
+        self.ai = OpenAIClient()
 
     async def handle_text(self, user_id: int, text: str) -> BrainReply:
-        profile = self.profiles.get(user_id)
+        p = self.profiles.get(user_id) if self.profiles else None
+        game = (getattr(p, "game", None) or "warzone")
+        device = (getattr(p, "device", None) or "auto")
+        diff = (getattr(p, "difficulty", None) or "normal")
 
-        # memory add user
-        self.store.add(user_id, "user", text)
-
-        # If AI is enabled and configured
-        if self.llm is not None and profile.ai_enabled:
+        # Если AI включён в профиле и есть ключ — используем OpenAI
+        ai_enabled = bool(getattr(p, "ai_enabled", True)) if p else True
+        if ai_enabled and self.ai.enabled():
             system = (
-                "Ты — FPS Coach для Warzone/BF6. "
-                "Отвечай коротко и по делу: 1) диагноз 2) 3 шага тренировки 3) одна настройка/совет. "
-                "Если мало данных — задай 1 уточняющий вопрос."
+                "Ты элитный FPS Coach. Цель: довести игрока до топ-уровня.\n"
+                "Отвечай структурно:\n"
+                "1) Диагноз (1–2 предложения)\n"
+                "2) Почему (коротко)\n"
+                "3) Правило (1 строка)\n"
+                "4) Упражнения (3–6 пунктов)\n"
+                "5) План на 7 дней (коротко)\n"
+                "Пиши по-русски. Без воды."
             )
 
-            turns = self.store.get(user_id)
-            history = []
-            for t in turns[-10:]:
-                role = "assistant" if t.role == "assistant" else "user"
-                history.append({"role": role, "content": t.text})
+            user = (
+                f"Профиль:\n"
+                f"- game: {game}\n"
+                f"- input: {device}\n"
+                f"- difficulty: {diff}\n\n"
+                f"Сообщение игрока:\n{text}\n\n"
+                f"Дай разбор и план."
+            )
 
-            messages = [{"role": "system", "content": system}] + history
+            res = await self.ai.generate(system=system, user=user)
+            if res.ok and res.text.strip():
+                return BrainReply(text=res.text.strip())
 
-            try:
-                out = await self.llm.chat(messages)
-                self.store.add(user_id, "assistant", out)
-                return BrainReply(text=out)
-            except Exception:
-                # AI failed → fallback without crashing
-                pass
+            # если AI упал — фолбэк
+            fallback = build_plan(game=game, device=device, diff=diff, msg=text).text
+            return BrainReply(text=fallback + f"\n\n⚠️ AI error: {res.error}")
 
-        # Fallback (no AI or AI failed)
-        fallback = (
-            "Я на связи. Напиши: какая игра (Warzone/BF6), твой input (мышь/геймпад) "
-            "и что болит (аим, мувмент, позиционка). Я соберу план."
-        )
-        self.store.add(user_id, "assistant", fallback)
-        return BrainReply(text=fallback)
-
-    def clear_memory(self, user_id: int) -> None:
-        self.store.clear(user_id)
-
-    def toggle_ai(self, user_id: int) -> bool:
-        p = self.profiles.get(user_id)
-        p.ai_enabled = not p.ai_enabled
-        return p.ai_enabled
+        # Фолбэк без ключа/AI OFF
+        out = build_plan(game=game, device=device, diff=diff, msg=text)
+        return BrainReply(text=out.text)
