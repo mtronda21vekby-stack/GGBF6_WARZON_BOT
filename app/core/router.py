@@ -1,4 +1,3 @@
-# app/core/router.py
 from __future__ import annotations
 
 from app.adapters.telegram.types import Update
@@ -8,20 +7,16 @@ from app.usecases.callbacks import handle_callback
 
 
 class Router:
-    def __init__(self, tg, brain, settings):
+    def __init__(self, tg, brain, profiles, settings):
         self.tg = tg
         self.brain = brain
+        self.profiles = profiles
         self.settings = settings
 
     async def _send(self, chat_id: int, out):
-        await self.tg.send_message(
-            chat_id=chat_id,
-            text=out.text,
-            reply_markup=out.keyboard,
-        )
+        await self.tg.send_message(chat_id=chat_id, text=out.text, reply_markup=out.keyboard)
 
     async def handle_update(self, upd: Update):
-        # TEXT
         if upd.message and upd.message.text:
             chat_id = upd.message.chat.id
             user_id = upd.message.from_user.id
@@ -36,7 +31,6 @@ class Router:
             await self._send(chat_id, out)
             return
 
-        # CALLBACK
         if upd.callback_query:
             cq = upd.callback_query
             await self.tg.answer_callback_query(cq.id)
@@ -45,7 +39,7 @@ class Router:
             chat_id = cq.message.chat.id if cq.message else None
             data = cq.data or ""
 
-            out = await handle_callback(self.brain, user_id, data)
+            out = await handle_callback(self.brain, self.profiles, user_id, data)
             if chat_id is not None:
                 await self._send(chat_id, out)
             return
