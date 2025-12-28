@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.observability.log import setup_logging, get_logger
 from app.adapters.telegram.client import TelegramClient
-
 from app.core.router import Router
 from app.services.brain.engine import BrainEngine
 from app.services.brain.memory import InMemoryStore
@@ -24,13 +23,10 @@ def create_app() -> FastAPI:
 
     tg = TelegramClient(settings.bot_token)
 
-    # ✅ ВАЖНО: store создаём так, чтобы он принимал keyword/positional
-    store = InMemoryStore(settings.memory_max_turns)
-
+    store = InMemoryStore(memory_max_turns=settings.memory_max_turns)
     profiles = ProfileService(store=store)
     brain = BrainEngine(store=store, profiles=profiles, settings=settings)
 
-    # ✅ Твой Router ждёт dict update — передаём dict
     router = Router(tg=tg, brain=brain, profiles=profiles, store=store, settings=settings)
 
     @app.get("/")
@@ -53,7 +49,7 @@ def create_app() -> FastAPI:
         raw = await request.json()
 
         try:
-            await router.handle_update(raw)  # ✅ dict
+            await router.handle_update(raw)  # <-- важно: dict
         except Exception as e:
             log.exception("Unhandled error: %s", e)
 
