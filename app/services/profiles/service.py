@@ -1,13 +1,19 @@
 from __future__ import annotations
 from dataclasses import dataclass
+
+from app.domain.enums import Game, Mode, InputDevice, SkillTier
 from app.services.brain.memory import InMemoryStore
 
 
 @dataclass
 class Profile:
     user_id: int
-    style: str = "coach"
     ai_enabled: bool = True
+
+    game: Game = Game.WARZONE
+    mode: Mode = Mode.WZ_BR
+    device: InputDevice = InputDevice.PS
+    tier: SkillTier = SkillTier.NORMAL
 
 
 class ProfileService:
