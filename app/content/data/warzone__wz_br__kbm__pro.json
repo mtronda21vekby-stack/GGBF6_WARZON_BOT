@@ -1,0 +1,17 @@
+{
+  "title": "Warzone BR • KBM • Pro",
+  "last_updated": "2025-06-24",
+  "source": "NoPing (Jun 13 2025) + Keychron (Jun 24 2025)",
+  "settings": {
+    "mouse": {
+      "dpi": 800,
+      "in_game_sens": 5.0,
+      "ads_sens_multiplier": 0.9
+    },
+    "view": {
+      "fov": 110,
+      "ads_fov": "Affected",
+      "weapon_fov": "Wide"
+    }
+  }
+}
