@@ -1,64 +1,50 @@
+from __future__ import annotations
+
+
 class KB:
     @staticmethod
-    def main_menu() -> dict:
+    def main_inline() -> dict:
         return {
             "inline_keyboard": [
-                [{"text": "🎮 Режимы", "callback_data": "menu:modes"}],
-                [{"text": "🧠 ИИ-режим", "callback_data": "ai_mode"}, {"text": "🧹 Очистить память", "callback_data": "mem_clear"}],
-                [{"text": "📚 Классы BF6", "callback_data": "show:classes_bf6"}, {"text": "🧟 BO7 Zombies", "callback_data": "show:bo7_zombies"}]
+                [{"text": "🎮 Игра: AUTO", "callback_data": "game:auto"},
+                 {"text": "🎭 Стиль: spicy 😈", "callback_data": "style:spicy"}],
+                [{"text": "💬 Ответ: normal", "callback_data": "answer:normal"},
+                 {"text": "🧠 Память ✅", "callback_data": "mem:toggle"}],
+                [{"text": "🔁 Режим: CHAT", "callback_data": "mode:chat"},
+                 {"text": "🤖 ИИ: ON", "callback_data": "ai:toggle"}],
+                [{"text": "⚡ Молния: ВЫКЛ", "callback_data": "bolt:off"},
+                 {"text": "🧟 Zombies", "callback_data": "zombies:menu"}],
+                [{"text": "⚙️ Настройки", "callback_data": "settings:menu"},
+                 {"text": "📦 Ещё", "callback_data": "more:menu"}],
             ]
         }
 
     @staticmethod
-    def modes_menu() -> dict:
+    def settings_device_wz() -> dict:
         return {
             "inline_keyboard": [
-                [{"text": "Warzone", "callback_data": "pick_game:warzone"}],
-                [{"text": "BF6", "callback_data": "pick_game:bf6"}],
-                [{"text": "BO7", "callback_data": "pick_game:bo7"}],
-                [{"text": "⬅️ Назад", "callback_data": "back:main"}]
+                [{"text": "🎮 PS5 / Xbox (Controller)", "callback_data": "wz_device:controller"}],
+                [{"text": "🖥 PC (Mouse & Keyboard)", "callback_data": "wz_device:kbm"}],
+                [{"text": "⬅️ Назад", "callback_data": "back:main"}],
             ]
         }
 
     @staticmethod
-    def warzone_modes() -> dict:
+    def zombies_menu() -> dict:
         return {
             "inline_keyboard": [
-                [{"text": "BR", "callback_data": "pick_mode:wz_br"}],
-                [{"text": "Resurgence", "callback_data": "pick_mode:wz_resurgence"}],
-                [{"text": "Ranked", "callback_data": "pick_mode:wz_ranked"}],
-                [{"text": "⬅️ Назад", "callback_data": "menu:modes"}]
+                [{"text": "🧟 Режим: BO7 Zombies", "callback_data": "zombies:bo7"}],
+                [{"text": "🧟‍♂️ Режим: Zombie (расшир.)", "callback_data": "zombies:expanded"}],
+                [{"text": "⬅️ Назад", "callback_data": "back:main"}],
             ]
         }
 
     @staticmethod
-    def device_menu() -> dict:
+    def more_menu() -> dict:
         return {
             "inline_keyboard": [
-                [{"text": "KBM", "callback_data": "pick_device:kbm"}],
-                [{"text": "PlayStation", "callback_data": "pick_device:ps"}],
-                [{"text": "Xbox", "callback_data": "pick_device:xbox"}],
-                [{"text": "⬅️ Назад", "callback_data": "menu:modes"}]
-            ]
-        }
-
-    @staticmethod
-    def tier_menu() -> dict:
-        return {
-            "inline_keyboard": [
-                [{"text": "Обычный", "callback_data": "pick_tier:normal"}],
-                [{"text": "Профи", "callback_data": "pick_tier:pro"}],
-                [{"text": "Демонический", "callback_data": "pick_tier:demon"}],
-                [{"text": "⬅️ Назад", "callback_data": "menu:modes"}]
-            ]
-        }
-
-    @staticmethod
-    def show_menu() -> dict:
-        return {
-            "inline_keyboard": [
-                [{"text": "⚙️ Настройки", "callback_data": "show:settings"}],
-                [{"text": "🎯 Тренировки", "callback_data": "show:training"}],
-                [{"text": "⬅️ Назад", "callback_data": "menu:modes"}]
+                [{"text": "🎯 Задание дня", "callback_data": "daily:task"}],
+                [{"text": "🎬 VOD разбор", "callback_data": "vod:menu"}],
+                [{"text": "⬅️ Назад", "callback_data": "back:main"}],
             ]
         }
