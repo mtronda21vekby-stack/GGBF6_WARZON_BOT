@@ -2,42 +2,52 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, TypedDict
-
-
-Role = Literal["user", "assistant", "system"]
-
-
-class Turn(TypedDict):
-    role: Role
-    content: str
+from typing import Any, Dict, List
 
 
 @dataclass
 class InMemoryStore:
-    # принимаем разные имена параметров, чтобы НЕ падать на несовпадении
-    memory_max_turns: int = 20
-    max_turns: int | None = None
-    _mem: Dict[int, List[Turn]] = field(default_factory=dict)
+    """
+    Простая память по chat_id.
+    ВАЖНО: принимает разные имена аргументов, чтобы не ломаться:
+      - memory_max_turns
+      - max_turns
+      - turns
+    """
+    max_turns: int = 20
+    _mem: Dict[int, List[dict]] = field(default_factory=dict)
+    _profile: Dict[int, Dict[str, Any]] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        if self.max_turns is not None:
-            self.memory_max_turns = int(self.max_turns)
+    def __init__(self, memory_max_turns: int = 20, max_turns: int | None = None, turns: int | None = None):
+        if max_turns is not None:
+            self.max_turns = int(max_turns)
+        elif turns is not None:
+            self.max_turns = int(turns)
+        else:
+            self.max_turns = int(memory_max_turns)
 
-    def add(self, chat_id: int, role: Role, content: str) -> None:
-        arr = self._mem.setdefault(int(chat_id), [])
-        arr.append({"role": role, "content": str(content)})
-        # режем только хвост памяти, функционал НЕ режем
-        limit = max(4, int(self.memory_max_turns) * 2)  # user+assistant
-        if len(arr) > limit:
-            self._mem[int(chat_id)] = arr[-limit:]
+        self._mem = {}
+        self._profile = {}
 
-    def get(self, chat_id: int) -> List[Turn]:
-        return list(self._mem.get(int(chat_id), []))
+    def add(self, chat_id: int, role: str, text: str) -> None:
+        arr = self._mem.setdefault(chat_id, [])
+        arr.append({"role": role, "content": text})
+        if len(arr) > self.max_turns:
+            self._mem[chat_id] = arr[-self.max_turns :]
+
+    def get(self, chat_id: int) -> List[dict]:
+        return list(self._mem.get(chat_id, []))
 
     def clear(self, chat_id: int) -> None:
-        self._mem.pop(int(chat_id), None)
+        self._mem.pop(chat_id, None)
 
     def stats(self, chat_id: int) -> dict:
-        arr = self._mem.get(int(chat_id), [])
-        return {"turns": len(arr), "max_turns": self.memory_max_turns}
+        return {"turns": len(self._mem.get(chat_id, [])), "max_turns": self.max_turns}
+
+    # профиль (fallback)
+    def set_profile(self, chat_id: int, patch: Dict[str, Any]) -> None:
+        cur = self._profile.setdefault(chat_id, {})
+        cur.update(patch)
+
+    def get_profile(self, chat_id: int) -> Dict[str, Any]:
+        return dict(self._profile.get(chat_id, {}))
