@@ -1,34 +1,32 @@
-from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+# app/ui/quickbar.py  (ЗАМЕНИ ЦЕЛИКОМ)
+from __future__ import annotations
 
 
-def kb_main():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🎮 Игра", callback_data="game"),
-            InlineKeyboardButton("🎭 Стиль", callback_data="style"),
+def kb_main() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🎮 Игра"}, {"text": "⚙️ Настройки"}, {"text": "📌 Профиль"}],
+            [{"text": "🎯 Тренировка"}, {"text": "🧠 ИИ"}, {"text": "🧟 Zombies"}],
+            [{"text": "🎬 VOD"}, {"text": "🆘 Помощь"}, {"text": "📡 Статус"}],
+            [{"text": "🧹 Очистить память"}, {"text": "🧨 Сброс"}],
         ],
-        [
-            InlineKeyboardButton("🧠 ИИ", callback_data="ai"),
-            InlineKeyboardButton("🧟 Zombies", callback_data="zombies"),
-        ],
-        [
-            InlineKeyboardButton("⚙️ Настройки", callback_data="settings"),
-            InlineKeyboardButton("📦 Ещё", callback_data="more"),
-        ]
-    ])
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Опиши смерть/ситуацию — дам разбор и план…",
+    }
 
 
-def kb_settings():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🎮 Warzone", callback_data="set_warzone"),
-            InlineKeyboardButton("🪖 BF6", callback_data="set_bf6"),
+def kb_settings() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🎮 Игра: Warzone"}, {"text": "🎮 Игра: BF6"}, {"text": "🎮 Игра: BO7"}],
+            [{"text": "🖥 Input: KBM"}, {"text": "🎮 Input: Controller"}],
+            [{"text": "🧠 Сложность: Normal"}, {"text": "🔥 Сложность: Pro"}, {"text": "😈 Сложность: Demon"}],
+            [{"text": "⬅️ Назад"}],
         ],
-        [
-            InlineKeyboardButton("💻 PC", callback_data="input_pc"),
-            InlineKeyboardButton("🎮 PS / Xbox", callback_data="input_console"),
-        ],
-        [
-            InlineKeyboardButton("⬅️ Назад", callback_data="back"),
-        ]
-    ])
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Настройки профиля…",
+    }
