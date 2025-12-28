@@ -27,7 +27,7 @@ def create_app() -> FastAPI:
     profiles = ProfileService(store=store)
     brain = BrainEngine(store=store, profiles=profiles, settings=settings)
 
-    router = Router(tg=tg, brain=brain, settings=settings)
+    router = Router(tg=tg, brain=brain, profiles=profiles, settings=settings)
 
     @app.get("/")
     async def root():
