@@ -8,7 +8,6 @@ def kb_main() -> dict:
         ],
         "resize_keyboard": True,
         "is_persistent": True,
-        "one_time_keyboard": False,
     }
 
 
@@ -19,5 +18,14 @@ def kb_training() -> dict:
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
-        "is_persistent": True,
+    }
+
+
+def kb_zombies() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🧟 Новичок"}, {"text": "🔥 Про"}, {"text": "😈 Demon"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
     }
