@@ -1,5 +1,3 @@
-# app/ui/keyboards.py
-
 class KB:
     @staticmethod
     def main_menu() -> dict:
@@ -10,15 +8,12 @@ class KB:
                     {"text": "📊 Профиль", "callback_data": "profile"},
                 ],
                 [
-                    {"text": "⚙️ Настройки", "callback_data": "settings"},
+                    {"text": "🧠 ИИ-режим", "callback_data": "ai_mode"},
+                    {"text": "🧹 Очистить память", "callback_data": "mem_clear"},
                 ],
             ]
         }
 
     @staticmethod
     def back() -> dict:
-        return {
-            "inline_keyboard": [
-                [{"text": "⬅️ Назад", "callback_data": "back"}]
-            ]
-        }
+        return {"inline_keyboard": [[{"text": "⬅️ Назад", "callback_data": "back"}]]}
