@@ -1,6 +1,10 @@
+# app/core/router.py
 from __future__ import annotations
+
 from app.adapters.telegram.types import Update
-from app.ui.keyboards import KB
+from app.usecases.start import handle_start
+from app.usecases.text_message import handle_text_message
+from app.usecases.callbacks import handle_callback
 
 
 class Router:
@@ -9,54 +13,39 @@ class Router:
         self.brain = brain
         self.settings = settings
 
+    async def _send(self, chat_id: int, out):
+        await self.tg.send_message(
+            chat_id=chat_id,
+            text=out.text,
+            reply_markup=out.keyboard,
+        )
+
     async def handle_update(self, upd: Update):
-        # Text messages
+        # TEXT
         if upd.message and upd.message.text:
             chat_id = upd.message.chat.id
             user_id = upd.message.from_user.id
-            text = upd.message.text.strip()
+            text = (upd.message.text or "").strip()
 
             if text == "/start":
-                await self.tg.send_message(
-                    chat_id=chat_id,
-                    text="Привет! Я FPS Coach. Пиши проблему — дам план тренировки.",
-                    reply_markup=KB.main_menu(),
-                )
+                out = handle_start()
+                await self._send(chat_id, out)
                 return
 
-            reply = await self.brain.handle_text(user_id=user_id, text=text)
-            await self.tg.send_message(
-                chat_id=chat_id,
-                text=reply.text,
-                reply_markup=KB.main_menu(),
-            )
+            out = await handle_text_message(self.brain, user_id, text)
+            await self._send(chat_id, out)
             return
 
-        # Callback кнопки
+        # CALLBACK
         if upd.callback_query:
             cq = upd.callback_query
             await self.tg.answer_callback_query(cq.id)
 
             user_id = cq.from_user.id
             chat_id = cq.message.chat.id if cq.message else None
-            data = (cq.data or "").strip()
+            data = cq.data or ""
 
-            if data == "mem_clear":
-                self.brain.clear_memory(user_id)
-                if chat_id is not None:
-                    await self.tg.send_message(chat_id, "🧹 Память очищена.", reply_markup=KB.main_menu())
-                return
-
-            if data == "ai_mode":
-                enabled = self.brain.toggle_ai(user_id)
-                if chat_id is not None:
-                    await self.tg.send_message(
-                        chat_id,
-                        f"🧠 ИИ-режим: {'ON' if enabled else 'OFF'}",
-                        reply_markup=KB.main_menu(),
-                    )
-                return
-
+            out = await handle_callback(self.brain, user_id, data)
             if chat_id is not None:
-                await self.tg.send_message(chat_id, f"⚙️ {data} (в разработке)", reply_markup=KB.main_menu())
+                await self._send(chat_id, out)
             return
