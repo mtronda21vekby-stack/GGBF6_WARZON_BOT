@@ -1,5 +1,4 @@
 # app/core/router.py
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import inspect
@@ -17,39 +16,12 @@ from app.ui.quickbar import (
     kb_game_settings_menu,
 )
 
-# ---------------------------------------------------------------------------
-# SAFE IMPORT: BF6 PRESETS
-# Чтобы Render НИКОГДА не падал, если модуля нет или путь другой.
-# ---------------------------------------------------------------------------
-bf6_class_text = None
-bf6_aim_sens_text = None
-bf6_controller_tuning_text = None
-bf6_kbm_tuning_text = None
-_PRESETS_IMPORT_ERROR = None
-
-for _path in (
-    "app.worlds.bf6.presets",   # ожидаемый путь
-    "app.world.bf6.presets",    # запасной
-    "app.bf6.presets",          # запасной
-):
-    try:
-        _m = __import__(
-            _path,
-            fromlist=[
-                "bf6_class_text",
-                "bf6_aim_sens_text",
-                "bf6_controller_tuning_text",
-                "bf6_kbm_tuning_text",
-            ],
-        )
-        bf6_class_text = getattr(_m, "bf6_class_text", None)
-        bf6_aim_sens_text = getattr(_m, "bf6_aim_sens_text", None)
-        bf6_controller_tuning_text = getattr(_m, "bf6_controller_tuning_text", None)
-        bf6_kbm_tuning_text = getattr(_m, "bf6_kbm_tuning_text", None)
-        _PRESETS_IMPORT_ERROR = None
-        break
-    except Exception as e:
-        _PRESETS_IMPORT_ERROR = e
+from app.worlds.bf6.presets import (
+    bf6_class_text,
+    bf6_aim_sens_text,
+    bf6_controller_tuning_text,
+    bf6_kbm_tuning_text,
+)
 
 
 def _safe_get(d: dict, path: list, default=None):
@@ -85,26 +57,35 @@ class Router:
                 chat_id,
                 "🧠 FPS Coach Bot | Warzone / BO7 / BF6\n"
                 "Нижний UI закреплён. Жми кнопки снизу 👇\n\n"
-                "Напиши ситуацию одной строкой — дам разбор как тиммейт.",
+                "Пиши ситуацию как в обычный чат — я отвечу как тиммейт.",
             )
             return
 
-        if text in ("/status",):
+        if text in ("/status", "📊 Статус"):
             await self._on_status(chat_id)
             return
 
-        # ---------- AI start (не делаем “шаблонный цикл”) ----------
-        # Кнопка AI НЕ должна подменять текст на “Привет...” и уводить в одно и то же.
-        if text in ("/ai_start", "ai_start", "🧠 ИИ", "ИИ"):
+        # ---------- premium ----------
+        if text in ("💎 Premium",):
             await self._send_main(
                 chat_id,
-                "🧠 AI режим: ON.\n"
-                "Пиши как в чат: ситуация / смерть / проблема.\n"
-                "Я отвечу как элитный тиммейт (Normal/Pro/Demon зависит от профиля).",
+                "💎 Premium активен: нижний UI закреплён.\n"
+                "Дальше: подключаем настоящий AI (OpenAI ключ в ENV).",
             )
             return
 
-        # ---------- MAIN quickbar ----------
+        # ---------- AI ----------
+        if text in ("/ai_start", "ai_start", "🧠 ИИ", "ИИ"):
+            # ВАЖНО: не подменяем сообщение на шаблон — иначе “цикл”
+            await self._send_main(
+                chat_id,
+                "🧠 AI режим: ON.\n"
+                "Пиши проблему/смерть/ситуацию — отвечаю как элитный тиммейт.\n"
+                "Качество зависит от режима Normal/Pro/Demon в профиле.",
+            )
+            return
+
+        # ---------- MAIN ----------
         if text == "🎮 Игра":
             await self._on_game(chat_id)
             return
@@ -113,8 +94,7 @@ class Router:
             await self._send(chat_id, "⚙️ Настройки:", kb_settings())
             return
 
-        # кнопка “Класс” (BF6)
-        if text in ("🪖 BF6 Класс", "🪖 Класс", "🪖 Class", "Класс"):
+        if text in ("🪖 BF6 Класс", "Класс"):
             await self._on_bf6_class(chat_id)
             return
 
@@ -122,15 +102,11 @@ class Router:
             await self._on_profile(chat_id)
             return
 
-        if text in ("📊 Статус",):
-            await self._on_status(chat_id)
-            return
-
-        if text in ("🧹 Очистить память", "🧹 Очистить"):
+        if text in ("🧹 Очистить память",):
             await self._on_clear_memory(chat_id)
             return
 
-        if text in ("🧨 Сброс", "🧨 Reset"):
+        if text in ("🧨 Сброс",):
             await self._on_reset(chat_id)
             return
 
@@ -187,63 +163,36 @@ class Router:
             return
 
         # ---------- BF6 world settings ----------
-        if text in ("🪖 BF6: Class Settings", "🪖 BF6 Class Settings"):
+        if text in ("🪖 BF6: Class Settings",):
             await self._send(chat_id, "🪖 Pick BF6 class:", kb_bf6_classes())
             return
 
-        # BF6 classes (именно как ты хочешь)
         if text in ("🟥 Assault", "🟦 Recon", "🟨 Engineer", "🟩 Medic"):
             cls = text.split(" ", 1)[-1].strip()
             self._set_profile_field(chat_id, "bf6_class", cls)
-
-            if bf6_class_text:
-                await self._send_main(chat_id, bf6_class_text(self._get_profile(chat_id)))
-            else:
-                await self._send_main(
-                    chat_id,
-                    "⚠️ BF6 presets не найдены (поэтому текст классов не подгрузился).\n"
-                    "Бот НЕ сломан — просто нет файла/пути.\n\n"
-                    f"Ошибка: {_PRESETS_IMPORT_ERROR}",
-                )
+            await self._send_main(chat_id, bf6_class_text(self._get_profile(chat_id)))
             return
 
-        if text in ("🎯 BF6: Aim/Sens", "🎯 BF6 Aim/Sens"):
-            if bf6_aim_sens_text:
-                await self._send_main(chat_id, bf6_aim_sens_text(self._get_profile(chat_id)))
-            else:
-                await self._send_main(
-                    chat_id,
-                    "⚠️ BF6 Aim/Sens недоступно: presets не подгрузились.\n"
-                    f"Ошибка: {_PRESETS_IMPORT_ERROR}",
-                )
+        if text in ("🎯 BF6: Aim/Sens",):
+            await self._send_main(chat_id, bf6_aim_sens_text(self._get_profile(chat_id)))
             return
 
-        if text in ("🎮 BF6: Controller Tuning", "🎮 BF6 Controller Tuning"):
-            if bf6_controller_tuning_text:
-                await self._send_main(chat_id, bf6_controller_tuning_text(self._get_profile(chat_id)))
-            else:
-                await self._send_main(
-                    chat_id,
-                    "⚠️ BF6 Controller Tuning недоступно: presets не подгрузились.\n"
-                    f"Ошибка: {_PRESETS_IMPORT_ERROR}",
-                )
+        if text in ("🎮 BF6: Controller Tuning",):
+            await self._send_main(chat_id, bf6_controller_tuning_text(self._get_profile(chat_id)))
             return
 
-        if text in ("⌨️ BF6: KBM Tuning", "⌨️ BF6 KBM Tuning"):
-            if bf6_kbm_tuning_text:
-                await self._send_main(chat_id, bf6_kbm_tuning_text(self._get_profile(chat_id)))
-            else:
-                await self._send_main(
-                    chat_id,
-                    "⚠️ BF6 KBM Tuning недоступно: presets не подгрузились.\n"
-                    f"Ошибка: {_PRESETS_IMPORT_ERROR}",
-                )
+        if text in ("⌨️ BF6: KBM Tuning",):
+            await self._send_main(chat_id, bf6_kbm_tuning_text(self._get_profile(chat_id)))
+            return
+
+        # Warzone / BO7 placeholders (НЕ режем меню — просто отдаём текст)
+        if text.startswith("🧩 Warzone:") or text.startswith("🧩 BO7:") or text.startswith("🧩 AUTO:"):
+            await self._chat_to_brain(chat_id, text)
             return
 
         # ---------- default -> AI chat ----------
         await self._chat_to_brain(chat_id, text)
 
-    # ---------------- messaging helpers ----------------
     async def _send(self, chat_id: int, text: str, reply_markup: Optional[dict] = None) -> None:
         if reply_markup is None:
             reply_markup = kb_main()
@@ -252,8 +201,8 @@ class Router:
     async def _send_main(self, chat_id: int, text: str) -> None:
         await self._send(chat_id, text, kb_main())
 
-    # ---------------- profile ----------------
     def _get_profile(self, chat_id: int) -> dict:
+        # 1) profiles service
         if self.profiles:
             for name in ("get", "get_profile", "read"):
                 if hasattr(self.profiles, name):
@@ -263,16 +212,20 @@ class Router:
                             return prof
                     except Exception:
                         pass
-        return {
-            "game": "Warzone",
-            "platform": "PC",
-            "input": "Controller",
-            "difficulty": "Normal",
-            "bf6_class": "Assault",
-        }
+
+        # 2) store fallback
+        if self.store and hasattr(self.store, "get_profile"):
+            try:
+                prof = self.store.get_profile(chat_id)
+                if isinstance(prof, dict) and prof:
+                    return prof
+            except Exception:
+                pass
+
+        return {"game": "Warzone", "platform": "PC", "input": "Controller", "difficulty": "Normal", "bf6_class": "Assault"}
 
     def _set_profile_field(self, chat_id: int, key: str, val: str) -> None:
-        # НИЧЕГО НЕ РЕЖЕМ: поддержка разных профайл-сервисов
+        # profiles service (любая сигнатура)
         if self.profiles:
             for name in ("set", "set_field", "set_value", "update", "update_profile"):
                 if hasattr(self.profiles, name):
@@ -286,14 +239,13 @@ class Router:
                     except Exception:
                         pass
 
-        # fallback если profiles не умеет — пишем в store (если есть)
+        # store fallback
         if self.store and hasattr(self.store, "set_profile"):
             try:
                 self.store.set_profile(chat_id, {key: val})
             except Exception:
                 pass
 
-    # ---------------- UI handlers ----------------
     async def _on_game(self, chat_id: int) -> None:
         prof = self._get_profile(chat_id)
         await self._send_main(
@@ -308,11 +260,7 @@ class Router:
     async def _on_bf6_class(self, chat_id: int) -> None:
         prof = self._get_profile(chat_id)
         if (prof.get("game") or "Warzone") != "BF6":
-            await self._send_main(
-                chat_id,
-                "🪖 Класс доступен только в BF6.\n"
-                "⚙️ Настройки → 🎮 Выбрать игру → 🪖 BF6",
-            )
+            await self._send_main(chat_id, "🪖 Класс доступен только в BF6.\n⚙️ Настройки → 🎮 Выбрать игру → 🪖 BF6")
             return
         await self._send(chat_id, "🪖 Pick BF6 class:", kb_bf6_classes())
 
@@ -336,15 +284,11 @@ class Router:
         ai_state = "ON" if (ai_enabled and ai_key) else "OFF"
         why = "OK" if ai_state == "ON" else ("OPENAI_API_KEY missing" if not ai_key else "AI_ENABLED=0")
 
-        presets_state = "OK" if (bf6_class_text and bf6_aim_sens_text) else "MISSING"
-        presets_why = "OK" if presets_state == "OK" else str(_PRESETS_IMPORT_ERROR)
-
         await self._send_main(
             chat_id,
             f"📊 Status: OK\n"
             f"🧠 Memory: {mem or 'on'}\n"
-            f"🤖 AI: {ai_state} | model={model} | reason={why}\n"
-            f"🪖 BF6 Presets: {presets_state} | reason={presets_why}\n",
+            f"🤖 AI: {ai_state} | model={model} | reason={why}\n",
         )
 
     async def _on_clear_memory(self, chat_id: int) -> None:
@@ -368,7 +312,6 @@ class Router:
                 pass
         await self._send_main(chat_id, "🧨 Сброс выполнен ✅")
 
-    # ---------------- AI chat ----------------
     async def _chat_to_brain(self, chat_id: int, text: str) -> None:
         if self.store and hasattr(self.store, "add"):
             try:
@@ -377,7 +320,6 @@ class Router:
                 pass
 
         prof = self._get_profile(chat_id)
-
         history = []
         if self.store and hasattr(self.store, "get"):
             try:
@@ -389,24 +331,16 @@ class Router:
         if self.brain and hasattr(self.brain, "reply"):
             try:
                 fn = self.brain.reply
-                # поддержка sync/async
                 if inspect.iscoroutinefunction(fn):
                     reply = await fn(text=text, profile=prof, history=history)
                 else:
                     out = fn(text=text, profile=prof, history=history)
-                    if inspect.isawaitable(out):
-                        reply = await out
-                    else:
-                        reply = out
-            except Exception:
-                reply = None
+                    reply = await out if inspect.isawaitable(out) else out
+            except Exception as e:
+                reply = f"ИИ: ERROR\n{type(e).__name__}: {e}\n\nПроверь:\n• OPENAI_API_KEY\n• AI_ENABLED=1\n• openai>=1.40.0"
 
         if not reply:
-            reply = (
-                "🧠 AI fallback.\n"
-                "📊 Статус покажет причину (OPENAI_API_KEY / AI_ENABLED).\n"
-                "Напиши: игра | платформа | input | что болит — дам план."
-            )
+            reply = "🧠 AI fallback.\n📊 Статус покажет причину. Напиши: игра | платформа | input | что болит — дам план."
 
         if self.store and hasattr(self.store, "add"):
             try:
