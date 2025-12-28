@@ -1,10 +1,15 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
-from app.core.context import Context
+
+from dataclasses import dataclass
 from app.services.brain.memory import InMemoryStore
 from app.services.profiles.service import ProfileService
-from app.ui.keyboards import KB
-from app.ui.templates import T
+from app.services.brain.llm import LLMClient
+
+
+@dataclass
+class BrainReply:
+    text: str
+
 
 class BrainEngine:
     def __init__(self, store: InMemoryStore, profiles: ProfileService, settings):
@@ -12,74 +17,57 @@ class BrainEngine:
         self.profiles = profiles
         self.settings = settings
 
-    async def handle_message(self, ctx: Context, text: str):
-        low = text.lower()
+        self.llm: LLMClient | None = None
+        if settings.AI_ENABLED and settings.AI_API_KEY:
+            self.llm = LLMClient(
+                api_key=settings.AI_API_KEY,
+                base_url=settings.AI_BASE_URL,
+                model=settings.AI_MODEL,
+                timeout_sec=settings.AI_TIMEOUT_SEC,
+            )
 
-        if low in ("/start", "start"):
-            return T.START, KB.main_menu()
+    async def handle_text(self, user_id: int, text: str) -> BrainReply:
+        profile = self.profiles.get(user_id)
 
-        if low in ("/help", "help", "помощь"):
-            return T.HELP, KB.main_menu()
+        # memory add user
+        self.store.add(user_id, "user", text)
 
-        # Твой “premium режим”: любое обычное сообщение будет уходить в “AI ответ”
-        # Пока AI можно сделать заглушкой: отвечать “жив”
-        # Позже подключим OpenAI — интерфейс уже готов.
-        answer = await self._smart_answer(ctx, text)
-        self.store.add_turn(ctx.user_id, text, answer)
-        return answer, KB.main_menu()
+        # If AI is enabled and configured
+        if self.llm is not None and profile.ai_enabled:
+            system = (
+                "Ты — FPS Coach для Warzone/BF6. "
+                "Отвечай коротко и по делу: 1) диагноз 2) 3 шага тренировки 3) одна настройка/совет. "
+                "Если мало данных — задай 1 уточняющий вопрос."
+            )
 
-    async def handle_callback(self, ctx: Context, data: str):
-        if data == "menu":
-            return T.START, KB.main_menu()
+            turns = self.store.get(user_id)
+            history = []
+            for t in turns[-10:]:
+                role = "assistant" if t.role == "assistant" else "user"
+                history.append({"role": role, "content": t.text})
 
-        if data == "settings":
-            return "⚙️ Настройки", KB.settings()
+            messages = [{"role": "system", "content": system}] + history
 
-        if data == "game":
-            return "🎮 Выбери игру:", KB.game_pick()
+            try:
+                out = await self.llm.chat(messages)
+                self.store.add(user_id, "assistant", out)
+                return BrainReply(text=out)
+            except Exception:
+                # AI failed → fallback without crashing
+                pass
 
-        if data.startswith("set_game:"):
-            game = data.split(":", 1)[1]
-            self.profiles.set_game(ctx.user_id, game)
-            return f"✅ Игра установлена: {game}", KB.main_menu()
+        # Fallback (no AI or AI failed)
+        fallback = (
+            "Я на связи. Напиши: какая игра (Warzone/BF6), твой input (мышь/геймпад) "
+            "и что болит (аим, мувмент, позиционка). Я соберу план."
+        )
+        self.store.add(user_id, "assistant", fallback)
+        return BrainReply(text=fallback)
 
-        if data == "style":
-            return "🎭 Выбери стиль:", KB.style_pick()
+    def clear_memory(self, user_id: int) -> None:
+        self.store.clear(user_id)
 
-        if data.startswith("set_style:"):
-            style = data.split(":", 1)[1]
-            self.profiles.set_style(ctx.user_id, style)
-            return f"✅ Стиль установлен: {style}", KB.main_menu()
-
-        if data == "profile":
-            p = self.profiles.get_profile(ctx.user_id)
-            return T.PROFILE.format(**p), KB.main_menu()
-
-        if data == "status":
-            st = self.store.get(ctx.user_id)
-            return T.STATUS.format(game=st.game, style=st.style, mem=len(st.turns)), KB.main_menu()
-
-        if data == "memory_clear":
-            self.store.clear_memory(ctx.user_id)
-            return T.MEMORY_CLEARED, KB.main_menu()
-
-        if data == "reset":
-            self.store.reset(ctx.user_id)
-            return T.RESET_OK, KB.main_menu()
-
-        if data in ("daily", "vod", "zombies", "answer", "settings_tz"):
-            return T.NOT_IMPLEMENTED, KB.main_menu()
-
-        return "🤷 Не понял кнопку. Открой меню.", KB.main_menu()
-
-    async def _smart_answer(self, ctx: Context, user_text: str) -> str:
-        # Тут будет “Brain v3+” с AI.
-        # Пока: отвечает “жив” и добавляет стиль/режим.
-        st = self.store.get(ctx.user_id)
-        if st.style == "short":
-            return f"✅ Ок. Режим: {st.game}."
-        if st.style == "friendly":
-            return f"🙂 Понял! Напиши ситуацию подробнее — помогу. (режим {st.game})"
-        if st.style == "coach":
-            return f"😈 Дай вводные по ситуации в игре — разберём и сделаем план. (режим {st.game})"
-        return f"✅ Принято. (режим {st.game})"
+    def toggle_ai(self, user_id: int) -> bool:
+        p = self.profiles.get(user_id)
+        p.ai_enabled = not p.ai_enabled
+        return p.ai_enabled
