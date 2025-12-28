@@ -1,4 +1,3 @@
-# app/adapters/telegram/types.py  (НОВЫЙ ФАЙЛ)
 from __future__ import annotations
 from dataclasses import dataclass
 
