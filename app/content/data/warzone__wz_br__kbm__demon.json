@@ -1,0 +1,20 @@
+{
+  "title": "Warzone BR • KBM • Demon",
+  "last_updated": "2025-06-24",
+  "source": "NoPing (Jun 13 2025) + Keychron (Jun 24 2025)",
+  "settings": {
+    "mouse": {
+      "dpi": 800,
+      "in_game_sens": 4.3,
+      "ads_sens_multiplier": 0.85
+    },
+    "view": {
+      "fov": 110,
+      "ads_fov": "Affected",
+      "weapon_fov": "Wide"
+    },
+    "notes": [
+      "Demon на KBM: ниже сенса = лучше трекинг, но обязателен большой коврик/пространство."
+    ]
+  }
+}
