@@ -17,20 +17,6 @@ def kb_main() -> dict:
     }
 
 
-def kb_settings() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🎮 Выбрать игру"}],
-            [{"text": "🖥 Платформа"}, {"text": "⌨️ Input"}],
-            [{"text": "😈 Режим мышления"}],
-            [{"text": "🧩 Настройки игры"}],
-            [{"text": "⬅️ Назад"}],
-        ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-    }
-
-
 def kb_games() -> dict:
     return {
         "keyboard": [
@@ -76,6 +62,20 @@ def kb_difficulty() -> dict:
     }
 
 
+def kb_settings() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🎮 Выбрать игру"}],
+            [{"text": "🖥 Платформа"}, {"text": "⌨️ Input"}],
+            [{"text": "😈 Режим мышления"}],
+            [{"text": "🧩 Настройки игры"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
 def kb_bf6_classes() -> dict:
     return {
         "keyboard": [
@@ -89,8 +89,9 @@ def kb_bf6_classes() -> dict:
 
 
 def kb_game_settings_menu(game: str) -> dict:
-    # Меню "настроек игры" по миру (режиму)
-    if (game or "").upper() == "BF6":
+    game = (game or "").strip()
+
+    if game == "BF6":
         return {
             "keyboard": [
                 [{"text": "🪖 BF6: Class Settings"}],
@@ -102,12 +103,14 @@ def kb_game_settings_menu(game: str) -> dict:
             "is_persistent": True,
         }
 
-    # Warzone / BO7 — структура готова, детали докрутим дальше, но уже device-aware
+    # Warzone / BO7 — НЕ режем, оставляем пункты (можно расширять дальше)
+    label = "Warzone" if game == "Warzone" else ("BO7" if game == "BO7" else "AUTO")
     return {
         "keyboard": [
-            [{"text": f"🎮 {game}: Loadouts"}],
-            [{"text": f"🎯 {game}: Aim/Sens"}],
-            [{"text": f"🧩 {game}: Movement/Positioning"}],
+            [{"text": f"🧩 {label}: Aim"}],
+            [{"text": f"🧩 {label}: Movement/Positioning"}],
+            [{"text": f"🧩 {label}: Settings (Controller)"}],
+            [{"text": f"🧩 {label}: Settings (KBM)"}],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
