@@ -10,21 +10,19 @@ class BrainEngine:
     async def handle_text(self, user_id: int, text: str):
         p = self.profiles.get(user_id)
 
-        # ---------- ZOMBIES ----------
-        if text == "ZOMBIE_BEGINNER":
-            return self._zombie_plan("beginner")
+        # -------- CLASSES / ROLES --------
+        if text.startswith("CLASS_"):
+            return self._class_response(p, text)
 
-        if text == "ZOMBIE_PRO":
-            return self._zombie_plan("pro")
+        # -------- ZOMBIES --------
+        if text.startswith("ZOMBIE_"):
+            return self._zombie_plan(text)
 
-        if text == "ZOMBIE_DEMON":
-            return self._zombie_plan("demon")
-
-        # ---------- TRAINING ----------
+        # -------- TRAINING --------
         if text.startswith("TRAIN_"):
-            return self._training(user_id, text)
+            return self._training(p, text)
 
-        # ---------- DEFAULT ----------
+        # -------- DEFAULT --------
         return type(
             "R",
             (),
@@ -33,75 +31,118 @@ class BrainEngine:
                     f"🎮 {p.game.upper()} | 😈 {p.mode.upper()}\n\n"
                     "Опиши ситуацию:\n"
                     "• где умер\n"
-                    "• чем убили\n"
-                    "• что делал\n\n"
-                    "Я скажу, где ошибка."
+                    "• чем\n"
+                    "• дистанция\n\n"
+                    "Я дам точный разбор."
                 )
             },
         )
 
-    # ---------------- ZOMBIES ----------------
-    def _zombie_plan(self, level: str):
-        if level == "beginner":
-            text = (
-                "🧟 ZOMBIES — НОВИЧОК\n\n"
-                "ЦЕЛЬ:\n"
-                "• Дожить до 20+ раунда\n\n"
-                "ОСНОВЫ:\n"
-                "• Не бегай по карте хаотично\n"
-                "• Используй один маршрут\n"
-                "• Ремонт баррикад в начале\n\n"
-                "ОШИБКИ:\n"
-                "• Ранний Pack-a-Punch\n"
-                "• Паника в углах"
-            )
-        elif level == "pro":
-            text = (
-                "🔥 ZOMBIES — PRO\n\n"
-                "ЦЕЛЬ:\n"
-                "• Контроль орд\n"
-                "• Экономика очков\n\n"
-                "ТАКТИКА:\n"
-                "• Train zombies\n"
-                "• Убивай только когда орда собрана\n"
-                "• Минимум перков — максимум контроля\n\n"
-                "ОШИБКИ:\n"
-                "• Стрельба по одиночкам\n"
-                "• Потеря маршрута"
-            )
-        else:  # demon
-            text = (
-                "😈 ZOMBIES — DEMON\n\n"
-                "ТЫ НЕ ВЫЖИВАЕШЬ — ТЫ КОНТРОЛИРУЕШЬ.\n\n"
-                "ПРИНЦИПЫ:\n"
-                "• Орда = инструмент\n"
-                "• Карта — твоя арена\n"
-                "• Убивай только когда выгодно\n\n"
-                "ФОКУС:\n"
-                "• Тайминги спавна\n"
-                "• Escape routes\n"
-                "• Хладнокровие\n\n"
-                "ОШИБКА = СМЕРТЬ."
-            )
+    # ---------------- CLASSES ----------------
+    def _class_response(self, p, text: str):
+        mode = p.mode
 
-        return type("R", (), {"text": text})
+        if p.game == "bf6":
+            # English only
+            if "ASSAULT" in text:
+                body = (
+                    "BF6 — ASSAULT\n\n"
+                    "ROLE:\n"
+                    "- Frontline pressure\n"
+                    "- Mid-range control\n\n"
+                    "LOADOUT:\n"
+                    "- AR\n"
+                    "- Frag / Flash\n\n"
+                    "TIP:\n"
+                    "- Push after utility."
+                )
+            elif "ENGINEER" in text:
+                body = (
+                    "BF6 — ENGINEER\n\n"
+                    "ROLE:\n"
+                    "- Vehicle denial\n\n"
+                    "LOADOUT:\n"
+                    "- SMG / Carbine\n"
+                    "- AT gadgets\n\n"
+                    "TIP:\n"
+                    "- Always flank armor."
+                )
+            elif "SUPPORT" in text:
+                body = (
+                    "BF6 — SUPPORT\n\n"
+                    "ROLE:\n"
+                    "- Sustain squad\n\n"
+                    "LOADOUT:\n"
+                    "- LMG\n"
+                    "- Ammo / Heal\n\n"
+                    "TIP:\n"
+                    "- Hold power positions."
+                )
+            else:  # recon
+                body = (
+                    "BF6 — RECON\n\n"
+                    "ROLE:\n"
+                    "- Intel / picks\n\n"
+                    "LOADOUT:\n"
+                    "- Sniper / DMR\n"
+                    "- Spot tools\n\n"
+                    "TIP:\n"
+                    "- Play information."
+                )
+        else:
+            # Russian
+            if p.game == "warzone":
+                body = (
+                    "WARZONE — КЛАСС\n\n"
+                    "РОЛЬ:\n"
+                    "• Контроль дистанции\n\n"
+                    "СБОРКА:\n"
+                    "• Основное оружие по роли\n"
+                    "• Перки под выживание\n\n"
+                    "СОВЕТ:\n"
+                    "• Игра от позиции."
+                )
+            else:  # bo7
+                body = (
+                    "BO7 — РОЛЬ\n\n"
+                    "РОЛЬ:\n"
+                    "• Давление и контроль\n\n"
+                    "СОВЕТ:\n"
+                    "• Игра от таймингов\n"
+                    "• Контроль спавнов"
+                )
+
+        prefix = {
+            "normal": "🧠 Normal — стабильно.\n\n",
+            "pro": "🔥 Pro — жёстко.\n\n",
+            "demon": "😈 Demon — доминируй.\n\n",
+        }.get(mode, "")
+
+        return type("R", (), {"text": prefix + body})
+
+    # ---------------- ZOMBIES ----------------
+    def _zombie_plan(self, text: str):
+        if "BEGINNER" in text:
+            body = "🧟 Zombies Beginner — выживание и маршрут."
+        elif "PRO" in text:
+            body = "🔥 Zombies Pro — контроль орд."
+        else:
+            body = "😈 Zombies Demon — абсолютный контроль."
+        return type("R", (), {"text": body})
 
     # ---------------- TRAINING ----------------
-    def _training(self, user_id: int, text: str):
-        p = self.profiles.get(user_id)
-
+    def _training(self, p, text: str):
         minutes = text.replace("TRAIN_", "")
         return type(
             "R",
             (),
             {
                 "text": (
-                    f"🎯 ТРЕНИРОВКА {minutes} МИН\n"
-                    f"😈 РЕЖИМ: {p.mode.upper()}\n\n"
-                    "• AIM — контроль\n"
-                    "• MOVEMENT — выживание\n"
-                    "• MINDSET — холод\n\n"
-                    "Дисциплина важнее таланта."
+                    f"🎯 {minutes} мин | {p.mode.upper()}\n\n"
+                    "• AIM\n"
+                    "• MOVEMENT\n"
+                    "• MINDSET\n\n"
+                    "Дисциплина > талант."
                 )
             },
         )
