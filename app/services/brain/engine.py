@@ -10,65 +10,98 @@ class BrainEngine:
     async def handle_text(self, user_id: int, text: str):
         p = self.profiles.get(user_id)
 
-        mode = p.mode
-        game = p.game
-        device = p.device
+        # ---------- ZOMBIES ----------
+        if text == "ZOMBIE_BEGINNER":
+            return self._zombie_plan("beginner")
 
-        prefix = {
-            "normal": "🧠 Normal режим — учимся стабильно.",
-            "pro": "🔥 Pro режим — играем на результат.",
-            "demon": "😈 Demon режим — доминируем.",
-        }.get(mode, "")
+        if text == "ZOMBIE_PRO":
+            return self._zombie_plan("pro")
 
-        base = f"{prefix}\n🎮 {game.upper()} | 🕹 {device.upper()}\n\n"
+        if text == "ZOMBIE_DEMON":
+            return self._zombie_plan("demon")
 
-        if text == "TRAIN_15":
-            return self._training_plan(base, 15, mode)
+        # ---------- TRAINING ----------
+        if text.startswith("TRAIN_"):
+            return self._training(user_id, text)
 
-        if text == "TRAIN_30":
-            return self._training_plan(base, 30, mode)
-
-        if text == "TRAIN_60":
-            return self._training_plan(base, 60, mode)
-
+        # ---------- DEFAULT ----------
         return type(
             "R",
             (),
             {
-                "text": base
-                + "Опиши ситуацию:\n"
-                + "• где умер\n"
-                + "• режим\n"
-                + "• что не получилось\n\n"
-                + "Я дам точный разбор.",
+                "text": (
+                    f"🎮 {p.game.upper()} | 😈 {p.mode.upper()}\n\n"
+                    "Опиши ситуацию:\n"
+                    "• где умер\n"
+                    "• чем убили\n"
+                    "• что делал\n\n"
+                    "Я скажу, где ошибка."
+                )
             },
         )
 
-    def _training_plan(self, base: str, minutes: int, mode: str):
-        if mode == "normal":
-            plan = (
-                "AIM:\n• Трекинг — 5 мин\n• Флики — 5 мин\n\n"
-                "MOVEMENT:\n• Стрейф — 3 мин\n• Слайды — 2 мин\n\n"
-                "FOCUS:\n• Не спеши, контроль."
+    # ---------------- ZOMBIES ----------------
+    def _zombie_plan(self, level: str):
+        if level == "beginner":
+            text = (
+                "🧟 ZOMBIES — НОВИЧОК\n\n"
+                "ЦЕЛЬ:\n"
+                "• Дожить до 20+ раунда\n\n"
+                "ОСНОВЫ:\n"
+                "• Не бегай по карте хаотично\n"
+                "• Используй один маршрут\n"
+                "• Ремонт баррикад в начале\n\n"
+                "ОШИБКИ:\n"
+                "• Ранний Pack-a-Punch\n"
+                "• Паника в углах"
             )
-        elif mode == "pro":
-            plan = (
-                "AIM:\n• Head tracking — 10 мин\n• Micro flicks — 5 мин\n\n"
-                "MOVEMENT:\n• Shoulder peek — 5 мин\n• Jump timing — 5 мин\n\n"
-                "FOCUS:\n• Тайминги, позиции."
+        elif level == "pro":
+            text = (
+                "🔥 ZOMBIES — PRO\n\n"
+                "ЦЕЛЬ:\n"
+                "• Контроль орд\n"
+                "• Экономика очков\n\n"
+                "ТАКТИКА:\n"
+                "• Train zombies\n"
+                "• Убивай только когда орда собрана\n"
+                "• Минимум перков — максимум контроля\n\n"
+                "ОШИБКИ:\n"
+                "• Стрельба по одиночкам\n"
+                "• Потеря маршрута"
             )
         else:  # demon
-            plan = (
-                "AIM:\n• One-clip drills — 15 мин\n\n"
-                "MOVEMENT:\n• Aggressive peeks — 10 мин\n\n"
-                "MENTAL:\n• Дави, не отступай.\n"
-                "• Каждая дуэль — победа."
+            text = (
+                "😈 ZOMBIES — DEMON\n\n"
+                "ТЫ НЕ ВЫЖИВАЕШЬ — ТЫ КОНТРОЛИРУЕШЬ.\n\n"
+                "ПРИНЦИПЫ:\n"
+                "• Орда = инструмент\n"
+                "• Карта — твоя арена\n"
+                "• Убивай только когда выгодно\n\n"
+                "ФОКУС:\n"
+                "• Тайминги спавна\n"
+                "• Escape routes\n"
+                "• Хладнокровие\n\n"
+                "ОШИБКА = СМЕРТЬ."
             )
 
+        return type("R", (), {"text": text})
+
+    # ---------------- TRAINING ----------------
+    def _training(self, user_id: int, text: str):
+        p = self.profiles.get(user_id)
+
+        minutes = text.replace("TRAIN_", "")
         return type(
             "R",
             (),
             {
-                "text": f"{base}🎯 Тренировка {minutes} мин\n\n{plan}",
+                "text": (
+                    f"🎯 ТРЕНИРОВКА {minutes} МИН\n"
+                    f"😈 РЕЖИМ: {p.mode.upper()}\n\n"
+                    "• AIM — контроль\n"
+                    "• MOVEMENT — выживание\n"
+                    "• MINDSET — холод\n\n"
+                    "Дисциплина важнее таланта."
+                )
             },
         )
