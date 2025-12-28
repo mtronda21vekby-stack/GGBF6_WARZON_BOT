@@ -1,4 +1,4 @@
-from app.ui.quickbar import kb_main, kb_training, kb_zombies
+from app.ui.quickbar import kb_main, kb_games, kb_roles
 from app.ui import texts
 
 
@@ -17,41 +17,40 @@ class Router:
         user_id = upd.message.from_user.id
         text = upd.message.text.strip()
 
+        p = self.profiles.get(user_id)
+
         if text in ("/start", "Меню"):
             await self.tg.send_message(chat_id, texts.WELCOME, reply_markup=kb_main())
             return
 
-        # ---------- ZOMBIES ----------
-        if text == "🧟 Zombies":
-            await self.tg.send_message(
-                chat_id,
-                "Выбери уровень Zombies:",
-                reply_markup=kb_zombies(),
-            )
+        # ---------- GAME ----------
+        if text == "🎮 Игра":
+            await self.tg.send_message(chat_id, "Выбери игру:", reply_markup=kb_games())
             return
 
-        if text == "🧟 Новичок":
-            reply = await self.brain.handle_text(user_id, "ZOMBIE_BEGINNER")
+        if text == "🔥 Warzone":
+            p.game = "warzone"
+            await self.tg.send_message(chat_id, "Warzone — выбери роль:", reply_markup=kb_roles("warzone"))
+            return
+
+        if text == "🪖 BF6":
+            p.game = "bf6"
+            await self.tg.send_message(chat_id, "BF6 — select class:", reply_markup=kb_roles("bf6"))
+            return
+
+        if text == "💣 BO7":
+            p.game = "bo7"
+            await self.tg.send_message(chat_id, "BO7 — выбери роль:", reply_markup=kb_roles("bo7"))
+            return
+
+        # ---------- ROLES ----------
+        if text in (
+            "🎯 AR", "💥 SMG", "🔭 Sniper", "🛡 Support",
+            "ASSAULT", "ENGINEER", "SUPPORT", "RECON",
+            "⚔️ Slayer", "🧠 Tactical", "🛡 Anchor", "💣 Objective",
+        ):
+            reply = await self.brain.handle_text(user_id, f"CLASS_{text}")
             await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
-            return
-
-        if text == "🔥 Про":
-            reply = await self.brain.handle_text(user_id, "ZOMBIE_PRO")
-            await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
-            return
-
-        if text == "😈 Demon":
-            reply = await self.brain.handle_text(user_id, "ZOMBIE_DEMON")
-            await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
-            return
-
-        # ---------- TRAINING ----------
-        if text == "🎯 Тренировка":
-            await self.tg.send_message(
-                chat_id,
-                "Выбери длительность тренировки:",
-                reply_markup=kb_training(),
-            )
             return
 
         if text == "⬅️ Назад":
