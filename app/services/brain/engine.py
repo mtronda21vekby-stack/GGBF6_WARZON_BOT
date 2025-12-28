@@ -6,6 +6,8 @@ from app.services.brain.memory import PlayerMemory
 from app.services.brain.detector import detect_situation
 from app.services.brain.dialogues import get_dialogue
 from app.services.brain.decision import detect_bad_decision, build_decision_feedback
+from app.services.brain.loadouts import ROLE_LOADOUTS
+from app.services.brain.rating import PlayerRating
 from app.services.brain.premium import get_premium_tip
 from app.services.brain.ai_hook import AIHook
 
@@ -24,6 +26,7 @@ class BrainEngine:
         self.settings = settings
 
         self.memory = PlayerMemory()
+        self.rating = PlayerRating()
         self.ai = AIHook(enabled=False)
 
     async def handle_text(self, user_id: int, text: str):
@@ -31,6 +34,7 @@ class BrainEngine:
 
         game = profile.game or "warzone"
         style = profile.mode or "normal"
+        role = getattr(profile, "role", None)
 
         world = WORLD_MAP.get(game)
         if not world:
@@ -38,23 +42,42 @@ class BrainEngine:
 
         parts = []
 
-        # ---------- AUTO SITUATION ----------
+        # ---------- AUTO DETECT ----------
         situation = detect_situation(text)
         if situation:
             self.memory.add_error(user_id, situation)
             dialogue = get_dialogue(style, situation)
             if dialogue:
                 parts.append(dialogue)
+            self.rating.add(user_id, -15)
 
         # ---------- BAD DECISION ----------
         bad = detect_bad_decision(game, text)
         if bad:
             self.memory.add_error(user_id, bad)
             parts.append(build_decision_feedback(game, bad))
+            self.rating.add(user_id, -25)
+        else:
+            self.rating.add(user_id, +5)
+
+        # ---------- LOADOUT / ROLE ----------
+        if role:
+            info = ROLE_LOADOUTS.get(game, {}).get(role)
+            if info:
+                parts.append(
+                    f"🎒 ТВОЯ РОЛЬ: {info['role']}\n"
+                    f"ОРУЖИЕ: {', '.join(info['weapons'])}\n"
+                    f"ФОКУС: {info['focus']}"
+                )
 
         # ---------- WORLD ANALYSIS ----------
         analysis = world.analyze(text, profile, style, self.memory)
         parts.append(analysis)
+
+        # ---------- RATING ----------
+        lvl = self.rating.level(user_id)
+        score = self.rating.get(user_id)
+        parts.append(f"📊 РЕЙТИНГ: {lvl} ({score})")
 
         # ---------- PREMIUM ----------
         if getattr(profile, "premium", False):
