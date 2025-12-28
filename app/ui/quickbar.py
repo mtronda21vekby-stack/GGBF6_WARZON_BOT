@@ -1,4 +1,3 @@
-# app/ui/quickbar.py  (ЗАМЕНИ ЦЕЛИКОМ)
 from __future__ import annotations
 
 
