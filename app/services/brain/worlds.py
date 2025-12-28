@@ -1,66 +1,78 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+from app.services.brain.knowledge import TOP_RULES
 
 
 class BaseWorld:
     name = "base"
 
-    def intro(self) -> str:
-        return ""
-
-    def analyze(self, text: str, profile) -> str:
-        return "Опиши ситуацию подробнее."
+    def analyze(self, text: str, profile, style: str, memory) -> str:
+        return "Опиши ситуацию."
 
 
-# -------- WARZONE --------
 class WarzoneWorld(BaseWorld):
     name = "warzone"
 
-    def intro(self) -> str:
-        return "🔥 WARZONE — мышление через позицию, тайминги, выживание."
+    def analyze(self, text: str, profile, style: str, memory) -> str:
+        rules = TOP_RULES["warzone"]
+        return self._build(style, rules, memory, profile.user_id)
 
-    def analyze(self, text: str, profile) -> str:
+    def _build(self, style, rules, memory, uid):
+        if style == "demon":
+            return (
+                "WARZONE — DEMON\n"
+                "ПОЗИЦИЯ. РОТАЦИЯ. ВЫЖИВАНИЕ.\n\n"
+                f"НЕ ДЕЛАЙ:\n- " + "\n- ".join(rules["never"]) +
+                self._memory(memory, uid)
+            )
+        if style == "pro":
+            return (
+                "WARZONE — PRO\n\n"
+                f"ВСЕГДА:\n- " + "\n- ".join(rules["always"])
+            )
         return (
-            "WARZONE ANALYSIS:\n"
-            "• Проверь позицию (высота / укрытие)\n"
-            "• Где был газ?\n"
-            "• Тайминг ротации?\n\n"
-            "Опиши:\n"
-            "дистанция | соло/сквад | газ"
+            "WARZONE — NORMAL\n\n"
+            "Сначала позиция, потом стрельба."
         )
 
+    def _memory(self, memory, uid):
+        err = memory.common_error(uid)
+        return f"\n\nТВОЯ ПОВТОРЯЮЩАЯСЯ ОШИБКА:\n{err}" if err else ""
 
-# -------- BF6 --------
+
 class BF6World(BaseWorld):
     name = "bf6"
 
-    def intro(self) -> str:
-        return "🪖 BF6 — objective, teamplay, pressure."
+    def analyze(self, text: str, profile, style: str, memory) -> str:
+        rules = TOP_RULES["bf6"]
+        if style == "demon":
+            return (
+                "BF6 — DEMON\n"
+                "OBJECTIVE. TEAMPLAY. PRESSURE.\n\n"
+                f"NEVER:\n- " + "\n- ".join(rules["never"])
+            )
+        if style == "pro":
+            return (
+                "BF6 — PRO\n\n"
+                f"ALWAYS:\n- " + "\n- ".join(rules["always"])
+            )
+        return "BF6 — NORMAL\nPlay objective."
 
-    def analyze(self, text: str, profile) -> str:
-        return (
-            "BF6 ANALYSIS:\n"
-            "• Objective status?\n"
-            "• Squad positioning?\n"
-            "• Tickets pressure?\n\n"
-            "Describe:\n"
-            "role | objective | death reason"
-        )
 
-
-# -------- BO7 --------
 class BO7World(BaseWorld):
     name = "bo7"
 
-    def intro(self) -> str:
-        return "💣 BO7 — дуэли, спавны, тайминги."
-
-    def analyze(self, text: str, profile) -> str:
-        return (
-            "BO7 ANALYSIS:\n"
-            "• Spawn control?\n"
-            "• Trade or solo death?\n"
-            "• Pre-aim or rush?\n\n"
-            "Опиши:\n"
-            "карта | позиция | как умер"
-        )
+    def analyze(self, text: str, profile, style: str, memory) -> str:
+        rules = TOP_RULES["bo7"]
+        if style == "demon":
+            return (
+                "BO7 — DEMON\n"
+                "SPAWNS. TIMING. TRADES.\n\n"
+                f"НЕ ДЕЛАЙ:\n- " + "\n- ".join(rules["never"])
+            )
+        if style == "pro":
+            return (
+                "BO7 — PRO\n\n"
+                f"ВСЕГДА:\n- " + "\n- ".join(rules["always"])
+            )
+        return "BO7 — NORMAL\nДержи спавны."
