@@ -1,29 +1,17 @@
+# app/adapters/telegram/client.py  (ЗАМЕНИ ЦЕЛИКОМ)
 from __future__ import annotations
-import httpx
+
+import requests
 
 
 class TelegramClient:
-    def __init__(self, bot_token: str):
-        self.bot_token = bot_token
-        self.base = f"https://api.telegram.org/bot{bot_token}"
-        self._client = httpx.AsyncClient(timeout=25)
+    def __init__(self, token: str):
+        self.token = token
+        self.base = f"https://api.telegram.org/bot{token}"
 
-    async def close(self):
-        await self._client.aclose()
-
-    async def send_message(self, chat_id: int, text: str, reply_markup: dict | None = None):
+    def send_message(self, chat_id: int, text: str, reply_markup: dict | None = None) -> None:
         payload = {"chat_id": chat_id, "text": text}
         if reply_markup is not None:
-            payload["reply_markup"] = reply_markup
-
-        r = await self._client.post(f"{self.base}/sendMessage", json=payload)
+            payload["reply_markup"] = reply_markup  # dict (ReplyKeyboardMarkup)
+        r = requests.post(f"{self.base}/sendMessage", json=payload, timeout=20)
         r.raise_for_status()
-        return r.json()
-
-    async def answer_callback_query(self, callback_query_id: str, text: str | None = None):
-        payload = {"callback_query_id": callback_query_id}
-        if text:
-            payload["text"] = text
-        r = await self._client.post(f"{self.base}/answerCallbackQuery", json=payload)
-        r.raise_for_status()
-        return r.json()
