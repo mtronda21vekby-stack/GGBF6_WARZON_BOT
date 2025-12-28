@@ -1,39 +1,43 @@
+# app/services/brain/memory.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from collections import defaultdict
-from typing import Optional
+
+from collections import deque
+from typing import Deque, Dict, List
 
 
 class InMemoryStore:
     """
-    Простая in-memory память.
-    Не ломает архитектуру.
-    Можно заменить на Redis / DB позже без изменений Brain.
+    Простая, стабильная память.
+    Ничего не ломает.
+    Готова к апгрейду до Ultra Brain.
     """
 
-    def __init__(self):
-        # user_id -> dict
-        self._data = defaultdict(dict)
+    def __init__(self, max_turns: int = 20):
+        self.max_turns = max_turns
+        self._data: Dict[int, Deque[dict]] = {}
 
-    # ---------- GENERIC ----------
-    def get(self, user_id: int, key: str, default=None):
-        return self._data[user_id].get(key, default)
+    def add(self, chat_id: int, role: str, content: str):
+        if chat_id not in self._data:
+            self._data[chat_id] = deque(maxlen=self.max_turns)
 
-    def set(self, user_id: int, key: str, value):
-        self._data[user_id][key] = value
+        self._data[chat_id].append(
+            {
+                "role": role,
+                "content": content,
+            }
+        )
 
-    def clear(self, user_id: int):
-        self._data[user_id].clear()
+    def get(self, chat_id: int) -> List[dict]:
+        if chat_id not in self._data:
+            return []
+        return list(self._data[chat_id])
 
-    # ---------- AI MEMORY ----------
-    def get_last_mistake(self, user_id: int) -> Optional[str]:
-        return self._data[user_id].get("last_mistake")
+    def clear(self, chat_id: int):
+        self._data.pop(chat_id, None)
 
-    def set_last_mistake(self, user_id: int, text: str):
-        self._data[user_id]["last_mistake"] = text
-
-    def get_focus(self, user_id: int) -> Optional[str]:
-        return self._data[user_id].get("focus")
-
-    def set_focus(self, user_id: int, focus: str):
-        self._data[user_id]["focus"] = focus
+    def stats(self, chat_id: int) -> dict:
+        return {
+            "turns": len(self._data.get(chat_id, [])),
+            "limit": self.max_turns,
+        }
