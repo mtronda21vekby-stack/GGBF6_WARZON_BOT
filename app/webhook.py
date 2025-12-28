@@ -1,4 +1,3 @@
-# app/webhook.py
 from fastapi import FastAPI, Request, Header, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -20,17 +19,19 @@ def create_app() -> FastAPI:
     settings = get_settings()
     setup_logging(settings.log_level)
 
-    app = FastAPI(title="GGBF6 Bot", version="1.0.0")
+    app = FastAPI(title="GGBF6 WARZON BOT", version="1.0.0")
 
-    # Telegram client
     tg = TelegramClient(settings.BOT_TOKEN)
 
-    # Brain stack
     store = InMemoryStore(memory_max_turns=settings.memory_max_turns)
     profiles = ProfileService(store=store)
     brain = BrainEngine(store=store, profiles=profiles, settings=settings)
 
     router = Router(tg=tg, brain=brain, settings=settings)
+
+    @app.get("/")
+    async def root():
+        return {"ok": True, "service": "ggbf6-warzon-bot"}
 
     @app.get("/health")
     async def health():
@@ -46,14 +47,13 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=401, detail="bad secret")
 
         raw = await request.json()
-        update = Update.parse(raw)
+        upd = Update.parse(raw)
 
         try:
-            await router.handle_update(update)
+            await router.handle_update(upd)
         except Exception:
-            log.exception("Telegram update crashed")
+            log.exception("Unhandled error in router")
 
-        # Telegram ВСЕГДА должен получать 200
         return JSONResponse({"ok": True})
 
     @app.on_event("shutdown")
@@ -63,5 +63,4 @@ def create_app() -> FastAPI:
     return app
 
 
-# 🔴 ВАЖНО: ЭТО ОБЯЗАТЕЛЬНО
 app = create_app()
