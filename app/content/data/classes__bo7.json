@@ -1,0 +1,10 @@
+{
+  "title": "Black Ops 7 (BO7) Modes",
+  "last_updated": "2025-11-14",
+  "source": "CallofDuty.com + Wikipedia",
+  "modes": [
+    {"name": "Multiplayer", "notes": ["6v6 + крупные режимы (зависит от плейлистов)"]},
+    {"name": "Zombies (Round-Based)", "notes": ["Round-based Zombies — основной кооп режим"]},
+    {"name": "Zombies: ZOMBIE (expanded)", "notes": ["В боте: отдельный режим тренировок/билдов/задач под зомби-выживание"]}
+  ]
+}
