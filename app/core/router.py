@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from app.ui.quickbar import (
-    kb_main, kb_settings, kb_games, kb_platform, kb_input, kb_difficulty, kb_classes_bf6
+    kb_main, kb_settings, kb_games, kb_platform, kb_input, kb_difficulty,
+    kb_classes_bf6, kb_bf6_settings_menu, kb_bf6_class_settings
+)
+
+from app.worlds.bf6.presets import (
+    bf6_class_text, bf6_aim_sens_text, bf6_controller_tuning_text, bf6_kbm_tuning_text
 )
 
 
@@ -36,32 +41,22 @@ class Router:
         if not chat_id:
             return
 
-        # команды
         if text in ("/start", "/menu", "📋 Меню", "Меню"):
             await self._send_main(chat_id, "🧠 FPS Coach Bot | Warzone / BO7 / BF6\n\nЖми кнопки снизу 👇")
             return
 
-        # --- MAIN QUICKBAR ---
+        # MAIN
         if text == "🎮 Игра":
             await self._on_game(chat_id)
             return
         if text == "⚙️ Настройки":
-            await self._send(chat_id, "⚙️ Настройки — выбери раздел:", kb_settings())
+            await self._send(chat_id, "⚙️ Settings:", kb_settings())
             return
         if text == "🪖 Класс":
             await self._on_class(chat_id)
             return
         if text == "🧠 ИИ":
-            await self._on_ai(chat_id)
-            return
-        if text == "🎯 Тренировка":
-            await self._send_main(chat_id, "🎯 Напиши: что болит (aim/movement/positioning) + игра + input. Я соберу план.")
-            return
-        if text == "🎬 VOD":
-            await self._send_main(chat_id, "🎬 Пришли 3 таймкода и цель разбора. Я дам конкретные правки.")
-            return
-        if text == "🧟 Zombies":
-            await self._send_main(chat_id, "🧟 Zombies: пока не трогаем, позже расширим карты.\nНапиши: карта | раунд | от чего умираешь | что открыл.")
+            await self._send_main(chat_id, "🧠 AI ON.\nНапиши проблему одной строкой: game | platform | input | class/role | death reason | distance")
             return
         if text == "📌 Профиль":
             await self._on_profile(chat_id)
@@ -69,28 +64,28 @@ class Router:
         if text == "📊 Статус":
             await self._on_status(chat_id)
             return
-        if text == "💎 Premium":
-            await self._send_main(chat_id, "💎 Premium активен: нижний UI закреплён.\nСкоро добавим баннер/анимации в стиле DEMON.")
-            return
         if text == "🧹 Очистить память":
             await self._on_clear_memory(chat_id)
             return
         if text == "🧨 Сброс":
             await self._on_reset(chat_id)
             return
+        if text == "⬅️ Назад":
+            await self._send_main(chat_id, "↩️ OK. Menu below 👇")
+            return
 
-        # --- SETTINGS FLOW ---
+        # SETTINGS FLOW
         if text == "🎮 Выбрать игру":
-            await self._send(chat_id, "🎮 Выбери игру:", kb_games())
+            await self._send(chat_id, "🎮 Choose game:", kb_games())
             return
         if text in ("🔥 Warzone", "💣 BO7", "🪖 BF6"):
             game = "Warzone" if "Warzone" in text else ("BO7" if "BO7" in text else "BF6")
             self._set_profile_field(chat_id, "game", game)
-            await self._send(chat_id, f"✅ Game = {game}\nВыбери следующий шаг:", kb_settings())
+            await self._send(chat_id, f"✅ Game = {game}", kb_settings())
             return
 
         if text == "🖥 Платформа":
-            await self._send(chat_id, "🖥 Выбери платформу:", kb_platform())
+            await self._send(chat_id, "🖥 Choose platform:", kb_platform())
             return
         if text in ("🖥 PC", "🎮 PlayStation", "🎮 Xbox"):
             platform = "PC" if "PC" in text else ("PlayStation" if "PlayStation" in text else "Xbox")
@@ -99,7 +94,7 @@ class Router:
             return
 
         if text == "⌨️ Input":
-            await self._send(chat_id, "⌨️ Выбери input:", kb_input())
+            await self._send(chat_id, "⌨️ Choose input:", kb_input())
             return
         if text in ("⌨️ KBM", "🎮 Controller"):
             inp = "KBM" if "KBM" in text else "Controller"
@@ -108,7 +103,7 @@ class Router:
             return
 
         if text == "😈 Режим мышления":
-            await self._send(chat_id, "😈 Выбери режим:", kb_difficulty())
+            await self._send(chat_id, "😈 Choose mode:", kb_difficulty())
             return
         if text in ("🧠 Normal", "🔥 Pro", "😈 Demon"):
             diff = "Normal" if "Normal" in text else ("Pro" if "Pro" in text else "Demon")
@@ -116,31 +111,53 @@ class Router:
             await self._send(chat_id, f"✅ Difficulty = {diff}", kb_settings())
             return
 
+        # GAME SETTINGS (WORLD)
         if text == "🧩 Настройки игры":
             prof = self._get_profile(chat_id)
             game = prof.get("game") or "Warzone"
-            # заглушка-навигатор под “миры” (позже расширим)
             if game == "BF6":
-                await self._send_main(chat_id, "🧩 BF6 Settings: coming next (classes/loadouts/sens).\n(Сейчас главное: AI и UI стабильно.)")
-            else:
-                await self._send_main(chat_id, "🧩 Warzone/BO7 настройки: coming next (демон/про/норм пресеты).\n(Сейчас главное: AI и UI стабильно.)")
+                await self._send(chat_id, "🧩 BF6 Settings (EN):", kb_bf6_settings_menu())
+                return
+            # Warzone/BO7 оставляем как было, не режем — позже расширим
+            await self._send_main(chat_id, "🧩 Warzone/BO7 settings: next step. (Не режем, просто следующий блок работ.)")
             return
 
-        if text == "⬅️ Назад":
-            await self._send_main(chat_id, "↩️ Ок. Меню снизу 👇")
+        # BF6 SETTINGS MENU
+        if text == "🧩 BF6: Class Settings":
+            await self._send(chat_id, "🪖 Pick class setup:", kb_bf6_class_settings())
             return
 
-        # --- CLASS PICK (BF6) ---
+        if text in ("🟥 Assault Setup", "🟦 Recon Setup", "🟨 Engineer Setup", "🟩 Medic Setup"):
+            cls = text.split(" ", 1)[-1].replace("Setup", "").strip()
+            self._set_profile_field(chat_id, "bf6_class", cls)
+            prof = self._get_profile(chat_id)
+            await self._send_main(chat_id, bf6_class_text(prof))
+            return
+
+        if text == "🎯 BF6: Aim/Sens":
+            prof = self._get_profile(chat_id)
+            await self._send_main(chat_id, bf6_aim_sens_text(prof))
+            return
+
+        if text == "🎮 BF6: Controller Tuning":
+            await self._send_main(chat_id, bf6_controller_tuning_text(self._get_profile(chat_id)))
+            return
+
+        if text == "⌨️ BF6: KBM Tuning":
+            await self._send_main(chat_id, bf6_kbm_tuning_text(self._get_profile(chat_id)))
+            return
+
+        # BF6 CLASS PICK (quick button)
         if text in ("🟥 Assault", "🟦 Recon", "🟨 Engineer", "🟩 Medic"):
             cls = text.split(" ", 1)[-1].strip()
             self._set_profile_field(chat_id, "bf6_class", cls)
             await self._send_main(chat_id, f"✅ BF6 Class = {cls}")
             return
 
-        # --- DEFAULT: CHAT TO AI ---
+        # fallback -> AI
         await self._chat_to_brain(chat_id, text)
 
-    # ---------- SEND HELPERS ----------
+    # ---------- SEND ----------
     async def _send(self, chat_id: int, text: str, reply_markup: Optional[dict] = None) -> None:
         if reply_markup is None:
             reply_markup = kb_main()
@@ -160,60 +177,72 @@ class Router:
                             return prof
                     except Exception:
                         pass
-        # дефолт
-        return {"game": "Warzone", "platform": "PC", "input": "Controller", "difficulty": "Normal", "bf6_class": ""}
+        return {"game": "Warzone", "platform": "PC", "input": "Controller", "difficulty": "Normal", "bf6_class": "Assault"}
 
     def _set_profile_field(self, chat_id: int, key: str, val: str) -> None:
         if self.profiles:
-            for name in ("set", "update", "set_field", "set_value"):
+            for name in ("set", "set_field", "set_value", "update", "update_profile"):
                 if hasattr(self.profiles, name):
                     try:
-                        getattr(self.profiles, name)(chat_id, key, val)
+                        fn = getattr(self.profiles, name)
+                        # поддержка разных сигнатур
+                        try:
+                            fn(chat_id, key, val)
+                        except TypeError:
+                            fn(chat_id, {key: val})
                         return
                     except Exception:
                         pass
-            # fallback: если нет сеттера — попробуем update_profile(dict)
-            if hasattr(self.profiles, "update_profile"):
-                try:
-                    self.profiles.update_profile(chat_id, {key: val})
-                    return
-                except Exception:
-                    pass
 
     # ---------- HANDLERS ----------
     async def _on_game(self, chat_id: int) -> None:
         prof = self._get_profile(chat_id)
         await self._send_main(
             chat_id,
-            f"🎮 Game: {prof.get('game','Warzone')}\n"
-            f"🖥 Platform: {prof.get('platform','PC')}\n"
-            f"⌨️ Input: {prof.get('input','Controller')}\n"
-            f"😈 Difficulty: {prof.get('difficulty','Normal')}\n"
-            f"🪖 BF6 Class: {prof.get('bf6_class','')}\n"
-            "\nОткрой ⚙️ Настройки чтобы поменять."
+            f"🎮 Game: {prof.get('game')}\n"
+            f"🖥 Platform: {prof.get('platform')}\n"
+            f"⌨️ Input: {prof.get('input')}\n"
+            f"😈 Difficulty: {prof.get('difficulty')}\n"
+            f"🪖 BF6 Class: {prof.get('bf6_class')}\n"
         )
 
     async def _on_class(self, chat_id: int) -> None:
         prof = self._get_profile(chat_id)
-        game = prof.get("game") or "Warzone"
-        if game != "BF6":
-            await self._send_main(chat_id, "🪖 Класс доступен для BF6.\nСначала выбери игру: ⚙️ Настройки → 🎮 Выбрать игру → 🪖 BF6")
+        if (prof.get("game") or "Warzone") != "BF6":
+            await self._send_main(chat_id, "🪖 Class is BF6 only.\nGo: ⚙️ Настройки → 🎮 Выбрать игру → 🪖 BF6")
             return
-        current = prof.get("bf6_class") or "—"
-        await self._send(chat_id, f"🪖 BF6 Class сейчас: {current}\nВыбери:", kb_classes_bf6())
+        await self._send(chat_id, "🪖 Pick BF6 class:", kb_classes_bf6())
 
     async def _on_profile(self, chat_id: int) -> None:
         prof = self._get_profile(chat_id)
-        await self._send_main(chat_id, "📌 Профиль:\n" + "\n".join([f"• {k}: {v}" for k, v in prof.items()]))
+        lines = "\n".join([f"• {k}: {v}" for k, v in prof.items()])
+        await self._send_main(chat_id, "📌 Profile:\n" + lines)
 
     async def _on_status(self, chat_id: int) -> None:
+        prof = self._get_profile(chat_id)
+
         mem = {}
         if self.store and hasattr(self.store, "stats"):
             try:
                 mem = self.store.stats(chat_id)
             except Exception:
                 mem = {}
-        await self._send_main(chat_id, f"📊 Status: OK\n🧠 Memory: {mem or 'on'}")
+
+        # AI status (explicit)
+        ai_key = (getattr(self.settings, "openai_api_key", "") or "").strip() if self.settings else ""
+        ai_enabled = bool(getattr(self.settings, "ai_enabled", True)) if self.settings else False
+        model = getattr(self.settings, "openai_model", "gpt-4.1-mini") if self.settings else "?"
+
+        ai_state = "ON" if (ai_enabled and ai_key) else "OFF"
+        why = "OK" if ai_state == "ON" else ("OPENAI_API_KEY missing" if not ai_key else "ai_enabled=False")
+
+        await self._send_main(
+            chat_id,
+            "📊 Status: OK\n"
+            f"🧠 Memory: {mem or 'on'}\n"
+            f"🤖 AI: {ai_state} | model={model} | reason={why}\n"
+            f"🎮 Game={prof.get('game')} | 🪖 Class={prof.get('bf6_class')}"
+        )
 
     async def _on_clear_memory(self, chat_id: int) -> None:
         if self.store and hasattr(self.store, "clear"):
@@ -221,7 +250,7 @@ class Router:
                 self.store.clear(chat_id)
             except Exception:
                 pass
-        await self._send_main(chat_id, "🧹 Память очищена ✅")
+        await self._send_main(chat_id, "🧹 Memory cleared ✅")
 
     async def _on_reset(self, chat_id: int) -> None:
         if self.store and hasattr(self.store, "clear"):
@@ -234,20 +263,12 @@ class Router:
                 self.profiles.reset(chat_id)
             except Exception:
                 pass
-        await self._send_main(chat_id, "🧨 Сброс выполнен ✅")
-
-    async def _on_ai(self, chat_id: int) -> None:
-        prof = self._get_profile(chat_id)
-        game = prof.get("game") or "Warzone"
-        if game == "BF6":
-            await self._send_main(chat_id, "🧠 AI ON.\nFormat: game | platform | input | class | problem | distance (close/mid/long)")
-        else:
-            await self._send_main(chat_id, "🧠 ИИ ON.\nФормат: игра | платформа | input | роль | от чего умер | дистанция (close/mid/long)")
+        await self._send_main(chat_id, "🧨 Reset done ✅")
 
     # ---------- AI CHAT ----------
     async def _chat_to_brain(self, chat_id: int, text: str) -> None:
         if not text:
-            await self._send_main(chat_id, "Напиши текстом, что случилось — я разберу.")
+            await self._send_main(chat_id, "Send text — I will analyze.")
             return
 
         if self.store and hasattr(self.store, "add"):
@@ -257,7 +278,6 @@ class Router:
                 pass
 
         prof = self._get_profile(chat_id)
-
         history = []
         if self.store and hasattr(self.store, "get"):
             try:
@@ -269,14 +289,11 @@ class Router:
         if self.brain and hasattr(self.brain, "reply"):
             try:
                 reply = self.brain.reply(text=text, profile=prof, history=history)
-            except TypeError:
-                # на всякий
-                reply = self.brain.reply(text=text, profile=prof, history=history)
             except Exception:
                 reply = None
 
         if not reply:
-            reply = "🧠 Принял. Дай вводные одной строкой: игра | платформа | input | от чего умер | дистанция."
+            reply = "🧠 AI fallback. Check /status."
 
         if self.store and hasattr(self.store, "add"):
             try:
