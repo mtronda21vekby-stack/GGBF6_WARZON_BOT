@@ -1,67 +1,64 @@
 # app/worlds/bf6/presets.py
+# -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import Any, Dict
+from typing import Dict
 
 
-def _p(profile: Dict[str, Any], k: str, default: str) -> str:
-    v = (profile.get(k) or "").strip()
-    return v or default
-
-
-def bf6_class_text(profile: Dict[str, Any]) -> str:
-    platform = _p(profile, "platform", "PC")
-    input_ = _p(profile, "input", "Controller")
-    cls = _p(profile, "bf6_class", "Assault")
-
-    head = f"🪖 BF6 Class Settings (EN)\nClass: {cls}\nPlatform: {platform}\nInput: {input_}\n"
-
-    if cls == "Assault":
-        body = (
-            "\nASSAULT: entry + first contact\n"
-            "NOW:\n• Pre-aim head height\n• Kill → instant 3–6m reposition\n• Trade timing, no solo push\n"
-        )
-    elif cls == "Recon":
-        body = (
-            "\nRECON: info + angles\n"
-            "NOW:\n• Hold power angles\n• Every pick → team move\n• Rotate early, control sightlines\n"
-        )
-    elif cls == "Engineer":
-        body = (
-            "\nENGINEER: utility + anti-vehicle\n"
-            "NOW:\n• Deny vehicles early\n• Long fights from cover\n• Lock lanes, sustain fire\n"
-        )
-    else:
-        body = (
-            "\nMEDIC: sustain + tempo\n"
-            "NOW:\n• Smoke to reset fights\n• Revive only after clearing angle\n• Stay alive > hero revive\n"
-        )
-
-    return head + body
-
-
-def bf6_aim_sens_text(profile: Dict[str, Any]) -> str:
-    platform = _p(profile, "platform", "PC")
-    input_ = _p(profile, "input", "Controller")
-    head = f"🎯 BF6 Aim/Sens (EN)\nPlatform: {platform}\nInput: {input_}\n"
-
-    if input_ == "KBM":
-        return head + "\nKBM baseline:\n• DPI 800\n• lock sens 7 days\n• ADS 0.9–1.0\n"
-    return head + "\nController baseline:\n• lowest deadzone no drift\n• low accel\n• ADS slightly lower than hip\n"
-
-
-def bf6_controller_tuning_text(profile: Dict[str, Any]) -> str:
+def bf6_class_text(profile: Dict) -> str:
+    cls = profile.get("bf6_class", "Assault")
     return (
-        "🎮 BF6 Controller Tuning (EN)\n"
-        "• Deadzones: lowest stable\n"
-        "• Response curve: pick ONE\n"
-        "• Aim accel: OFF/low\n"
+        f"🪖 BF6 | Class: {cls}\n\n"
+        "СЕЙЧАС:\n"
+        f"• Играй роль {cls} строго по задачам класса\n"
+        "• Не лезь в файты без пользы для отряда\n\n"
+        "ДАЛЬШЕ:\n"
+        "• Отрабатывай позиционку + трейд\n"
+        "• Держи темп под сквад\n"
     )
 
 
-def bf6_kbm_tuning_text(profile: Dict[str, Any]) -> str:
+def bf6_aim_sens_text(profile: Dict) -> str:
+    inp = profile.get("input", "Controller")
+    if inp == "KBM":
+        return (
+            "🎯 BF6 | AIM / SENS (KBM)\n\n"
+            "• DPI: 800\n"
+            "• In-game sens: 4–6\n"
+            "• ADS multiplier: 0.9–1.0\n\n"
+            "Фокус:\n"
+            "• Прекросс\n"
+            "• Микро-коррекция\n"
+        )
     return (
-        "⌨️ BF6 KBM Tuning (EN)\n"
-        "• Disable OS accel\n"
-        "• DPI constant\n"
-        "• Sens lock 7 days\n"
+        "🎯 BF6 | AIM / SENS (Controller)\n\n"
+        "• Sens: 6–7\n"
+        "• ADS low zoom: 0.85\n"
+        "• ADS high zoom: 0.9\n\n"
+        "Фокус:\n"
+        "• Контроль стика\n"
+        "• Не переламывай аим\n"
+    )
+
+
+def bf6_controller_tuning_text(profile: Dict) -> str:
+    return (
+        "🎮 BF6 | Controller Tuning\n\n"
+        "• Deadzone L/R: 5–7\n"
+        "• Response curve: Linear\n"
+        "• Aim Assist: ON\n\n"
+        "Совет:\n"
+        "• Не дергай правый стик\n"
+        "• Работай телом, не аимом\n"
+    )
+
+
+def bf6_kbm_tuning_text(profile: Dict) -> str:
+    return (
+        "⌨️ BF6 | KBM Tuning\n\n"
+        "• Mouse accel: OFF\n"
+        "• Raw input: ON\n"
+        "• FOV: 90–100\n\n"
+        "Совет:\n"
+        "• Контроль отдачи > флик\n"
+        "• Позиция важнее рефлекса\n"
     )
