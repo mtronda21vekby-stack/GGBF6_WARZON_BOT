@@ -12,6 +12,13 @@ class PlayerRating:
     def add(self, user_id: int, value: int):
         self._score[user_id] = self.get(user_id) + value
 
+    def reset_user(self, user_id: int):
+        if user_id in self._score:
+            del self._score[user_id]
+
+    def reset_all(self):
+        self._score = {}
+
     def level(self, user_id: int) -> str:
         s = self.get(user_id)
         if s < 900:
