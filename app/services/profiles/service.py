@@ -1,4 +1,3 @@
-# app/services/profiles/service.py  (ЗАМЕНИ ЦЕЛИКОМ)
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
