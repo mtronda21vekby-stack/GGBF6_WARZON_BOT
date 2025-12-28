@@ -10,10 +10,46 @@ from app.adapters.telegram.types import Update
 from app.adapters.telegram.client import TelegramClient
 from app.core.router import Router
 from app.services.brain.engine import BrainEngine
-from app.services.brain.memory import InMemoryStore
 from app.services.profiles.service import ProfileService
 
 log = get_logger("webhook")
+
+
+# ================= SAFE MEMORY (INLINE) =================
+class InMemoryStore:
+    def __init__(self, *args, **kwargs):
+        limit = None
+
+        if "memory_max_turns" in kwargs:
+            limit = kwargs["memory_max_turns"]
+        elif "max_turns" in kwargs:
+            limit = kwargs["max_turns"]
+        elif len(args) > 0:
+            limit = args[0]
+
+        try:
+            self.max_turns = int(limit) if limit is not None else 20
+        except Exception:
+            self.max_turns = 20
+
+        if self.max_turns < 4:
+            self.max_turns = 4
+
+        self.data = {}
+
+    def add(self, chat_id, role, content):
+        chat_id = int(chat_id)
+        self.data.setdefault(chat_id, [])
+        self.data[chat_id].append({"role": role, "content": content})
+        if len(self.data[chat_id]) > self.max_turns:
+            self.data[chat_id] = self.data[chat_id][-self.max_turns:]
+
+    def get(self, chat_id):
+        return self.data.get(int(chat_id), [])
+
+    def clear(self, chat_id):
+        self.data.pop(int(chat_id), None)
+# ================= END SAFE MEMORY =================
 
 
 def create_app() -> FastAPI:
