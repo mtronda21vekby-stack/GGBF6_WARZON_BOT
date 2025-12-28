@@ -23,10 +23,12 @@ def create_app() -> FastAPI:
 
     tg = TelegramClient(settings.bot_token)
 
-    store = InMemoryStore(memory_max_turns=settings.memory_max_turns)
+    # IMPORTANT: Store должен принимать разные имена аргументов (мы это починим в memory.py)
+    store = InMemoryStore(memory_max_turns=getattr(settings, "memory_max_turns", 20))
     profiles = ProfileService(store=store)
     brain = BrainEngine(store=store, profiles=profiles, settings=settings)
 
+    # IMPORTANT: передаём store в Router (иначе память/статус/очистка не работают)
     router = Router(tg=tg, brain=brain, profiles=profiles, store=store, settings=settings)
 
     @app.get("/")
@@ -42,14 +44,16 @@ def create_app() -> FastAPI:
         request: Request,
         x_telegram_bot_api_secret_token: str | None = Header(default=None),
     ):
-        if settings.webhook_secret:
+        # защита от левых запросов
+        if getattr(settings, "webhook_secret", ""):
             if x_telegram_bot_api_secret_token != settings.webhook_secret:
                 raise HTTPException(status_code=401, detail="bad secret token")
 
         raw = await request.json()
 
         try:
-            await router.handle_update(raw)  # <-- важно: dict
+            # IMPORTANT: в роутер отдаём СЫРОЙ dict (100% совместимо)
+            await router.handle_update(raw)
         except Exception as e:
             log.exception("Unhandled error: %s", e)
 
