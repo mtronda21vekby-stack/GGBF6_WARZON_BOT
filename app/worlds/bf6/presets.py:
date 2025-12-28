@@ -1,0 +1,126 @@
+# app/worlds/bf6/presets.py
+from __future__ import annotations
+
+from typing import Any, Dict
+
+
+def _p(profile: Dict[str, Any], k: str, default: str) -> str:
+    v = (profile.get(k) or "").strip()
+    return v or default
+
+
+def bf6_class_text(profile: Dict[str, Any]) -> str:
+    platform = _p(profile, "platform", "PC")
+    input_ = _p(profile, "input", "Controller")
+    cls = _p(profile, "bf6_class", "Assault")
+
+    # BF6 settings must be EN (as requested)
+    head = f"🪖 BF6 Class Settings (EN)\nClass: {cls}\nPlatform: {platform}\nInput: {input_}\n"
+
+    # “Ultra” guidance per class (not cutting anything, but compact)
+    if cls == "Assault":
+        body = (
+            "\nASSAULT ROLE: entry + first contact + space creation\n"
+            "Loadout priorities:\n"
+            "• Primary: fast TTK AR / controllable recoil (mid-range)\n"
+            "• Secondary: quick swap (pistol/SMG)\n"
+            "• Gadget: self-sustain / anti-peek pressure\n"
+            "Play rules:\n"
+            "1) First shot advantage: pre-aim likely head height\n"
+            "2) Trade system: never solo push without timing\n"
+            "3) After down/kill: instant reposition 3–6 meters\n"
+        )
+    elif cls == "Recon":
+        body = (
+            "\nRECON ROLE: info + angles + pick potential\n"
+            "Loadout priorities:\n"
+            "• Primary: DMR/Sniper (long) OR stable AR (mid)\n"
+            "• Gadget: spotting / denial / anti-flank\n"
+            "Play rules:\n"
+            "1) Hold power angles, don’t tunnel vision\n"
+            "2) Every pick must convert to team move\n"
+            "3) Rotate early, control sightlines\n"
+        )
+    elif cls == "Engineer":
+        body = (
+            "\nENGINEER ROLE: vehicles/utility + anchor\n"
+            "Loadout priorities:\n"
+            "• Primary: versatile AR/LMG for sustained fire\n"
+            "• Gadget: anti-vehicle + area control\n"
+            "Play rules:\n"
+            "1) Deny vehicles BEFORE they farm your team\n"
+            "2) Play near cover: long fights are your win\n"
+            "3) Lock lanes, feed ammo/utility timing\n"
+        )
+    else:  # Medic
+        body = (
+            "\nMEDIC ROLE: sustain + tempo control\n"
+            "Loadout priorities:\n"
+            "• Primary: stable AR/SMG depending on map density\n"
+            "• Gadget: revive speed / smoke / survival\n"
+            "Play rules:\n"
+            "1) Smoke = reset fights, not decoration\n"
+            "2) Revive only if safe: clear angle first\n"
+            "3) Stay alive > hero revive\n"
+        )
+
+    return head + body
+
+
+def bf6_aim_sens_text(profile: Dict[str, Any]) -> str:
+    platform = _p(profile, "platform", "PC")
+    input_ = _p(profile, "input", "Controller")
+
+    head = f"🎯 BF6 Aim/Sens (EN)\nPlatform: {platform}\nInput: {input_}\n"
+
+    if input_ == "KBM":
+        return head + (
+            "\nKBM baseline:\n"
+            "• DPI: 800 (or 1600 if you prefer) — keep consistent\n"
+            "• eDPI target: 240–360 for control (adjust by feel)\n"
+            "• ADS multiplier: 0.90–1.00 (keep micro stable)\n"
+            "Drill (10–15 min):\n"
+            "1) Smooth tracking (close) 3 min\n"
+            "2) Micro-flick to head-height 5 min\n"
+            "3) Strafe-shoot discipline 5 min\n"
+        )
+
+    return head + (
+        "\nController baseline:\n"
+        "• Deadzone (L/R): as low as possible without drift\n"
+        "• Aim response curve: linear-ish for consistency\n"
+        "• ADS sens: slightly lower than hip for beam\n"
+        "• Acceleration: OFF/low (avoid over-aim)\n"
+        "Drill (10–15 min):\n"
+        "1) Recoil control 3 min\n"
+        "2) Strafe tracking 5 min\n"
+        "3) Peek-shoot timing 5 min\n"
+    )
+
+
+def bf6_controller_tuning_text(profile: Dict[str, Any]) -> str:
+    return (
+        "🎮 BF6 Controller Tuning (EN)\n"
+        "Core:\n"
+        "• Stick deadzones: lowest stable (no drift)\n"
+        "• Response curve: linear / dynamic (pick ONE, don’t swap daily)\n"
+        "• Aim accel: OFF/low\n"
+        "• ADS sens: reduce 5–15% vs hip\n"
+        "Anti-bad habits:\n"
+        "• No panic-flicks. Track first, then micro-correct.\n"
+        "• Use cover timing: shoot 0.4–0.8s bursts.\n"
+    )
+
+
+def bf6_kbm_tuning_text(profile: Dict[str, Any]) -> str:
+    return (
+        "⌨️ BF6 KBM Tuning (EN)\n"
+        "Core:\n"
+        "• Keep DPI constant (800 recommended)\n"
+        "• Disable OS mouse accel\n"
+        "• Sens: choose a baseline and lock it 7 days\n"
+        "• ADS multiplier: 0.9–1.0\n"
+        "Anti-bad habits:\n"
+        "• Stop over-flicking: aim with arm, micro with fingers\n"
+        "• Crosshair always at head height\n"
+    )
