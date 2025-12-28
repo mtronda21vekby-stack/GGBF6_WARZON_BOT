@@ -1,8 +1,10 @@
+# app/services/brain/engine.py  (ЗАМЕНИ ЦЕЛИКОМ)
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.services.brain.formatter import render_settings
+from app.content.presets import PRESETS  # если файла нет — скажи, я дам целиком
+from app.services.brain.memory import InMemoryStore
 
 
 @dataclass
@@ -10,92 +12,105 @@ class BrainReply:
     text: str
 
 
-def _style_prefix(diff: str) -> str:
-    diff = (diff or "normal").lower()
-    if diff == "demon":
+def _mode_prefix(mode: str) -> str:
+    if mode == "demon":
         return "😈 DEMON TEAMMATE"
-    if diff == "pro":
+    if mode == "pro":
         return "🔥 PRO TEAMMATE"
     return "🧠 COACH"
 
 
-def _teammate_plan_ru(diff: str, text: str) -> str:
-    diff = (diff or "normal").lower()
+def _pick_focus_ru(msg: str) -> str:
+    m = msg.lower()
+    if any(k in m for k in ["аим", "aim", "метк", "трек", "отдач", "реакц"]):
+        return "AIM"
+    if any(k in m for k in ["мув", "movement", "слайд", "стрейф", "прыж", "уклон"]):
+        return "MOVEMENT"
+    if any(k in m for k in ["пози", "position", "ротац", "угол", "зона", "пуш", "пик"]):
+        return "POSITIONING"
+    return "HYBRID"
 
-    # более “жёсткий” демон, но без токсичности
+
+def _render_settings(game: str, mode: str, device: str) -> str:
+    game = (game or "warzone").lower()
+    mode = (mode or "normal").lower()
+    device = (device or "ps").lower()
+
+    pack = PRESETS.get(game, {}).get(mode, {}).get(device)
+    if not pack:
+        return "⚙️ Настройки: пресет не найден (проверь игру/устройство/режим)."
+
+    title = pack.get("title", "")
+    settings = pack.get("settings", {})
+
+    # ЯЗЫК: BF6 settings EN, остальные RU — это задано содержимым PRESETS
+    lines = [f"⚙️ НАСТРОЙКИ\n{title}"]
+    for group, items in settings.items():
+        lines.append(f"\n{group}:")
+        for k, v in items.items():
+            lines.append(f"- {k}: {v}")
+    return "\n".join(lines)
+
+
+def _teammate_response_ru(game: str, mode: str, device: str, msg: str) -> str:
+    focus = _pick_focus_ru(msg)
+
     tone = {
         "normal": "Спокойно. Сейчас разберём и исправим.",
-        "pro": "Ок. Будем играть дисциплинированно и без бесплатных смертей.",
-        "demon": "Соберись. Мы забираем лобби. Ноль хаоса — только контроль.",
-    }[diff]
+        "pro": "Ок. Дисциплина. Ноль бесплатных смертей.",
+        "demon": "Соберись. Мы забираем лобби. Контроль, тайминг, доминация.",
+    }.get(mode, "Спокойно. Сейчас разберём и исправим.")
 
-    # 1 уточняющий вопрос максимум (как тиммейт)
-    question = "Один вопрос: где именно умер (в здании/открыто/высота) и чем тебя сняли (AR/SMG/sniper)?"
-
-    # универсальный тиммейт-чеклист
     checklist = [
-        "Колл: где враг, сколько их, на какой высоте.",
-        "Правило: сначала укрытие/угол → потом стрельба.",
-        "Следующий шаг: либо ресет (откат+хил), либо добив с преимуществом.",
+        "Колл: где враг, сколько их, высота/угол.",
+        "Правило: укрытие → угол → первый урон → добив.",
+        "Решение: если нет преимущества — ресет и переигровка.",
     ]
 
     drills = [
-        "10 мин: tracking (плавно вести цель)",
-        "10 мин: recoil control (одна пушка, 2 дистанции)",
-        "10 мин: angle-peek (wide/tight + возврат в укрытие)",
+        "10 мин: tracking (вести цель, не дёргать).",
+        "10 мин: recoil (одна пушка, 2 дистанции).",
+        "10 мин: peeks (wide/tight + откат в укрытие).",
     ]
+    if focus == "POSITIONING":
+        drills.append("5 мин: ротации — всегда знай 2 выхода и 1 safe-угол.")
+    if mode == "demon":
+        drills.append("Матч-цель: не пушишь без инфо. Сначала контроль, потом убийство.")
 
-    if diff == "demon":
-        drills.append("Матч: играешь 1 цель — НЕ умирать бесплатно на ротации. Если сомневаешься — не пушишь.")
+    q = "Один вопрос: где умер (внутри/открыто/высота) и чем сняли (AR/SMG/sniper)?"
 
-    out = (
+    return (
         f"{tone}\n\n"
-        f"🧩 Диагноз (по твоему сообщению): я вижу, что тебе не хватает структуры в моменте.\n"
-        f"🎯 Цель: повысить выживаемость + качество энгажментов.\n\n"
-        f"📞 Тиммейт-режим:\n- {checklist[0]}\n- {checklist[1]}\n- {checklist[2]}\n\n"
-        f"🧠 Один вопрос:\n{question}\n\n"
-        f"🔥 Тренировка на сегодня:\n" + "\n".join(f"• {d}" for d in drills) +
-        f"\n\n📝 Ты написал:\n{text}"
+        f"🧩 Фокус: {focus}\n"
+        f"🎮 {game.upper()} | 🕹 {device.upper()} | 🎭 {mode.upper()}\n\n"
+        f"📞 Тиммейт-чеклист:\n- {checklist[0]}\n- {checklist[1]}\n- {checklist[2]}\n\n"
+        f"🧠 Вопрос:\n{q}\n\n"
+        f"🔥 Упражнения:\n" + "\n".join(f"• {d}" for d in drills)
     )
-    return out
 
 
 class BrainEngine:
-    def __init__(self, store, profiles, settings):
+    def __init__(self, store: InMemoryStore, profiles, settings):
         self.store = store
         self.profiles = profiles
         self.settings = settings
 
     async def handle_text(self, user_id: int, text: str) -> BrainReply:
-        p = self.profiles.get(user_id) if self.profiles else None
-
-        game = (getattr(p, "game", None) or "warzone").lower()
-        device = (getattr(p, "device", None) or "ps").lower()   # ps/xbox/pc or kbm/pad
-        diff = (getattr(p, "difficulty", None) or "normal").lower()
-
-        # “PC” можно задавать как kbm
-        if device == "kbm":
-            device = "pc"
-        if device == "pad":
-            device = "ps"
-
-        prefix = _style_prefix(diff)
-        teammate = _teammate_plan_ru(diff, text)
-
-        settings_block = render_settings(game=game, difficulty=diff, device=device)
-
-        # ВАЖНО: настройки будут на EN только если game == bf6,
-        # потому что в PRESETS bf6 settings уже EN, остальные RU.
-        final = f"{prefix}\n\n{teammate}\n\n{settings_block}"
-
-        return BrainReply(text=final)
-
-    def clear_memory(self, user_id: int) -> None:
-        if self.store:
-            self.store.clear(user_id)
-
-    def toggle_ai(self, user_id: int) -> bool:
-        # если позже подключим OpenAI — тут будет переключатель
         p = self.profiles.get(user_id)
-        p.ai_enabled = not getattr(p, "ai_enabled", True)
-        return p.ai_enabled
+        game = p.game
+        device = p.device
+        mode = p.mode
+
+        if p.memory_enabled:
+            self.store.add(user_id, "user", text)
+
+        prefix = _mode_prefix(mode)
+        teammate = _teammate_response_ru(game, mode, device, text)
+        settings_block = _render_settings(game, mode, device)
+
+        out = f"{prefix}\n\n{teammate}\n\n{settings_block}"
+
+        if p.memory_enabled:
+            self.store.add(user_id, "assistant", out)
+
+        return BrainReply(text=out)
