@@ -2,7 +2,6 @@ from __future__ import annotations
 
 
 def quickbar() -> dict:
-    # ReplyKeyboardMarkup JSON
     return {
         "keyboard": [
             [{"text": "📋 Меню"}, {"text": "⚙️ Настройки"}],
