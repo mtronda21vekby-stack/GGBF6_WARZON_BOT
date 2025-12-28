@@ -1,12 +1,17 @@
 # app/core/router.py
 from __future__ import annotations
 
+import os
+
 from app.adapters.telegram.client import TelegramClient
 from app.adapters.telegram.types import Update
 from app.services.brain.engine import BrainEngine
 from app.services.profiles.service import ProfileService
 from app.ui.quickbar import kb_main, kb_settings
 from app.config import Settings
+
+
+ASSET_KALASH = os.path.join("assets", "kalash_3d.mp4")  # <-- твой файл тут
 
 
 class Router:
@@ -23,6 +28,20 @@ class Router:
         chat_id = upd.message.chat.id
         user_id = upd.message.from_user.id if upd.message.from_user else chat_id
         text = (upd.message.text or "").strip()
+
+        # /start -> сначала 3D-баннер, потом привет + кнопки
+        if text.lower() == "/start":
+            # 1) отправляем анимацию (без текста)
+            try:
+                await self.tg.send_animation_file(chat_id, ASSET_KALASH)
+            except Exception:
+                # fallback на video
+                await self.tg.send_video_file(chat_id, ASSET_KALASH)
+
+            # 2) приветствие
+            reply = await self.brain.handle_text(user_id, "/start")
+            await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
+            return
 
         # Кнопки
         if text in ("🎮 Игра",):
