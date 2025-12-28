@@ -1,5 +1,6 @@
 # app/config.py
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
+from functools import lru_cache
 
 
 class Settings(BaseSettings):
@@ -7,7 +8,7 @@ class Settings(BaseSettings):
     BOT_TOKEN: str
     WEBHOOK_SECRET: str | None = None
 
-    # Memory / brain
+    # Brain / memory
     memory_max_turns: int = 20
 
     # Logs
@@ -18,11 +19,6 @@ class Settings(BaseSettings):
         case_sensitive = False
 
 
-_settings: Settings | None = None
-
-
+@lru_cache
 def get_settings() -> Settings:
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-    return _settings
+    return Settings()
