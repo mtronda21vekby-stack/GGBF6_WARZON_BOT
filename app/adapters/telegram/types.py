@@ -1,50 +1,78 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
-from pydantic import BaseModel
-from typing import Optional, List, Any, Dict
+from dataclasses import dataclass
+from typing import Any
 
-class User(BaseModel):
+
+@dataclass
+class User:
     id: int
-    is_bot: Optional[bool] = None
-    first_name: Optional[str] = None
-    username: Optional[str] = None
+    username: str | None = None
+    first_name: str | None = None
 
-class Chat(BaseModel):
+
+@dataclass
+class Chat:
     id: int
-    type: Optional[str] = None
 
-class Message(BaseModel):
+
+@dataclass
+class Message:
     message_id: int
-    date: Optional[int] = None
     chat: Chat
-    from_user: Optional[User] = None
-    text: Optional[str] = None
+    from_user: User
+    text: str | None = None
 
-class CallbackQuery(BaseModel):
+
+@dataclass
+class CallbackQuery:
     id: str
     from_user: User
-    data: Optional[str] = None
-    message: Optional[Message] = None
+    data: str | None = None
+    message: Message | None = None
 
-class Update(BaseModel):
+
+@dataclass
+class Update:
     update_id: int
-    message: Optional[Message] = None
-    callback_query: Optional[CallbackQuery] = None
+    message: Message | None = None
+    callback_query: CallbackQuery | None = None
 
     @staticmethod
-    def parse(raw: Dict[str, Any]) -> "Update":
-        # Telegram fields "from" conflict with python keyword
-        def fix_message(msg: Dict[str, Any]) -> Dict[str, Any]:
-            if "from" in msg and "from_user" not in msg:
-                msg["from_user"] = msg.pop("from")
-            return msg
+    def parse(raw: dict[str, Any]) -> "Update":
+        def parse_user(u: dict[str, Any]) -> User:
+            return User(
+                id=int(u["id"]),
+                username=u.get("username"),
+                first_name=u.get("first_name"),
+            )
 
-        if "message" in raw and isinstance(raw["message"], dict):
-            raw["message"] = fix_message(raw["message"])
-        if "callback_query" in raw and isinstance(raw["callback_query"], dict):
-            cq = raw["callback_query"]
-            if "from" in cq and "from_user" not in cq:
-                cq["from_user"] = cq.pop("from")
-            if "message" in cq and isinstance(cq["message"], dict):
-                cq["message"] = fix_message(cq["message"])
-        return Update.model_validate(raw)
+        def parse_chat(c: dict[str, Any]) -> Chat:
+            return Chat(id=int(c["id"]))
+
+        def parse_message(m: dict[str, Any]) -> Message:
+            return Message(
+                message_id=int(m["message_id"]),
+                chat=parse_chat(m["chat"]),
+                from_user=parse_user(m["from"]),
+                text=m.get("text"),
+            )
+
+        msg = raw.get("message")
+        cq = raw.get("callback_query")
+
+        message_obj = parse_message(msg) if isinstance(msg, dict) else None
+
+        callback_obj = None
+        if isinstance(cq, dict):
+            callback_obj = CallbackQuery(
+                id=str(cq["id"]),
+                from_user=parse_user(cq["from"]),
+                data=cq.get("data"),
+                message=parse_message(cq["message"]) if isinstance(cq.get("message"), dict) else None,
+            )
+
+        return Update(
+            update_id=int(raw["update_id"]),
+            message=message_obj,
+            callback_query=callback_obj,
+        )
