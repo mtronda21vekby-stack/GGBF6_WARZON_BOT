@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 
+# =========================
+# MAIN PREMIUM QUICKBAR
+# =========================
 def kb_main() -> dict:
     return {
         "keyboard": [
@@ -17,7 +20,9 @@ def kb_main() -> dict:
     }
 
 
-# -------- ИГРЫ --------
+# =========================
+# GAMES
+# =========================
 def kb_games() -> dict:
     return {
         "keyboard": [
@@ -27,10 +32,13 @@ def kb_games() -> dict:
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
-# -------- ПЛАТФОРМА --------
+# =========================
+# PLATFORM
+# =========================
 def kb_platform() -> dict:
     return {
         "keyboard": [
@@ -39,10 +47,13 @@ def kb_platform() -> dict:
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
-# -------- INPUT --------
+# =========================
+# INPUT
+# =========================
 def kb_input() -> dict:
     return {
         "keyboard": [
@@ -51,10 +62,13 @@ def kb_input() -> dict:
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
-# -------- РЕЖИМ МЫШЛЕНИЯ --------
+# =========================
+# DIFFICULTY / "BRAIN MODE"
+# =========================
 def kb_difficulty() -> dict:
     return {
         "keyboard": [
@@ -63,19 +77,41 @@ def kb_difficulty() -> dict:
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
-# -------- НАСТРОЙКИ (КОНТЕЙНЕР) --------
+# =========================
+# ROLE (BF-STYLE CLASSES)
+# =========================
+def kb_role() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🗡 Assault"}, {"text": "🎯 Recon"}],
+            [{"text": "🛠 Engineer"}, {"text": "🩺 Medic"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+    }
+
+
+# =========================
+# SETTINGS (CONTAINER MENU)
+# =========================
 def kb_settings() -> dict:
+    # Это тоже premium reply-клава снизу (не inline), как ты и хотел
     return {
         "keyboard": [
             [{"text": "🎮 Выбрать игру"}],
             [{"text": "🖥 Платформа"}, {"text": "⌨️ Input"}],
             [{"text": "😈 Режим мышления"}],
-            [{"text": "🧩 Настройки игры"}],  # <-- ШАГ 2
+            [{"text": "🧩 Настройки игры"}],  # позже сюда подключим “миры”
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Меняй настройки — я сохраню и применю…",
     }
