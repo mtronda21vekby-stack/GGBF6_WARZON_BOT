@@ -1,115 +1,106 @@
+# app/core/router.py
 from __future__ import annotations
 
-from app.ui.quickbar import kb_main, kb_settings, kb_game, kb_mode, kb_ai
-from app.ui import texts
+from app.adapters.telegram.client import TelegramClient
+from app.adapters.telegram.types import Update
+from app.services.brain.engine import BrainEngine
+from app.services.profiles.service import ProfileService
+from app.ui.quickbar import kb_main, kb_settings
+from app.config import Settings
 
 
 class Router:
-    def __init__(self, tg, brain, settings, profiles):
+    def __init__(self, tg: TelegramClient, brain: BrainEngine, profiles: ProfileService, settings: Settings):
         self.tg = tg
         self.brain = brain
-        self.settings = settings
         self.profiles = profiles
+        self.settings = settings
 
-    async def handle_update(self, upd):
-        if not upd.message or not (upd.message.text or "").strip():
+    async def handle_update(self, upd: Update) -> None:
+        if not upd.message:
             return
 
         chat_id = upd.message.chat.id
-        user_id = upd.message.from_user.id
+        user_id = upd.message.from_user.id if upd.message.from_user else chat_id
         text = (upd.message.text or "").strip()
 
-        p = self.profiles.get(user_id)
-
-        # START / MENU
-        if text in ("/start", "📋 Меню", "Меню"):
-            await self.tg.send_message(chat_id, texts.WELCOME, reply_markup=kb_main())
+        # Кнопки
+        if text in ("🎮 Игра",):
+            p = self.profiles.get(user_id)
+            await self.tg.send_message(chat_id, "🎮 Игра — выбери в настройках.", reply_markup=kb_settings(p.get("game", "AUTO")))
             return
 
-        # NAV
-        if text == "⚙️ Настройки":
-            await self.tg.send_message(chat_id, texts.SETTINGS, reply_markup=kb_settings())
+        if text in ("⚙️ Настройки",):
+            p = self.profiles.get(user_id)
+            await self.tg.send_message(chat_id, "⚙️ Настройки — выбери:", reply_markup=kb_settings(p.get("game", "AUTO")))
             return
 
-        if text == "🎮 Игра":
-            await self.tg.send_message(chat_id, texts.GAME_PANEL, reply_markup=kb_game())
+        if text.startswith("🎮 Игра:"):
+            g = text.split(":", 1)[1].strip()
+            g_norm = {"Warzone": "WARZONE", "BF6": "BF6", "BO7": "BO7"}.get(g, g.upper())
+            self.profiles.update(user_id, game=g_norm)
+            await self.tg.send_message(chat_id, f"✅ Игра: {g}", reply_markup=kb_main())
             return
 
-        if text == "🎭 Режим":
-            await self.tg.send_message(chat_id, texts.MODE_PANEL, reply_markup=kb_mode())
+        if ("Input:" in text) or ("Ввод:" in text):
+            if "KBM" in text:
+                self.profiles.update(user_id, input="KBM")
+                await self.tg.send_message(chat_id, "✅ Input: KBM", reply_markup=kb_main())
+                return
+            if "Controller" in text:
+                self.profiles.update(user_id, input="CONTROLLER")
+                await self.tg.send_message(chat_id, "✅ Input: Controller", reply_markup=kb_main())
+                return
+
+        if "Сложность:" in text:
+            if "Normal" in text:
+                self.profiles.update(user_id, difficulty="NORMAL")
+            elif "Pro" in text:
+                self.profiles.update(user_id, difficulty="PRO")
+            elif "Demon" in text:
+                self.profiles.update(user_id, difficulty="DEMON")
+            await self.tg.send_message(chat_id, f"✅ {text}", reply_markup=kb_main())
             return
 
-        if text == "🧠 ИИ":
-            await self.tg.send_message(chat_id, texts.AI_PANEL, reply_markup=kb_ai())
+        if text in ("🧠 ИИ",):
+            p = self.profiles.get(user_id)
+            new_val = not bool(p.get("ai", True))
+            self.profiles.update(user_id, ai=new_val)
+            await self.tg.send_message(chat_id, f"🤖 ИИ: {'ON' if new_val else 'OFF'}", reply_markup=kb_main())
             return
 
-        if text == "🆘 Помощь":
-            await self.tg.send_message(chat_id, texts.HELP, reply_markup=kb_main())
-            return
-
-        if text == "🧟 Zombies":
-            await self.tg.send_message(chat_id, texts.ZOMBIES_SOON, reply_markup=kb_main())
-            return
-
-        if text == "🎬 VOD":
-            await self.tg.send_message(chat_id, texts.VOD_SOON, reply_markup=kb_main())
-            return
-
-        # SETTINGS: game
-        if text in ("🎮 Warzone", "🎮 BF6", "🎮 BO7"):
-            p.game = {"🎮 Warzone": "warzone", "🎮 BF6": "bf6", "🎮 BO7": "bo7"}[text]
-            await self.tg.send_message(chat_id, f"✅ Игра: {p.game.upper()}", reply_markup=kb_settings())
-            return
-
-        # SETTINGS: device
-        if text in ("💻 ПК (KBM)", "🎮 PlayStation", "🎮 Xbox"):
-            p.device = {"💻 ПК (KBM)": "pc", "🎮 PlayStation": "ps", "🎮 Xbox": "xbox"}[text]
-            await self.tg.send_message(chat_id, f"✅ Устройство: {p.device.upper()}", reply_markup=kb_settings())
-            return
-
-        # SETTINGS: mode
-        if text in ("🙂 Обычный", "🔥 Профи", "😈 Демон"):
-            p.mode = {"🙂 Обычный": "normal", "🔥 Профи": "pro", "😈 Демон": "demon"}[text]
-            await self.tg.send_message(chat_id, f"✅ Режим: {p.mode.upper()}", reply_markup=kb_settings())
-            return
-
-        # AI toggles
-        if text == "🧠 ИИ: ВКЛ":
-            p.ai_enabled = True
-            await self.tg.send_message(chat_id, "✅ ИИ включён", reply_markup=kb_main())
-            return
-
-        if text == "🧠 ИИ: ВЫКЛ":
-            p.ai_enabled = False
-            await self.tg.send_message(chat_id, "✅ ИИ выключен (пока будет коуч-режим без API)", reply_markup=kb_main())
-            return
-
-        # status/profile
-        if text in ("📡 Статус", "👤 Профиль"):
+        if text in ("📌 Профиль",):
+            p = self.profiles.get(user_id)
             await self.tg.send_message(
                 chat_id,
-                f"📌 Профиль:\n🎮 {p.game.upper()}\n🕹 {p.device.upper()}\n🎭 {p.mode.upper()}\n🧠 ИИ: {'ON' if p.ai_enabled else 'OFF'}\n🧠 Память: {'ON' if p.memory_enabled else 'OFF'}",
+                f"📌 Профиль\nИгра: {p.get('game')}\nInput: {p.get('input')}\nСложность: {p.get('difficulty')}\nИИ: {'ON' if p.get('ai') else 'OFF'}",
                 reply_markup=kb_main(),
             )
             return
 
-        # memory
-        if text == "🧠 Очистить память":
+        if text in ("📡 Статус", "/ai_status"):
+            await self.tg.send_message(
+                chat_id,
+                "✅ Я на связи. Напиши: какая игра (Warzone/BF6/BO7), твой input (KBM/Controller) и что болит (аим/мувмент/позиционка).",
+                reply_markup=kb_main(),
+            )
+            return
+
+        if text in ("🧹 Очистить память",):
             self.brain.store.clear(user_id)
-            await self.tg.send_message(chat_id, "🧠 Память очищена ✅", reply_markup=kb_main())
+            await self.tg.send_message(chat_id, "🧹 Память очищена.", reply_markup=kb_main())
             return
 
-        # reset
-        if text == "🧨 Сброс":
-            self.profiles.clear(user_id)
-            await self.tg.send_message(chat_id, "🧨 Сброс выполнен ✅", reply_markup=kb_main())
+        if text in ("🧨 Сброс",):
+            self.brain.store.clear(user_id)
+            self.profiles.update(user_id, game="AUTO", input="AUTO", difficulty="NORMAL", ai=True)
+            await self.tg.send_message(chat_id, "🧨 Сброс выполнен.", reply_markup=kb_main())
             return
 
-        # TRAIN placeholder
-        if text == "🎯 Тренировка":
-            await self.tg.send_message(chat_id, "🎯 Напиши: что не получается (aim/movement/позиционка) и сколько времени есть (15/30/60).", reply_markup=kb_main())
+        if text in ("⬅️ Назад",):
+            await self.tg.send_message(chat_id, "⬅️ Ок. Главное меню.", reply_markup=kb_main())
             return
 
-        # MAIN BRAIN
+        # Обычный текст -> brain
         reply = await self.brain.handle_text(user_id, text)
         await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
