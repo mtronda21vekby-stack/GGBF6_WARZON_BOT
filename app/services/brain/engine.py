@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from app.services.brain.worlds import WarzoneWorld, BF6World, BO7World
-
+from app.services.brain.memory import PlayerMemory
 
 WORLD_MAP = {
     "warzone": WarzoneWorld(),
@@ -16,22 +16,22 @@ class BrainEngine:
         self.store = store
         self.profiles = profiles
         self.settings = settings
+        self.memory = PlayerMemory()
 
     async def handle_text(self, user_id: int, text: str):
         profile = self.profiles.get(user_id)
         game = profile.game or "warzone"
+        style = profile.mode or "normal"
 
         world = WORLD_MAP.get(game)
-
         if not world:
             return self._reply("Мир не найден.")
 
-        # --- INTRO ---
-        if text.lower() in ("анализ", "ai", "🧠 ии"):
-            return self._reply(world.intro())
+        # простая фиксация ошибки
+        if "умер" in text.lower() or "проиграл" in text.lower():
+            self.memory.add_error(user_id, "Плохая позиция")
 
-        # --- WORLD ANALYSIS ---
-        answer = world.analyze(text, profile)
+        answer = world.analyze(text, profile, style, self.memory)
         return self._reply(answer)
 
     def _reply(self, text: str):
