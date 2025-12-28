@@ -1,1 +1,31 @@
-
+{
+  "title": "Warzone BR • Xbox • Demon",
+  "last_updated": "2025-12-11",
+  "source": "Dexerto (Sep 5 2025) + Esports Insider (Dec 11 2025)",
+  "settings": {
+    "aiming": {
+      "aim_assist": "On",
+      "aim_assist_type": "Standard / Default",
+      "response_curve": "Dynamic",
+      "ads_transition": "Instant",
+      "custom_ads_per_zoom": true,
+      "ads_low_zoom_multiplier": 0.75,
+      "ads_high_zoom_multiplier": 0.90
+    },
+    "controller": {
+      "vibration": "Off",
+      "deadzone_left_min": 0.00,
+      "deadzone_right_min": 0.00,
+      "deadzone_left_max": 0.99,
+      "deadzone_right_max": 0.99
+    },
+    "view": {
+      "fov": 120,
+      "ads_fov": "Affected",
+      "weapon_fov": "Wide"
+    },
+    "notes": [
+      "Demon-тир требует стабильного стика без дрейфа. Если есть drift — подними min deadzone до 0.02."
+    ]
+  }
+}
