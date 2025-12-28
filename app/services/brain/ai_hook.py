@@ -20,59 +20,59 @@ class AIHook:
         platform = (profile.get("platform") or "PC").strip()
         input_ = (profile.get("input") or "Controller").strip()
         diff = (profile.get("difficulty") or "Normal").strip()
-        bf6_class = (profile.get("bf6_class") or "").strip()
+        bf6_class = (profile.get("bf6_class") or "Assault").strip()
 
-        is_bf6 = game.upper() == "BF6"
-        lang_rule = (
-            "BF6: settings terms in English. You may explain briefly in Russian."
-            if is_bf6
-            else "Warzone/BO7: отвечай на русском (RU first)."
-        )
-
-        if diff.lower().startswith("demon"):
-            style = "DEMON teammate-coach: aggressive, ultra-specific, no fluff, not toxic."
-        elif diff.lower().startswith("pro"):
-            style = "PRO teammate-coach: structured, precise, micro+macro."
+        # Language rule
+        if game.upper() == "BF6":
+            lang = "Use EN for BF6 settings terms. You may explain briefly in RU."
         else:
-            style = "NORMAL teammate-coach: clear, actionable."
+            lang = "Answer in Russian (RU)."
+
+        # Style
+        if diff.lower().startswith("demon"):
+            style = "DEMON teammate coach: ultra-specific, aggressive efficiency, NOT toxic."
+        elif diff.lower().startswith("pro"):
+            style = "PRO teammate coach: structured micro+macro."
+        else:
+            style = "NORMAL teammate coach: clear and actionable."
 
         system = (
             "You are an elite FPS coach & teammate.\n"
-            f"{lang_rule}\n{style}\n"
-            "Answer format ALWAYS:\n"
-            "1) NOW (next fight actions)\n"
-            "2) NEXT (20–30 min training)\n"
-            "3) SETTINGS (only if relevant; respect game/platform/input)\n"
-            "4) One clarifying question (max 1) only if needed.\n"
-            "No generic templates. Must be tailored to user input.\n"
+            f"{lang}\n{style}\n"
+            "Always output:\n"
+            "NOW: (next fight actions)\n"
+            "NEXT: (20-30 min training)\n"
+            "SETTINGS: (only if relevant)\n"
+            "ONE question max if needed.\n"
+            "No generic templates.\n"
         )
 
-        profile_line = f"PROFILE: game={game}; platform={platform}; input={input_}; difficulty={diff}; bf6_class={bf6_class}"
-        last = history[-14:] if history else []
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "system", "content": f"PROFILE game={game} platform={platform} input={input_} bf6_class={bf6_class} difficulty={diff}"},
+        ]
 
-        messages = [{"role": "system", "content": system}, {"role": "system", "content": profile_line}]
-        for t in last:
-            role = t.get("role")
-            if role not in ("user", "assistant", "system"):
-                role = "user"
+        for t in (history or [])[-12:]:
+            role = t.get("role") if t.get("role") in ("user", "assistant", "system") else "user"
             messages.append({"role": role, "content": str(t.get("content", ""))})
+
         messages.append({"role": "user", "content": user_text})
 
         client = self._client()
 
-        # 1) Try Responses API
+        # Responses API (new)
         try:
-            resp = client.responses.create(model=self.model, input=messages)
-            out = getattr(resp, "output_text", None)
+            r = client.responses.create(model=self.model, input=messages)
+            out = getattr(r, "output_text", None)
             if out:
                 return out.strip()
         except Exception:
             pass
 
-        # 2) Fallback: Chat Completions
+        # Fallback: chat.completions
         try:
             cc = client.chat.completions.create(model=self.model, messages=messages)
             text = cc.choices[0].message.content or ""
-            return text.strip() or "AI returned empty."
+            return text.strip() or "AI empty."
         except Exception as e:
-            return f"🧠 AI ERROR: {e}\n(Проверь OPENAI_API_KEY в Render ENV.)"
+            return f"🧠 AI ERROR: {e}\nПроверь OPENAI_API_KEY в Render ENV."
