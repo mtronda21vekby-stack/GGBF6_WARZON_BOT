@@ -17,34 +17,10 @@ def kb_main() -> dict:
     }
 
 
-def kb_ai() -> dict:
+def kb_games() -> dict:
     return {
         "keyboard": [
-            [{"text": "😈 Demon-анализ"}, {"text": "🔥 Pro-анализ"}],
-            [{"text": "🧠 Общий разбор"}],
-            [{"text": "⬅️ Назад"}],
-        ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-    }
-
-
-def kb_premium() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "💎 Что даёт Premium"}],
-            [{"text": "⬅️ Назад"}],
-        ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-    }
-
-
-def kb_profile() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "📈 Статистика"}, {"text": "🗓 Сезон"}],
-            [{"text": "♻️ Сброс сезона"}],
+            [{"text": "🔥 Warzone"}, {"text": "🪖 BF6"}, {"text": "💣 BO7"}],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
@@ -72,9 +48,74 @@ def kb_roles(game: str) -> dict:
         ]
 
     rows.append([{"text": "⬅️ Назад"}])
+    return {"keyboard": rows, "resize_keyboard": True, "is_persistent": True}
 
+
+def kb_settings() -> dict:
     return {
-        "keyboard": rows,
+        "keyboard": [
+            [{"text": "🎮 Игра: Warzone"}, {"text": "🎮 Игра: BF6"}, {"text": "🎮 Игра: BO7"}],
+            [{"text": "🖥 Input: KBM"}, {"text": "🎮 Input: Controller"}],
+            [{"text": "🧠 Сложность: Normal"}, {"text": "🔥 Сложность: Pro"}, {"text": "😈 Сложность: Demon"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+def kb_training() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "⏱ 15 мин"}, {"text": "⏱ 30 мин"}, {"text": "⏱ 60 мин"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+def kb_ai() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "😈 Demon-анализ"}, {"text": "🔥 Pro-анализ"}],
+            [{"text": "🧠 Общий разбор"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+def kb_zombies() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🗺 Ashes"}, {"text": "🗺 Astra"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+def kb_premium() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "💎 Что даёт Premium"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+def kb_profile() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "📈 Статистика"}, {"text": "🗓 Сезон"}],
+            [{"text": "♻️ Сброс сезона"}],
+            [{"text": "⬅️ Назад"}],
+        ],
         "resize_keyboard": True,
         "is_persistent": True,
     }
