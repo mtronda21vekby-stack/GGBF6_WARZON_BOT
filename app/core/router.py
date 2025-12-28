@@ -1,4 +1,5 @@
 # app/core/router.py
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import inspect
@@ -16,12 +17,39 @@ from app.ui.quickbar import (
     kb_game_settings_menu,
 )
 
-from app.worlds.bf6.presets import (
-    bf6_class_text,
-    bf6_aim_sens_text,
-    bf6_controller_tuning_text,
-    bf6_kbm_tuning_text,
-)
+# ---------------------------------------------------------------------------
+# SAFE IMPORT: BF6 PRESETS
+# Чтобы Render НИКОГДА не падал, если модуля нет или путь другой.
+# ---------------------------------------------------------------------------
+bf6_class_text = None
+bf6_aim_sens_text = None
+bf6_controller_tuning_text = None
+bf6_kbm_tuning_text = None
+_PRESETS_IMPORT_ERROR = None
+
+for _path in (
+    "app.worlds.bf6.presets",   # ожидаемый путь
+    "app.world.bf6.presets",    # запасной
+    "app.bf6.presets",          # запасной
+):
+    try:
+        _m = __import__(
+            _path,
+            fromlist=[
+                "bf6_class_text",
+                "bf6_aim_sens_text",
+                "bf6_controller_tuning_text",
+                "bf6_kbm_tuning_text",
+            ],
+        )
+        bf6_class_text = getattr(_m, "bf6_class_text", None)
+        bf6_aim_sens_text = getattr(_m, "bf6_aim_sens_text", None)
+        bf6_controller_tuning_text = getattr(_m, "bf6_controller_tuning_text", None)
+        bf6_kbm_tuning_text = getattr(_m, "bf6_kbm_tuning_text", None)
+        _PRESETS_IMPORT_ERROR = None
+        break
+    except Exception as e:
+        _PRESETS_IMPORT_ERROR = e
 
 
 def _safe_get(d: dict, path: list, default=None):
@@ -65,8 +93,8 @@ class Router:
             await self._on_status(chat_id)
             return
 
-        # ---------- AI start (IMPORTANT: no template loop) ----------
-        # НЕ подменяем текст на “Привет...” — это ломает диалог и делает “цикл”
+        # ---------- AI start (не делаем “шаблонный цикл”) ----------
+        # Кнопка AI НЕ должна подменять текст на “Привет...” и уводить в одно и то же.
         if text in ("/ai_start", "ai_start", "🧠 ИИ", "ИИ"):
             await self._send_main(
                 chat_id,
@@ -163,22 +191,53 @@ class Router:
             await self._send(chat_id, "🪖 Pick BF6 class:", kb_bf6_classes())
             return
 
+        # BF6 classes (именно как ты хочешь)
         if text in ("🟥 Assault", "🟦 Recon", "🟨 Engineer", "🟩 Medic"):
             cls = text.split(" ", 1)[-1].strip()
             self._set_profile_field(chat_id, "bf6_class", cls)
-            await self._send_main(chat_id, bf6_class_text(self._get_profile(chat_id)))
+
+            if bf6_class_text:
+                await self._send_main(chat_id, bf6_class_text(self._get_profile(chat_id)))
+            else:
+                await self._send_main(
+                    chat_id,
+                    "⚠️ BF6 presets не найдены (поэтому текст классов не подгрузился).\n"
+                    "Бот НЕ сломан — просто нет файла/пути.\n\n"
+                    f"Ошибка: {_PRESETS_IMPORT_ERROR}",
+                )
             return
 
         if text in ("🎯 BF6: Aim/Sens", "🎯 BF6 Aim/Sens"):
-            await self._send_main(chat_id, bf6_aim_sens_text(self._get_profile(chat_id)))
+            if bf6_aim_sens_text:
+                await self._send_main(chat_id, bf6_aim_sens_text(self._get_profile(chat_id)))
+            else:
+                await self._send_main(
+                    chat_id,
+                    "⚠️ BF6 Aim/Sens недоступно: presets не подгрузились.\n"
+                    f"Ошибка: {_PRESETS_IMPORT_ERROR}",
+                )
             return
 
         if text in ("🎮 BF6: Controller Tuning", "🎮 BF6 Controller Tuning"):
-            await self._send_main(chat_id, bf6_controller_tuning_text(self._get_profile(chat_id)))
+            if bf6_controller_tuning_text:
+                await self._send_main(chat_id, bf6_controller_tuning_text(self._get_profile(chat_id)))
+            else:
+                await self._send_main(
+                    chat_id,
+                    "⚠️ BF6 Controller Tuning недоступно: presets не подгрузились.\n"
+                    f"Ошибка: {_PRESETS_IMPORT_ERROR}",
+                )
             return
 
         if text in ("⌨️ BF6: KBM Tuning", "⌨️ BF6 KBM Tuning"):
-            await self._send_main(chat_id, bf6_kbm_tuning_text(self._get_profile(chat_id)))
+            if bf6_kbm_tuning_text:
+                await self._send_main(chat_id, bf6_kbm_tuning_text(self._get_profile(chat_id)))
+            else:
+                await self._send_main(
+                    chat_id,
+                    "⚠️ BF6 KBM Tuning недоступно: presets не подгрузились.\n"
+                    f"Ошибка: {_PRESETS_IMPORT_ERROR}",
+                )
             return
 
         # ---------- default -> AI chat ----------
@@ -277,11 +336,15 @@ class Router:
         ai_state = "ON" if (ai_enabled and ai_key) else "OFF"
         why = "OK" if ai_state == "ON" else ("OPENAI_API_KEY missing" if not ai_key else "AI_ENABLED=0")
 
+        presets_state = "OK" if (bf6_class_text and bf6_aim_sens_text) else "MISSING"
+        presets_why = "OK" if presets_state == "OK" else str(_PRESETS_IMPORT_ERROR)
+
         await self._send_main(
             chat_id,
             f"📊 Status: OK\n"
             f"🧠 Memory: {mem or 'on'}\n"
-            f"🤖 AI: {ai_state} | model={model} | reason={why}\n",
+            f"🤖 AI: {ai_state} | model={model} | reason={why}\n"
+            f"🪖 BF6 Presets: {presets_state} | reason={presets_why}\n",
         )
 
     async def _on_clear_memory(self, chat_id: int) -> None:
@@ -331,7 +394,6 @@ class Router:
                     reply = await fn(text=text, profile=prof, history=history)
                 else:
                     out = fn(text=text, profile=prof, history=history)
-                    # если вдруг вернули coroutine объект
                     if inspect.isawaitable(out):
                         reply = await out
                     else:
