@@ -1,4 +1,3 @@
-# app/ui/texts.py  (НОВЫЙ ФАЙЛ)
 from __future__ import annotations
 
 
