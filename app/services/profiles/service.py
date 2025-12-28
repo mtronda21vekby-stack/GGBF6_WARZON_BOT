@@ -1,30 +1,29 @@
+# app/services/profiles/service.py
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any
+
+from app.services.brain.memory import InMemoryStore
+
+
+DEFAULT_PROFILE = {
+    "game": "AUTO",          # WARZONE / BF6 / BO7 / AUTO
+    "input": "AUTO",         # KBM / CONTROLLER / AUTO
+    "difficulty": "NORMAL",  # NORMAL / PRO / DEMON
+    "ai": True,              # ON/OFF
+}
 
 
 @dataclass
-class Profile:
-    user_id: int
-
-    game: str = "warzone"          # warzone / bf6 / bo7
-    device: str = "ps"             # pc / ps / xbox
-    mode: str = "normal"           # normal / pro / demon
-
-    ai_enabled: bool = True
-    memory_enabled: bool = True
-
-
 class ProfileService:
-    def __init__(self, store: Any | None = None):
-        self.store = store
-        self._profiles: dict[int, Profile] = {}
+    store: InMemoryStore
 
-    def get(self, user_id: int) -> Profile:
-        if user_id not in self._profiles:
-            self._profiles[user_id] = Profile(user_id=user_id)
-        return self._profiles[user_id]
+    def get(self, user_id: int) -> dict:
+        p = DEFAULT_PROFILE | self.store.get_profile(user_id)
+        return p
 
-    def clear(self, user_id: int) -> None:
-        if user_id in self._profiles:
-            del self._profiles[user_id]
+    def update(self, user_id: int, **patch) -> dict:
+        p = self.get(user_id)
+        p.update({k: v for k, v in patch.items() if v is not None})
+        self.store.set_profile(user_id, p)
+        return p
