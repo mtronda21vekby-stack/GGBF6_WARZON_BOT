@@ -1,4 +1,4 @@
-from app.ui.quickbar import kb_main, kb_training
+from app.ui.quickbar import kb_main, kb_training, kb_zombies
 from app.ui import texts
 
 
@@ -17,12 +17,35 @@ class Router:
         user_id = upd.message.from_user.id
         text = upd.message.text.strip()
 
-        p = self.profiles.get(user_id)
-
         if text in ("/start", "Меню"):
             await self.tg.send_message(chat_id, texts.WELCOME, reply_markup=kb_main())
             return
 
+        # ---------- ZOMBIES ----------
+        if text == "🧟 Zombies":
+            await self.tg.send_message(
+                chat_id,
+                "Выбери уровень Zombies:",
+                reply_markup=kb_zombies(),
+            )
+            return
+
+        if text == "🧟 Новичок":
+            reply = await self.brain.handle_text(user_id, "ZOMBIE_BEGINNER")
+            await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
+            return
+
+        if text == "🔥 Про":
+            reply = await self.brain.handle_text(user_id, "ZOMBIE_PRO")
+            await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
+            return
+
+        if text == "😈 Demon":
+            reply = await self.brain.handle_text(user_id, "ZOMBIE_DEMON")
+            await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
+            return
+
+        # ---------- TRAINING ----------
         if text == "🎯 Тренировка":
             await self.tg.send_message(
                 chat_id,
@@ -31,24 +54,10 @@ class Router:
             )
             return
 
-        if text == "⏱ 15 мин":
-            reply = await self.brain.handle_text(user_id, "TRAIN_15")
-            await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
-            return
-
-        if text == "⏱ 30 мин":
-            reply = await self.brain.handle_text(user_id, "TRAIN_30")
-            await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
-            return
-
-        if text == "⏱ 60 мин":
-            reply = await self.brain.handle_text(user_id, "TRAIN_60")
-            await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
-            return
-
         if text == "⬅️ Назад":
             await self.tg.send_message(chat_id, "Главное меню", reply_markup=kb_main())
             return
 
+        # ---------- DEFAULT ----------
         reply = await self.brain.handle_text(user_id, text)
         await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
