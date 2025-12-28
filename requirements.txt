@@ -1,6 +1,5 @@
-fastapi
-uvicorn
-python-telegram-bot==20.7
-pydantic>=2.5
-pydantic-settings>=2.1
-httpx
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27
+pydantic>=2.6
+pydantic-settings>=2.2
