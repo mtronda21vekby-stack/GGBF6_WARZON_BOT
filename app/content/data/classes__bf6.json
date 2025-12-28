@@ -1,0 +1,11 @@
+{
+  "title": "Battlefield 6 Classes",
+  "last_updated": "2025-12-19",
+  "source": "GamesRadar (Dec 19 2025) + PC Gamer + Corsair",
+  "classes": [
+    {"name": "Assault", "role": "Frontline агрессия", "focus": ["давление", "мобильность", "взрывчатка/пуш"]},
+    {"name": "Engineer", "role": "Анти-техника/ремонт", "focus": ["анти-vehicle", "мины/лаунчеры", "ремонт союзной техники"]},
+    {"name": "Support", "role": "Хил/ресаплай/рес", "focus": ["revive", "ammo", "поддержка линии"]},
+    {"name": "Recon", "role": "Разведка/спот/снайп", "focus": ["spotting", "дроны/приманки", "контроль инфы"]}
+  ]
+}
