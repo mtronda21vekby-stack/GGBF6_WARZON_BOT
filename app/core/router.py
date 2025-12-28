@@ -1,6 +1,5 @@
-from app.ui.quickbar import kb_main, kb_training, kb_zombies
+from app.ui.quickbar import kb_main, kb_ai, kb_premium
 from app.ui import texts
-from zombies.coach import parse_player_input, zombie_coach_reply
 
 
 class Router:
@@ -18,53 +17,77 @@ class Router:
         user_id = upd.message.from_user.id
         text = upd.message.text.strip()
 
-        # -------- SMART ZOMBIE COACH --------
-        parsed = parse_player_input(text)
-        if parsed.get("round") or parsed.get("death"):
-            reply = zombie_coach_reply(parsed)
-            await self.tg.send_message(chat_id, reply, reply_markup=kb_main())
-            return
+        profile = self.profiles.get(user_id)
 
-        # -------- START --------
+        # ---------- START ----------
         if text in ("/start", "Меню"):
             await self.tg.send_message(chat_id, texts.WELCOME, reply_markup=kb_main())
             return
 
-        # -------- ZOMBIES MENU --------
-        if text == "🧟 Zombies":
-            await self.tg.send_message(chat_id, "Выбери режим Zombies:", reply_markup=kb_zombies())
+        # ---------- AI ----------
+        if text == "🧠 ИИ":
+            await self.tg.send_message(
+                chat_id,
+                "Выбери стиль анализа:",
+                reply_markup=kb_ai(),
+            )
             return
 
-        if text == "🧟 Новичок":
-            r = await self.brain.handle_text(user_id, "ZOMBIE_BEGINNER")
-            await self.tg.send_message(chat_id, r.text, reply_markup=kb_main())
+        if text == "😈 Demon-анализ":
+            profile.mode = "demon"
+            await self.tg.send_message(
+                chat_id,
+                "Demon-режим активен. Опиши ситуацию.",
+                reply_markup=kb_main(),
+            )
             return
 
-        if text == "🔥 Про":
-            r = await self.brain.handle_text(user_id, "ZOMBIE_PRO")
-            await self.tg.send_message(chat_id, r.text, reply_markup=kb_main())
+        if text == "🔥 Pro-анализ":
+            profile.mode = "pro"
+            await self.tg.send_message(
+                chat_id,
+                "Pro-режим активен. Опиши ситуацию.",
+                reply_markup=kb_main(),
+            )
             return
 
-        if text == "😈 Demon":
-            r = await self.brain.handle_text(user_id, "ZOMBIE_DEMON")
-            await self.tg.send_message(chat_id, r.text, reply_markup=kb_main())
+        if text == "🧠 Общий разбор":
+            profile.mode = "normal"
+            await self.tg.send_message(
+                chat_id,
+                "Normal-режим. Опиши ситуацию.",
+                reply_markup=kb_main(),
+            )
             return
 
-        # -------- TRAINING --------
-        if text == "🎯 Тренировка":
-            await self.tg.send_message(chat_id, "Выбери длительность:", reply_markup=kb_training())
+        # ---------- PREMIUM ----------
+        if text == "💎 Premium":
+            await self.tg.send_message(
+                chat_id,
+                "Premium-режим (архитектура готова):",
+                reply_markup=kb_premium(),
+            )
             return
 
-        if text in ("⏱ 15 мин", "⏱ 30 мин", "⏱ 60 мин"):
-            key = text.replace("⏱ ", "").replace(" мин", "")
-            r = await self.brain.handle_text(user_id, f"TRAIN_{key}")
-            await self.tg.send_message(chat_id, r.text, reply_markup=kb_main())
+        if text == "💎 Что даёт Premium":
+            await self.tg.send_message(
+                chat_id,
+                (
+                    "💎 PREMIUM:\n\n"
+                    "• Советы топ-1% игроков\n"
+                    "• Более жёсткий Demon-тиммейт\n"
+                    "• Глубокая память ошибок\n"
+                    "• Будущий реальный ИИ\n\n"
+                    "Пока OFF."
+                ),
+                reply_markup=kb_main(),
+            )
             return
 
         if text == "⬅️ Назад":
             await self.tg.send_message(chat_id, "Главное меню", reply_markup=kb_main())
             return
 
-        # -------- DEFAULT --------
-        r = await self.brain.handle_text(user_id, text)
-        await self.tg.send_message(chat_id, r.text, reply_markup=kb_main())
+        # ---------- DEFAULT ----------
+        reply = await self.brain.handle_text(user_id, text)
+        await self.tg.send_message(chat_id, reply.text, reply_markup=kb_main())
