@@ -5,28 +5,65 @@ from __future__ import annotations
 def kb_main() -> dict:
     return {
         "keyboard": [
-            [{"text": "🎮 Игра"}, {"text": "⚙️ Настройки"}, {"text": "📌 Профиль"}],
-            [{"text": "🎯 Тренировка"}, {"text": "🧠 ИИ"}, {"text": "🧟 Zombies"}],
-            [{"text": "🎬 VOD"}, {"text": "🆘 Помощь"}, {"text": "📡 Статус"}],
-            [{"text": "🧹 Очистить память"}, {"text": "🧨 Сброс"}],
+            [{"text": "📋 Меню"}, {"text": "⚙️ Настройки"}],
+            [{"text": "🎮 Игра"}, {"text": "🎭 Режим"}, {"text": "🧠 ИИ"}],
+            [{"text": "🎯 Тренировка"}, {"text": "🧟 Zombies"}, {"text": "🎬 VOD"}],
+            [{"text": "👤 Профиль"}, {"text": "📡 Статус"}, {"text": "🆘 Помощь"}],
+            [{"text": "🧠 Очистить память"}, {"text": "🧨 Сброс"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
         "one_time_keyboard": False,
-        "input_field_placeholder": "Опиши смерть/ситуацию — дам разбор и план…",
+        "input_field_placeholder": "Опиши ситуацию/смерть — я дам разбор и план…",
     }
 
 
 def kb_settings() -> dict:
     return {
         "keyboard": [
-            [{"text": "🎮 Игра: Warzone"}, {"text": "🎮 Игра: BF6"}, {"text": "🎮 Игра: BO7"}],
-            [{"text": "🖥 Input: KBM"}, {"text": "🎮 Input: Controller"}],
-            [{"text": "🧠 Сложность: Normal"}, {"text": "🔥 Сложность: Pro"}, {"text": "😈 Сложность: Demon"}],
+            [{"text": "🎮 Warzone"}, {"text": "🎮 BF6"}, {"text": "🎮 BO7"}],
+            [{"text": "💻 ПК (KBM)"}, {"text": "🎮 PlayStation"}, {"text": "🎮 Xbox"}],
+            [{"text": "🙂 Обычный"}, {"text": "🔥 Профи"}, {"text": "😈 Демон"}],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
         "one_time_keyboard": False,
-        "input_field_placeholder": "Настройки профиля…",
+        "input_field_placeholder": "Выбери игру/устройство/режим…",
+    }
+
+
+def kb_game() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🎮 Warzone"}, {"text": "🎮 BF6"}, {"text": "🎮 BO7"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+    }
+
+
+def kb_mode() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🙂 Обычный"}, {"text": "🔥 Профи"}, {"text": "😈 Демон"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+    }
+
+
+def kb_ai() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🧠 ИИ: ВКЛ"}, {"text": "🧠 ИИ: ВЫКЛ"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
     }
