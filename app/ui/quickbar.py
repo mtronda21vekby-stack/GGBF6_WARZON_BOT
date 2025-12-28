@@ -1,17 +1,33 @@
-from __future__ import annotations
+# app/ui/quickbar.py
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
-
-def quickbar() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "📋 Меню"}, {"text": "⚙️ Настройки"}],
-            [{"text": "🎮 Игра"}, {"text": "🎭 Стиль"}, {"text": "💬 Ответ"}],
-            [{"text": "🧟 Zombies"}, {"text": "🎯 Задание дня"}, {"text": "🎬 VOD"}],
-            [{"text": "👤 Профиль"}, {"text": "📡 Статус"}, {"text": "🆘 Помощь"}],
-            [{"text": "🧹 Очистить память"}, {"text": "🧨 Сброс"}],
+def kb_main():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🎮 Игра", callback_data="game"),
+            InlineKeyboardButton("🎭 Стиль", callback_data="style"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-        "input_field_placeholder": "Опиши ситуацию/смерть…",
-    }
+        [
+            InlineKeyboardButton("🧠 ИИ", callback_data="ai"),
+            InlineKeyboardButton("🧟 Zombies", callback_data="zombies"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ Настройки", callback_data="settings"),
+            InlineKeyboardButton("📦 Ещё", callback_data="more"),
+        ]
+    ])
+
+def kb_settings():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🎮 Warzone", callback_data="set_wz"),
+            InlineKeyboardButton("🪖 BF6", callback_data="set_bf6"),
+        ],
+        [
+            InlineKeyboardButton("💻 PC", callback_data="pc"),
+            InlineKeyboardButton("🎮 PS/Xbox", callback_data="console"),
+        ],
+        [
+            InlineKeyboardButton("⬅️ Назад", callback_data="back"),
+        ]
+    ])
