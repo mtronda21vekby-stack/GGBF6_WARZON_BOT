@@ -1,46 +1,62 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
-from app.adapters.telegram.client import TelegramClient
 from app.adapters.telegram.types import Update
-from app.core.context import Context
-from app.observability.log import get_logger
 from app.ui.keyboards import KB
-from app.ui.templates import T
 
-log = get_logger("router")
 
 class Router:
-    def __init__(self, tg: TelegramClient, brain, settings):
+    def __init__(self, tg, brain, settings):
         self.tg = tg
         self.brain = brain
         self.settings = settings
 
-    async def handle_update(self, upd: Update) -> None:
-        # Callback buttons
-        if upd.callback_query:
-            cq = upd.callback_query
-            if cq.message is None:
-                return
-            chat_id = cq.message.chat.id
-            user_id = cq.from_user.id
-            ctx = Context(user_id=user_id, chat_id=chat_id, username=cq.from_user.username)
-            data = (cq.data or "").strip()
+    async def handle_update(self, upd: Update):
+        # Text messages
+        if upd.message and upd.message.text:
+            chat_id = upd.message.chat.id
+            user_id = upd.message.from_user.id
+            text = upd.message.text.strip()
 
-            await self.tg.answer_callback_query(cq.id)
-            text, kb = await self.brain.handle_callback(ctx, data)
-            if text:
-                await self.tg.send_message(chat_id, text, reply_markup=kb)
+            if text == "/start":
+                await self.tg.send_message(
+                    chat_id=chat_id,
+                    text="Привет! Я FPS Coach. Пиши проблему — дам план тренировки.",
+                    reply_markup=KB.main_menu(),
+                )
+                return
+
+            reply = await self.brain.handle_text(user_id=user_id, text=text)
+            await self.tg.send_message(
+                chat_id=chat_id,
+                text=reply.text,
+                reply_markup=KB.main_menu(),
+            )
             return
 
-        # Messages
-        if upd.message and upd.message.text is not None:
-            msg = upd.message
-            chat_id = msg.chat.id
-            user_id = (msg.from_user.id if msg.from_user else chat_id)
-            ctx = Context(user_id=user_id, chat_id=chat_id, username=(msg.from_user.username if msg.from_user else None))
+        # Callback кнопки
+        if upd.callback_query:
+            cq = upd.callback_query
+            await self.tg.answer_callback_query(cq.id)
 
-            text_in = msg.text.strip()
+            user_id = cq.from_user.id
+            chat_id = cq.message.chat.id if cq.message else None
+            data = (cq.data or "").strip()
 
-            text, kb = await self.brain.handle_message(ctx, text_in)
-            if text:
-                await self.tg.send_message(chat_id, text, reply_markup=kb)
+            if data == "mem_clear":
+                self.brain.clear_memory(user_id)
+                if chat_id is not None:
+                    await self.tg.send_message(chat_id, "🧹 Память очищена.", reply_markup=KB.main_menu())
+                return
+
+            if data == "ai_mode":
+                enabled = self.brain.toggle_ai(user_id)
+                if chat_id is not None:
+                    await self.tg.send_message(
+                        chat_id,
+                        f"🧠 ИИ-режим: {'ON' if enabled else 'OFF'}",
+                        reply_markup=KB.main_menu(),
+                    )
+                return
+
+            if chat_id is not None:
+                await self.tg.send_message(chat_id, f"⚙️ {data} (в разработке)", reply_markup=KB.main_menu())
+            return
