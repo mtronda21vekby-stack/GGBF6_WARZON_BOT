@@ -1,63 +1,43 @@
-# -*- coding: utf-8 -*-
+# app/services/brain/memory.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Dict, List, Literal, TypedDict
+
+
+Role = Literal["user", "assistant", "system"]
+
+
+class Turn(TypedDict):
+    role: Role
+    content: str
 
 
 @dataclass
 class InMemoryStore:
-    """
-    Простая память + профиль в RAM.
-    Ничего не урезает: хранит историю диалога и поля профиля.
-    """
-    memory_max_turns: int = 30
+    # принимаем разные имена параметров, чтобы НЕ падать на несовпадении
+    memory_max_turns: int = 20
+    max_turns: int | None = None
+    _mem: Dict[int, List[Turn]] = field(default_factory=dict)
 
-    # chat_id -> list[{"role": "user|assistant", "text": "..."}]
-    _messages: Dict[int, List[Dict[str, str]]] = field(default_factory=dict)
+    def __post_init__(self) -> None:
+        if self.max_turns is not None:
+            self.memory_max_turns = int(self.max_turns)
 
-    # chat_id -> profile dict
-    _profiles: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    def add(self, chat_id: int, role: Role, content: str) -> None:
+        arr = self._mem.setdefault(int(chat_id), [])
+        arr.append({"role": role, "content": str(content)})
+        # режем только хвост памяти, функционал НЕ режем
+        limit = max(4, int(self.memory_max_turns) * 2)  # user+assistant
+        if len(arr) > limit:
+            self._mem[int(chat_id)] = arr[-limit:]
 
-    def add(self, chat_id: int, role: str, text: str) -> None:
-        arr = self._messages.setdefault(chat_id, [])
-        arr.append({"role": role, "text": str(text)})
-
-        # обрезаем историю
-        max_len = max(1, int(self.memory_max_turns))
-        if len(arr) > max_len:
-            self._messages[chat_id] = arr[-max_len:]
-
-    def get(self, chat_id: int) -> List[Dict[str, str]]:
-        return list(self._messages.get(chat_id, []))
+    def get(self, chat_id: int) -> List[Turn]:
+        return list(self._mem.get(int(chat_id), []))
 
     def clear(self, chat_id: int) -> None:
-        self._messages.pop(chat_id, None)
-        # профиль НЕ трогаем при “очистить память”
-        # (профиль трогает reset через ProfileService)
+        self._mem.pop(int(chat_id), None)
 
     def stats(self, chat_id: int) -> dict:
-        return {
-            "turns": len(self._messages.get(chat_id, [])),
-            "memory_max_turns": self.memory_max_turns,
-            "has_profile": chat_id in self._profiles,
-        }
-
-    # -----------------------
-    # PROFILE STORAGE
-    # -----------------------
-    def get_profile(self, chat_id: int) -> Dict[str, Any]:
-        return dict(self._profiles.get(chat_id, {}))
-
-    def set_profile(self, chat_id: int, profile: Dict[str, Any]) -> None:
-        self._profiles[chat_id] = dict(profile or {})
-
-    def reset_profile(self, chat_id: int) -> None:
-        self._profiles.pop(chat_id, None)
-
-    def set_profile_field(self, chat_id: int, key: str, value: Any) -> None:
-        prof = self._profiles.setdefault(chat_id, {})
-        prof[key] = value
-
-    def get_profile_field(self, chat_id: int, key: str, default: Any = None) -> Any:
-        return self._profiles.get(chat_id, {}).get(key, default)
+        arr = self._mem.get(int(chat_id), [])
+        return {"turns": len(arr), "max_turns": self.memory_max_turns}
