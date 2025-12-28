@@ -1,69 +1,33 @@
-# app/services/brain/engine.py
-from __future__ import annotations
+async def handle_text(self, user_id: int, text: str):
+    p = self.profiles.get(user_id)
 
-from dataclasses import dataclass
+    style = {
+        "normal": "🧠 Спокойно. Учимся и исправляем.",
+        "pro": "🔥 Жёстко. Минимум ошибок.",
+        "demon": "😈 Ты здесь, чтобы доминировать. Слушай внимательно.",
+    }.get(p.mode, "")
 
-from app.services.brain.memory import InMemoryStore
-from app.services.profiles.service import ProfileService
-from app.config import Settings
+    base = (
+        f"{style}\n\n"
+        f"🎮 Игра: {p.game.upper()}\n"
+        f"🕹 Ввод: {p.device.upper()}\n\n"
+    )
 
+    if "aim" in text.lower():
+        return type("R", (), {"text": base + "AIM:\n• Контроль отдачи\n• Трекинг\n• Флик-шоты\n\n10 минут ежедневно."})
 
-@dataclass
-class BrainReply:
-    text: str
+    if "move" in text.lower():
+        return type("R", (), {"text": base + "MOVEMENT:\n• Слайд\n• Стрейф\n• Пики\n\nКонтроль дистанции — ключ."})
 
+    if "пози" in text.lower():
+        return type("R", (), {"text": base + "POSITIONING:\n• Углы\n• Высота\n• Тайминги\n\nНе умирай бесплатно."})
 
-class BrainEngine:
-    """
-    Сейчас: умный “скелет” (без внешнего ИИ), но с профилем/памятью.
-    Дальше сюда подключаем OpenAI (ключ только через ENV), не меняя роутер/кнопки.
-    """
-
-    def __init__(self, store: InMemoryStore, profiles: ProfileService, settings: Settings):
-        self.store = store
-        self.profiles = profiles
-        self.settings = settings
-
-    async def handle_text(self, user_id: int, text: str) -> BrainReply:
-        p = self.profiles.get(user_id)
-
-        # Быстрые команды/кнопки
-        t = (text or "").strip()
-
-        if t.lower() in ("/start", "меню", "📋 меню"):
-            return BrainReply(self._welcome(p))
-
-        # главный режим: разбор ситуации
-        reply = self._coach_reply(p, t)
-        self.store.add_turn(user_id, t, reply)
-        return BrainReply(reply)
-
-    def _welcome(self, p: dict) -> str:
-        return (
-            "FPS Coach Bot v3 | 🎮 AUTO | 🔁 CHAT | 🤖 AI ON\n\n"
-            "Напиши ситуацию/смерть — разберём и сделаем план.\n"
-            "Или жми кнопки снизу 👇"
-        )
-
-    def _coach_reply(self, p: dict, user_text: str) -> str:
-        game = p.get("game", "AUTO")
-        inp = p.get("input", "AUTO")
-        diff = p.get("difficulty", "NORMAL")
-
-        # Важно: BF6 — кнопки/настройки на EN (ты просил),
-        # но остальной текст — RU (позже расширим).
-        # Сейчас ответ “умный скелет”, чтобы бот не молчал.
-        header = f"🎮 {game} | 🎮 {inp} | 😈 {diff}"
-        if not user_text:
-            return f"{header}\n\nОпиши ситуацию одним сообщением (где умер/что не получилось)."
-
-        # База “ультра-тиммейт”: короткий, конкретный разбор
-        return (
-            f"{header}\n\n"
-            f"Получил: {user_text}\n\n"
-            "План (1 минута):\n"
-            "1) Назови место/тайминг (куда смотрел, откуда прилетело).\n"
-            "2) Один главный косяк: позиция / мувмент / аим.\n"
-            "3) Следующий повтор: что делаешь иначе (1 действие).\n\n"
-            "Кинь: карта/режим/оружие и что именно болит (аим/мувмент/позиционка) — докручу."
-        )
+    return type(
+        "R",
+        (),
+        {
+            "text": base
+            + f"Получил: {text}\n\n"
+            + "Опиши:\n• где умер\n• чем убили\n• режим\n\nЯ дам конкретный план."
+        },
+    )
