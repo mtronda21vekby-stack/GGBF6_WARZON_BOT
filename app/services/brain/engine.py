@@ -5,6 +5,9 @@ from app.services.brain.worlds import WarzoneWorld, BF6World, BO7World
 from app.services.brain.memory import PlayerMemory
 from app.services.brain.detector import detect_situation
 from app.services.brain.dialogues import get_dialogue
+from app.services.brain.premium import get_premium_tip
+from app.services.brain.ai_hook import AIHook
+
 
 WORLD_MAP = {
     "warzone": WarzoneWorld(),
@@ -18,10 +21,13 @@ class BrainEngine:
         self.store = store
         self.profiles = profiles
         self.settings = settings
+
         self.memory = PlayerMemory()
+        self.ai = AIHook(enabled=False)  # ИИ ВЫКЛЮЧЕН, ГОТОВ НА БУДУЩЕЕ
 
     async def handle_text(self, user_id: int, text: str):
         profile = self.profiles.get(user_id)
+
         game = profile.game or "warzone"
         style = profile.mode or "normal"
 
@@ -29,21 +35,41 @@ class BrainEngine:
         if not world:
             return self._reply("Мир не найден.")
 
-        # --- AUTO DETECT ---
+        # ---------- AUTO DETECT ----------
         situation = detect_situation(text)
+        dialogue = ""
+
         if situation:
             self.memory.add_error(user_id, situation)
             dialogue = get_dialogue(style, situation)
-        else:
-            dialogue = ""
 
+        # ---------- WORLD ANALYSIS ----------
         analysis = world.analyze(text, profile, style, self.memory)
 
-        final = analysis
-        if dialogue:
-            final = f"{dialogue}\n\n{analysis}"
+        # ---------- PREMIUM (OFF BY DEFAULT) ----------
+        premium = ""
+        if getattr(profile, "premium", False):
+            premium = get_premium_tip(game)
 
-        return self._reply(final)
+        # ---------- AI HOOK ----------
+        ai_text = await self.ai.analyze({
+            "game": game,
+            "style": style,
+            "situation": situation,
+            "memory": self.memory,
+            "text": text,
+        })
+
+        parts = []
+        if dialogue:
+            parts.append(dialogue)
+        parts.append(analysis)
+        if premium:
+            parts.append(premium)
+        if ai_text:
+            parts.append(ai_text)
+
+        return self._reply("\n\n".join(parts))
 
     def _reply(self, text: str):
         return type("R", (), {"text": text})
