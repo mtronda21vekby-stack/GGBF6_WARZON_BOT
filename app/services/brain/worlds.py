@@ -14,65 +14,61 @@ class WarzoneWorld(BaseWorld):
     name = "warzone"
 
     def analyze(self, text: str, profile, style: str, memory) -> str:
-        rules = TOP_RULES["warzone"]
-        return self._build(style, rules, memory, profile.user_id)
-
-    def _build(self, style, rules, memory, uid):
         if style == "demon":
             return (
-                "WARZONE — DEMON\n"
+                "WARZONE — DEMON TIMEMATE\n"
                 "ПОЗИЦИЯ. РОТАЦИЯ. ВЫЖИВАНИЕ.\n\n"
-                f"НЕ ДЕЛАЙ:\n- " + "\n- ".join(rules["never"]) +
-                self._memory(memory, uid)
+                "Если ты стрелял без укрытия — ты ошибся.\n"
+                "Если дрался в газе — ты ошибся.\n\n"
+                "Думай как последний сквад."
             )
         if style == "pro":
             return (
-                "WARZONE — PRO\n\n"
-                f"ВСЕГДА:\n- " + "\n- ".join(rules["always"])
+                "WARZONE — PRO\n"
+                "• Контроль высоты\n"
+                "• Ротация раньше газа\n"
+                "• Игра от укрытий"
             )
-        return (
-            "WARZONE — NORMAL\n\n"
-            "Сначала позиция, потом стрельба."
-        )
-
-    def _memory(self, memory, uid):
-        err = memory.common_error(uid)
-        return f"\n\nТВОЯ ПОВТОРЯЮЩАЯСЯ ОШИБКА:\n{err}" if err else ""
+        return "WARZONE — NORMAL\nСначала позиция, потом стрельба."
 
 
 class BF6World(BaseWorld):
     name = "bf6"
 
     def analyze(self, text: str, profile, style: str, memory) -> str:
-        rules = TOP_RULES["bf6"]
         if style == "demon":
             return (
-                "BF6 — DEMON\n"
-                "OBJECTIVE. TEAMPLAY. PRESSURE.\n\n"
-                f"NEVER:\n- " + "\n- ".join(rules["never"])
+                "BF6 — DEMON TEAMMATE\n"
+                "OBJECTIVE ИЛИ НИЧЕГО.\n\n"
+                "Фраг без давления — мусор.\n"
+                "Сквад без синхры — смерть."
             )
         if style == "pro":
             return (
-                "BF6 — PRO\n\n"
-                f"ALWAYS:\n- " + "\n- ".join(rules["always"])
+                "BF6 — PRO\n"
+                "• Играй от точки\n"
+                "• Дави после utility\n"
+                "• Держи сквад"
             )
-        return "BF6 — NORMAL\nPlay objective."
+        return "BF6 — NORMAL\nИграй objective."
 
 
 class BO7World(BaseWorld):
     name = "bo7"
 
     def analyze(self, text: str, profile, style: str, memory) -> str:
-        rules = TOP_RULES["bo7"]
         if style == "demon":
             return (
-                "BO7 — DEMON\n"
-                "SPAWNS. TIMING. TRADES.\n\n"
-                f"НЕ ДЕЛАЙ:\n- " + "\n- ".join(rules["never"])
+                "BO7 — DEMON TEAMMATE\n"
+                "СПАВНЫ. ТАЙМИНГ. ТРЕЙД.\n\n"
+                "Соло-пик без трейда — ошибка.\n"
+                "Ты обязан читать спавн."
             )
         if style == "pro":
             return (
-                "BO7 — PRO\n\n"
-                f"ВСЕГДА:\n- " + "\n- ".join(rules["always"])
+                "BO7 — PRO\n"
+                "• Контроль спавнов\n"
+                "• Pre-aim\n"
+                "• Тайминги"
             )
-        return "BO7 — NORMAL\nДержи спавны."
+        return "BO7 — NORMAL\nДержи позиции."
