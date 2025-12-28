@@ -22,6 +22,22 @@ def _set_world_setting(profile, key: str, value):
     s[key] = value
 
 
+def _get_game(profile) -> str:
+    return (getattr(profile, "game", None) or "warzone").lower()
+
+
+def _get_platform(profile) -> str | None:
+    return getattr(profile, "platform", None)
+
+
+def _get_input(profile) -> str | None:
+    return getattr(profile, "input", None)
+
+
+def _get_role(profile) -> str | None:
+    return getattr(profile, "role", None)
+
+
 class Router:
     def __init__(self, tg, brain, profiles, settings):
         self.tg = tg
@@ -104,59 +120,103 @@ class Router:
             return
 
         # ======================================================================
-        # ✅ ШАГ 2: НАСТРОЙКИ ВНУТРИ МИРА (Warzone/BO7 RU, BF6 EN)
+        # ✅ ШАГ 3: НАСТРОЙКИ ВНУТРИ МИРА -> platform + input + role
         # ======================================================================
 
         if text == "🧩 Настройки игры":
-            g = (getattr(profile, "game", None) or "warzone").lower()
+            g = _get_game(profile)
             await self.tg.send_message(
                 chat_id,
                 "🧩 Настройки выбранной игры:",
-                reply_markup=kb_world_settings(g),
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
             )
             return
 
-        g = (getattr(profile, "game", None) or "warzone").lower()
+        g = _get_game(profile)
+        plat = _get_platform(profile)
+        inp = _get_input(profile)
+        role = _get_role(profile)
         s = _get_world_settings(profile)
 
         # --- Presets ---
         if text in ("⚡ Пресет: PC", "⚡ Пресет: PS", "⚡ Пресет: Xbox", "⚡ Preset: PC", "⚡ Preset: PS", "⚡ Preset: Xbox"):
             if "PC" in text:
-                p = presets(g)["pc"]
+                p = presets(g, "pc", inp, role)
             elif "PS" in text:
-                p = presets(g)["ps"]
+                p = presets(g, "playstation", inp, role)
             else:
-                p = presets(g)["xbox"]
+                p = presets(g, "xbox", inp, role)
 
             for k, v in p.items():
                 s[k] = v
 
-            # аккуратно подхватываем в профиль (не ломая остальное)
-            profile.platform = s.get("platform", getattr(profile, "platform", None))
-            if getattr(profile, "input", None) is None:
+            # подхват в профиль
+            profile.platform = s.get("platform", profile.platform)
+            if not getattr(profile, "input", None):
                 profile.input = s.get("input_hint", None)
 
             msg = "✅ Preset applied." if g == "bf6" else "✅ Пресет применён."
-            await self.tg.send_message(chat_id, msg, reply_markup=kb_world_settings(g))
+            await self.tg.send_message(
+                chat_id,
+                msg,
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
+            )
             return
 
         # --- Submenus ---
-        if text in ("🎯 Чувствительность", "🎯 Sensitivity"):
-            await self.tg.send_message(chat_id, "Выбери вариант:" if g != "bf6" else "Choose:", reply_markup=kb_sens(g))
+        if text in ("🎯 Чувствительность", "🎯 Сенса (KBM)", "🎯 Sensitivity", "🎯 Sens (KBM)"):
+            await self.tg.send_message(
+                chat_id,
+                "Выбери вариант:" if g != "bf6" else "Choose:",
+                reply_markup=kb_sens(g, _get_input(profile)),
+            )
             return
 
         if text == "🖼 FOV":
-            await self.tg.send_message(chat_id, "Выбери FOV:" if g != "bf6" else "Choose FOV:", reply_markup=kb_fov(g))
+            await self.tg.send_message(
+                chat_id,
+                "Выбери FOV:" if g != "bf6" else "Choose FOV:",
+                reply_markup=kb_fov(g, _get_platform(profile)),
+            )
             return
 
         if text in ("🎮 Аим/Стик", "🎮 Aim/Stick"):
-            await self.tg.send_message(chat_id, "Выбери вариант:" if g != "bf6" else "Choose:", reply_markup=kb_aim(g))
+            await self.tg.send_message(
+                chat_id,
+                "Выбери вариант:" if g != "bf6" else "Choose:",
+                reply_markup=kb_aim(g, _get_input(profile)),
+            )
             return
 
-        # --- Sens pick ---
-        if text in ("SENS: Low", "SENS: Mid", "SENS: High"):
+        # --- Sens picks ---
+        if text.startswith("SENS: "):
             _set_world_setting(profile, "sens", text.split(":")[1].strip().lower())
-            await self.tg.send_message(chat_id, "✅ Готово." if g != "bf6" else "✅ Done.", reply_markup=kb_world_settings(g))
+            await self.tg.send_message(
+                chat_id,
+                "✅ Готово." if g != "bf6" else "✅ Done.",
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
+            )
+            return
+
+        if text.startswith("ADS: "):
+            _set_world_setting(profile, "ads", text.split(":")[1].strip().lower())
+            await self.tg.send_message(
+                chat_id,
+                "✅ Готово." if g != "bf6" else "✅ Done.",
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
+            )
+            return
+
+        if text.startswith("DPI: "):
+            try:
+                _set_world_setting(profile, "dpi", int(text.split(":")[1].strip()))
+            except Exception:
+                _set_world_setting(profile, "dpi", text.split(":")[1].strip())
+            await self.tg.send_message(
+                chat_id,
+                "✅ Готово." if g != "bf6" else "✅ Done.",
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
+            )
             return
 
         # --- FOV pick ---
@@ -165,34 +225,67 @@ class Router:
                 _set_world_setting(profile, "fov", int(text.split(":")[1].strip()))
             except Exception:
                 _set_world_setting(profile, "fov", text.split(":")[1].strip())
-            await self.tg.send_message(chat_id, "✅ Готово." if g != "bf6" else "✅ Done.", reply_markup=kb_world_settings(g))
+            await self.tg.send_message(
+                chat_id,
+                "✅ Готово." if g != "bf6" else "✅ Done.",
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
+            )
             return
 
         # --- Aim pick ---
-        if text in ("AIM: Default", "AIM: Strong", "AIM: Demon"):
+        if text.startswith("AIM: "):
             _set_world_setting(profile, "aim", text.split(":")[1].strip().lower())
-            await self.tg.send_message(chat_id, "✅ Готово." if g != "bf6" else "✅ Done.", reply_markup=kb_world_settings(g))
+            await self.tg.send_message(
+                chat_id,
+                "✅ Готово." if g != "bf6" else "✅ Done.",
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
+            )
             return
 
-        # --- Placeholder sections (we keep, not cut) ---
+        if text.startswith("Response: "):
+            _set_world_setting(profile, "response_curve", text.split(":")[1].strip().lower())
+            await self.tg.send_message(
+                chat_id,
+                "✅ Готово." if g != "bf6" else "✅ Done.",
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
+            )
+            return
+
+        # --- Placeholder sections (keep, not cut) ---
         if text in ("🔊 Аудио", "🔊 Audio"):
             _set_world_setting(profile, "audio", "high")
-            await self.tg.send_message(chat_id, "✅ Аудио: high" if g != "bf6" else "✅ Audio: high", reply_markup=kb_world_settings(g))
+            await self.tg.send_message(
+                chat_id,
+                "✅ Аудио: high" if g != "bf6" else "✅ Audio: high",
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
+            )
             return
 
         if text in ("🎥 Графика", "🎥 Graphics"):
             _set_world_setting(profile, "graphics", "competitive")
-            await self.tg.send_message(chat_id, "✅ Графика: competitive" if g != "bf6" else "✅ Graphics: competitive", reply_markup=kb_world_settings(g))
+            await self.tg.send_message(
+                chat_id,
+                "✅ Графика: competitive" if g != "bf6" else "✅ Graphics: competitive",
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
+            )
             return
 
         if text in ("🧠 Геймплей", "🧠 Gameplay"):
             _set_world_setting(profile, "gameplay", "stable")
-            await self.tg.send_message(chat_id, "✅ Геймплей: stable" if g != "bf6" else "✅ Gameplay: stable", reply_markup=kb_world_settings(g))
+            await self.tg.send_message(
+                chat_id,
+                "✅ Геймплей: stable" if g != "bf6" else "✅ Gameplay: stable",
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
+            )
             return
 
         # --- Show settings ---
         if text in ("📄 Показать мои настройки", "📄 Show my settings"):
-            await self.tg.send_message(chat_id, render_settings(g, s), reply_markup=kb_world_settings(g))
+            await self.tg.send_message(
+                chat_id,
+                render_settings(g, s),
+                reply_markup=kb_world_settings(g, _get_platform(profile), _get_input(profile), _get_role(profile)),
+            )
             return
 
         # -------- BACK --------
