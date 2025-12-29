@@ -26,7 +26,7 @@ from app.worlds.bf6.presets import (
     bf6_kbm_tuning_text,
 )
 
-# Эти файлы ты создашь по моим пресетам (я дам после этого сообщения):
+# Эти файлы ты создашь по моим пресетам (ты сказал: дашь после)
 # app/worlds/warzone/presets.py
 # app/worlds/bo7/presets.py
 try:
@@ -39,8 +39,12 @@ try:
         wz_audio_visual_text,
     )
 except Exception:
-    wz_role_setup_text = wz_aim_sens_text = wz_controller_tuning_text = None
-    wz_kbm_tuning_text = wz_movement_positioning_text = wz_audio_visual_text = None
+    wz_role_setup_text = None
+    wz_aim_sens_text = None
+    wz_controller_tuning_text = None
+    wz_kbm_tuning_text = None
+    wz_movement_positioning_text = None
+    wz_audio_visual_text = None
 
 try:
     from app.worlds.bo7.presets import (
@@ -52,8 +56,12 @@ try:
         bo7_audio_visual_text,
     )
 except Exception:
-    bo7_role_setup_text = bo7_aim_sens_text = bo7_controller_tuning_text = None
-    bo7_kbm_tuning_text = bo7_movement_positioning_text = bo7_audio_visual_text = None
+    bo7_role_setup_text = None
+    bo7_aim_sens_text = None
+    bo7_controller_tuning_text = None
+    bo7_kbm_tuning_text = None
+    bo7_movement_positioning_text = None
+    bo7_audio_visual_text = None
 
 
 def _safe_get(d: dict, path: list, default=None):
@@ -90,7 +98,8 @@ class Router:
                 "🧠 FPS Coach Bot | Warzone / BO7 / BF6\n"
                 "Нижний Premium UI закреплён 👇\n\n"
                 "Пиши ситуацию одной строкой — разберу как тиммейт.\n"
-                "Хочешь “по полочкам” — переключи голос на 📚 Коуч.",
+                "Хочешь “по полочкам” — переключи голос на 📚 Коуч.\n"
+                "Если хочешь чисто угар — ставь 😈 Demon и погнали 😄",
             )
             return
 
@@ -112,15 +121,14 @@ class Router:
             return
 
         if text in ("🧠 ИИ", "ИИ"):
-            # НЕ запускаем шаблон-цикл, просто говорим “пиши”
             prof = self._get_profile(chat_id)
-            voice = prof.get("voice", "TEAMMATE")
+            voice = (prof.get("voice") or "TEAMMATE").upper()
             vv = "Тиммейт 🤝" if voice == "TEAMMATE" else "Коуч 📚"
             await self._send_main(
                 chat_id,
                 f"🧠 AI: ON | Голос: {vv}\n"
                 "Пиши как в обычный чат: ситуация / смерть / проблема.\n"
-                "Я отвечу живо, без копипасты 😈",
+                "Отвечу живо, без копипасты. Если начну душнить — пни меня 😈",
             )
             return
 
@@ -130,7 +138,8 @@ class Router:
                 "🎯 Тренировка\n\n"
                 "Напиши одной строкой:\n"
                 "Игра | input | что болит (аим/мувмент/позиционка) | где чаще умираешь\n\n"
-                "Сделаю план на 20 минут + как мерить прогресс.",
+                "Сделаю план на 20 минут + как мерить прогресс.\n"
+                "Да, будет без “воды”. Вода — только в твоих слезах после гуллага 😄",
             )
             return
 
@@ -140,7 +149,8 @@ class Router:
                 "🎬 VOD (разбор)\n\n"
                 "Пока без загрузки видео.\n"
                 "Кинь 3 таймкода текстом (00:12 / 01:40 / 03:05) + что хотел сделать.\n"
-                "Я разберу решения как тиммейт/коуч.",
+                "Я разберу решения как тиммейт/коуч.\n"
+                "Если ты 3 раза подряд умер одинаково — не стыдно, это “обучение” 😄",
             )
             return
 
@@ -148,8 +158,9 @@ class Router:
             await self._send_main(
                 chat_id,
                 "🧟 Zombies\n\n"
-                "Зомби не трогаем сейчас — сначала UI/ИИ.\n"
-                "Но если надо срочно: карта | раунд | от чего падаешь | что открыл — дам план.",
+                "Зомби не режем — просто сейчас приоритет UI/ИИ.\n"
+                "Но если надо срочно: карта | раунд | от чего падаешь | что открыл — дам план.\n"
+                "И да: если тебя съел зомби — это не баг, это “механика” 😄",
             )
             return
 
@@ -191,7 +202,8 @@ class Router:
                 "1) 5 мин — разминка (контроль)\n"
                 "2) 10 мин — основной фокус (твой слабый элемент)\n"
                 "3) 5 мин — закрепление в реальном бою\n\n"
-                "Напиши: игра | input | слабое место — я сделаю план под тебя.",
+                "Напиши: игра | input | слабое место — я сделаю план под тебя.\n"
+                "И да: “мне просто не везёт” — это тоже диагноз 😄",
             )
             return
 
@@ -266,7 +278,11 @@ class Router:
             }
             role = role_map.get(text, "Flex")
             self._set_profile_field(chat_id, "role", role)
-            await self._send_main(chat_id, f"✅ Роль = {role}\nТеперь открой 🧩 Настройки игры — там будет магия цифр 😈")
+            await self._send_main(
+                chat_id,
+                f"✅ Роль = {role}\n"
+                "Теперь открой 🧩 Настройки игры — там будет магия цифр 😈"
+            )
             return
 
         if text in ("🟥 Assault", "🟦 Recon", "🟨 Engineer", "🟩 Medic"):
@@ -275,10 +291,9 @@ class Router:
             await self._send_main(chat_id, bf6_class_text(self._get_profile(chat_id)))
             return
 
-        # ---------- MENU ITEMS (MUST MATCH YOUR quickbar.py) ----------
+        # ---------- MENU ITEMS (MUST MATCH quickbar.py) ----------
         # WARZONE (RU buttons)
         if text == "🎭 Warzone: Роль":
-            prof = self._get_profile(chat_id)
             self._set_profile_field(chat_id, "game", "Warzone")
             await self._send(chat_id, "🎭 Выбери роль (Warzone):", kb_roles())
             return
@@ -287,40 +302,39 @@ class Router:
             if wz_aim_sens_text:
                 await self._send_main(chat_id, wz_aim_sens_text(self._get_profile(chat_id)))
             else:
-                await self._send_main(chat_id, "❗️Нет файла app/worlds/warzone/presets.py — сейчас пришлю.")
+                await self._send_main(chat_id, "❗️Нет файла app/worlds/warzone/presets.py — пришли пресеты, я соберу.")
             return
 
         if text == "🎮 Warzone: Controller":
             if wz_controller_tuning_text:
                 await self._send_main(chat_id, wz_controller_tuning_text(self._get_profile(chat_id)))
             else:
-                await self._send_main(chat_id, "❗️Нет файла app/worlds/warzone/presets.py — сейчас пришлю.")
+                await self._send_main(chat_id, "❗️Нет файла app/worlds/warzone/presets.py — пришли пресеты, я соберу.")
             return
 
         if text == "⌨️ Warzone: KBM":
             if wz_kbm_tuning_text:
                 await self._send_main(chat_id, wz_kbm_tuning_text(self._get_profile(chat_id)))
             else:
-                await self._send_main(chat_id, "❗️Нет файла app/worlds/warzone/presets.py — сейчас пришлю.")
+                await self._send_main(chat_id, "❗️Нет файла app/worlds/warzone/presets.py — пришли пресеты, я соберу.")
             return
 
         if text == "🧠 Warzone: Мувмент/Позиционка":
             if wz_movement_positioning_text:
                 await self._send_main(chat_id, wz_movement_positioning_text(self._get_profile(chat_id)))
             else:
-                await self._send_main(chat_id, "❗️Нет файла app/worlds/warzone/presets.py — сейчас пришлю.")
+                await self._send_main(chat_id, "❗️Нет файла app/worlds/warzone/presets.py — пришли пресеты, я соберу.")
             return
 
         if text == "🎧 Warzone: Аудио/Видео":
             if wz_audio_visual_text:
                 await self._send_main(chat_id, wz_audio_visual_text(self._get_profile(chat_id)))
             else:
-                await self._send_main(chat_id, "❗️Нет файла app/worlds/warzone/presets.py — сейчас пришлю.")
+                await self._send_main(chat_id, "❗️Нет файла app/worlds/warzone/presets.py — пришли пресеты, я соберу.")
             return
 
         # BO7 (RU buttons)
         if text == "🎭 BO7: Роль":
-            prof = self._get_profile(chat_id)
             self._set_profile_field(chat_id, "game", "BO7")
             await self._send(chat_id, "🎭 Выбери роль (BO7):", kb_roles())
             return
@@ -329,35 +343,35 @@ class Router:
             if bo7_aim_sens_text:
                 await self._send_main(chat_id, bo7_aim_sens_text(self._get_profile(chat_id)))
             else:
-                await self._send_main(chat_id, "❗️Нет файла app/worlds/bo7/presets.py — сейчас пришлю.")
+                await self._send_main(chat_id, "❗️Нет файла app/worlds/bo7/presets.py — пришли пресеты, я соберу.")
             return
 
         if text == "🎮 BO7: Controller":
             if bo7_controller_tuning_text:
                 await self._send_main(chat_id, bo7_controller_tuning_text(self._get_profile(chat_id)))
             else:
-                await self._send_main(chat_id, "❗️Нет файла app/worlds/bo7/presets.py — сейчас пришлю.")
+                await self._send_main(chat_id, "❗️Нет файла app/worlds/bo7/presets.py — пришли пресеты, я соберу.")
             return
 
         if text == "⌨️ BO7: KBM":
             if bo7_kbm_tuning_text:
                 await self._send_main(chat_id, bo7_kbm_tuning_text(self._get_profile(chat_id)))
             else:
-                await self._send_main(chat_id, "❗️Нет файла app/worlds/bo7/presets.py — сейчас пришлю.")
+                await self._send_main(chat_id, "❗️Нет файла app/worlds/bo7/presets.py — пришли пресеты, я соберу.")
             return
 
         if text == "🧠 BO7: Мувмент/Позиционка":
             if bo7_movement_positioning_text:
                 await self._send_main(chat_id, bo7_movement_positioning_text(self._get_profile(chat_id)))
             else:
-                await self._send_main(chat_id, "❗️Нет файла app/worlds/bo7/presets.py — сейчас пришлю.")
+                await self._send_main(chat_id, "❗️Нет файла app/worlds/bo7/presets.py — пришли пресеты, я соберу.")
             return
 
         if text == "🎧 BO7: Аудио/Видео":
             if bo7_audio_visual_text:
                 await self._send_main(chat_id, bo7_audio_visual_text(self._get_profile(chat_id)))
             else:
-                await self._send_main(chat_id, "❗️Нет файла app/worlds/bo7/presets.py — сейчас пришлю.")
+                await self._send_main(chat_id, "❗️Нет файла app/worlds/bo7/presets.py — пришли пресеты, я соберу.")
             return
 
         # BF6 (EN buttons)
@@ -397,10 +411,18 @@ class Router:
                     try:
                         prof = getattr(self.profiles, name)(chat_id)
                         if isinstance(prof, dict):
+                            # гарантируем ключи (не ломаем старые профили)
+                            prof.setdefault("game", "Warzone")
+                            prof.setdefault("platform", "PC")
+                            prof.setdefault("input", "Controller")
+                            prof.setdefault("difficulty", "Normal")
+                            prof.setdefault("voice", "TEAMMATE")
+                            prof.setdefault("role", "Flex")
+                            prof.setdefault("bf6_class", "Assault")
                             return prof
                     except Exception:
                         pass
-        # fallback
+
         return {
             "game": "Warzone",
             "platform": "PC",
@@ -412,7 +434,6 @@ class Router:
         }
 
     def _set_profile_field(self, chat_id: int, key: str, val: str) -> None:
-        # supports ProfileService.set_field(...)
         if self.profiles:
             for name in ("set_field", "set", "set_value", "update", "update_profile"):
                 if hasattr(self.profiles, name):
@@ -426,7 +447,6 @@ class Router:
                     except Exception:
                         pass
 
-        # fallback to store
         if self.store and hasattr(self.store, "set_profile"):
             try:
                 self.store.set_profile(chat_id, {key: val})
@@ -454,7 +474,6 @@ class Router:
         if game == "BF6":
             await self._send(chat_id, "🪖 Pick BF6 class:", kb_bf6_classes())
             return
-        # Warzone / BO7 -> roles
         await self._send(chat_id, "🎭 Выбери роль:", kb_roles())
 
     async def _on_profile(self, chat_id: int) -> None:
@@ -486,4 +505,75 @@ class Router:
 
     async def _on_clear_memory(self, chat_id: int) -> None:
         if self.store and hasattr(self.store, "clear"):
-            try
+            try:
+                self.store.clear(chat_id)
+            except Exception:
+                pass
+        await self._send_main(chat_id, "🧹 Память очищена ✅ (прошлые фейлы забыты, скилл — нет 😄)")
+
+    async def _on_reset(self, chat_id: int) -> None:
+        if self.store and hasattr(self.store, "clear"):
+            try:
+                self.store.clear(chat_id)
+            except Exception:
+                pass
+        if self.profiles and hasattr(self.profiles, "reset"):
+            try:
+                self.profiles.reset(chat_id)
+            except Exception:
+                pass
+        await self._send_main(chat_id, "🧨 Сброс выполнен ✅ (мы не сдаёмся, мы делаем демона 😈)")
+
+    # ---------------- AI chat ----------------
+    async def _chat_to_brain(self, chat_id: int, text: str) -> None:
+        # add user to memory
+        if self.store and hasattr(self.store, "add"):
+            try:
+                self.store.add(chat_id, "user", text)
+            except Exception:
+                pass
+
+        prof = self._get_profile(chat_id)
+
+        history = []
+        if self.store and hasattr(self.store, "get"):
+            try:
+                history = self.store.get(chat_id)
+            except Exception:
+                history = []
+
+        reply = None
+        if self.brain and hasattr(self.brain, "reply"):
+            try:
+                fn = self.brain.reply
+                # поддержка sync/async
+                if inspect.iscoroutinefunction(fn):
+                    reply = await fn(text=text, profile=prof, history=history)
+                else:
+                    out = fn(text=text, profile=prof, history=history)
+                    if inspect.isawaitable(out):
+                        reply = await out
+                    else:
+                        reply = out
+            except Exception as e:
+                reply = (
+                    "🧠 ИИ: ERROR\n"
+                    f"{type(e).__name__}: {e}\n\n"
+                    "Если это случилось внезапно — глянь 📊 Статус."
+                )
+
+        if not reply:
+            reply = (
+                "🧠 AI fallback.\n"
+                "📊 Статус покажет причину (OPENAI_API_KEY / AI_ENABLED).\n"
+                "Напиши: игра | платформа | input | что болит — дам план.\n"
+                "И да: “я умер потому что лаги” — мы это тоже лечим 😄"
+            )
+
+        if self.store and hasattr(self.store, "add"):
+            try:
+                self.store.add(chat_id, "assistant", str(reply))
+            except Exception:
+                pass
+
+        await self._send_main(chat_id, str(reply))
