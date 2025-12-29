@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 
 DEFAULT_PROFILE: Dict[str, str] = {
+    # ========= Core profile =========
     "game": "Warzone",          # Warzone / BO7 / BF6
     "platform": "PC",           # PC / PlayStation / Xbox
     "input": "Controller",      # Controller / KBM
@@ -13,6 +14,13 @@ DEFAULT_PROFILE: Dict[str, str] = {
     "voice": "TEAMMATE",        # TEAMMATE / COACH
     "role": "Flex",             # Slayer / Entry / IGL / Support / Flex
     "bf6_class": "Assault",     # Assault / Recon / Engineer / Medic
+
+    # ========= Zombies state =========
+    # чтобы кнопки/назад/поиск работали стабильно и не “теряли контекст”
+    "zombies_active": "0",      # 1/0 — пользователь сейчас в Zombies UI
+    "zombies_map": "ashes",     # ashes / astra
+    "zombies_mode": "",         # произвольное: "home", "map", "perks", "weapons", ...
+    "zombies_search_last": "",  # последняя строка поиска
 }
 
 
@@ -21,16 +29,26 @@ class ProfileService:
     store: Any
 
     def get(self, chat_id: int) -> Dict[str, str]:
-        # store may or may not have get_profile
-        prof = {}
+        """
+        Возвращает профиль с дефолтами.
+        store может уметь/не уметь get_profile — мы не падаем.
+        """
+        prof: Dict[str, Any] = {}
         if self.store and hasattr(self.store, "get_profile"):
             try:
                 prof = self.store.get_profile(chat_id) or {}
             except Exception:
                 prof = {}
-        out = dict(DEFAULT_PROFILE)
+
+        # склеиваем дефолты + сохранённые значения
+        out: Dict[str, str] = dict(DEFAULT_PROFILE)
         for k, v in (prof or {}).items():
             out[str(k)] = str(v)
+
+        # safety: гарантируем наличие важных ключей даже если store отдаёт мусор
+        for k, v in DEFAULT_PROFILE.items():
+            out.setdefault(k, v)
+
         return out
 
     # universal setter used by router
@@ -64,6 +82,20 @@ class ProfileService:
 
     def set_bf6_class(self, chat_id: int, cls: str) -> None:
         self.set_field(chat_id, "bf6_class", cls)
+
+    # zombies helpers (не обязательны, но удобно)
+    def set_zombies_active(self, chat_id: int, active: bool) -> None:
+        self.set_field(chat_id, "zombies_active", "1" if active else "0")
+
+    def set_zombies_map(self, chat_id: int, map_name: str) -> None:
+        # ожидаем: ashes / astra
+        self.set_field(chat_id, "zombies_map", str(map_name))
+
+    def set_zombies_mode(self, chat_id: int, mode: str) -> None:
+        self.set_field(chat_id, "zombies_mode", str(mode))
+
+    def set_zombies_search_last(self, chat_id: int, query: str) -> None:
+        self.set_field(chat_id, "zombies_search_last", str(query))
 
     def reset(self, chat_id: int) -> None:
         # reset profile in store if possible
