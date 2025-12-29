@@ -1,11 +1,12 @@
 # app/ui/quickbar.py
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 
 def kb_main() -> dict:
     return {
         "keyboard": [
-            [{"text": "🎮 Игра"}, {"text": "⚙️ Настройки"}, {"text": "🪖 BF6 Класс"}],
+            [{"text": "🎮 Игра"}, {"text": "⚙️ Настройки"}, {"text": "🪖 Класс"}],
             [{"text": "🧠 ИИ"}, {"text": "🎯 Тренировка"}, {"text": "🎬 VOD"}],
             [{"text": "🧟 Zombies"}, {"text": "📌 Профиль"}, {"text": "📊 Статус"}],
             [{"text": "💎 Premium"}, {"text": "🧹 Очистить память"}, {"text": "🧨 Сброс"}],
@@ -17,6 +18,7 @@ def kb_main() -> dict:
     }
 
 
+# -------- ИГРЫ --------
 def kb_games() -> dict:
     return {
         "keyboard": [
@@ -29,6 +31,7 @@ def kb_games() -> dict:
     }
 
 
+# -------- ПЛАТФОРМА --------
 def kb_platform() -> dict:
     return {
         "keyboard": [
@@ -40,6 +43,7 @@ def kb_platform() -> dict:
     }
 
 
+# -------- INPUT --------
 def kb_input() -> dict:
     return {
         "keyboard": [
@@ -51,6 +55,7 @@ def kb_input() -> dict:
     }
 
 
+# -------- РЕЖИМ МЫШЛЕНИЯ --------
 def kb_difficulty() -> dict:
     return {
         "keyboard": [
@@ -62,6 +67,7 @@ def kb_difficulty() -> dict:
     }
 
 
+# -------- НАСТРОЙКИ (КОНТЕЙНЕР) --------
 def kb_settings() -> dict:
     return {
         "keyboard": [
@@ -76,6 +82,7 @@ def kb_settings() -> dict:
     }
 
 
+# -------- BF6: CLASSES --------
 def kb_bf6_classes() -> dict:
     return {
         "keyboard": [
@@ -88,8 +95,9 @@ def kb_bf6_classes() -> dict:
     }
 
 
+# -------- GAME SETTINGS MENUS (per world) --------
 def kb_game_settings_menu(game: str) -> dict:
-    game = (game or "").strip()
+    game = (game or "AUTO").strip()
 
     if game == "BF6":
         return {
@@ -103,14 +111,34 @@ def kb_game_settings_menu(game: str) -> dict:
             "is_persistent": True,
         }
 
-    # Warzone / BO7 — НЕ режем, оставляем пункты (можно расширять дальше)
-    label = "Warzone" if game == "Warzone" else ("BO7" if game == "BO7" else "AUTO")
+    if game == "Warzone":
+        return {
+            "keyboard": [
+                [{"text": "🎯 Warzone: Aim"}],
+                [{"text": "🌀 Warzone: Movement/Positioning"}],
+                [{"text": "🎮 Warzone: Controller"}, {"text": "⌨️ Warzone: KBM"}],
+                [{"text": "⬅️ Назад"}],
+            ],
+            "resize_keyboard": True,
+            "is_persistent": True,
+        }
+
+    if game == "BO7":
+        return {
+            "keyboard": [
+                [{"text": "🎯 BO7: Aim"}],
+                [{"text": "🌀 BO7: Movement/Positioning"}],
+                [{"text": "🎮 BO7: Controller"}, {"text": "⌨️ BO7: KBM"}],
+                [{"text": "⬅️ Назад"}],
+            ],
+            "resize_keyboard": True,
+            "is_persistent": True,
+        }
+
+    # fallback
     return {
         "keyboard": [
-            [{"text": f"🧩 {label}: Aim"}],
-            [{"text": f"🧩 {label}: Movement/Positioning"}],
-            [{"text": f"🧩 {label}: Settings (Controller)"}],
-            [{"text": f"🧩 {label}: Settings (KBM)"}],
+            [{"text": "AUTO: Movement/Positioning"}],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
