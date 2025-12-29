@@ -7,8 +7,8 @@ from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.observability.log import setup_logging, get_logger
 
-from app.adapters.telegram.client import TelegramClient
 from app.adapters.telegram.types import Update
+from app.adapters.telegram.client import TelegramClient
 
 from app.core.router import Router
 from app.services.brain.engine import BrainEngine
@@ -26,12 +26,10 @@ def create_app() -> FastAPI:
 
     tg = TelegramClient(settings.bot_token)
 
-    # Memory + Profiles + Brain
     store = InMemoryStore(memory_max_turns=settings.memory_max_turns)
     profiles = ProfileService(store=store)
     brain = BrainEngine(store=store, profiles=profiles, settings=settings)
 
-    # Router (ВАЖНО: пробрасываем store/profiles/settings — иначе часть функций “молчит”)
     router = Router(tg=tg, brain=brain, profiles=profiles, store=store, settings=settings)
 
     @app.get("/")
@@ -47,25 +45,20 @@ def create_app() -> FastAPI:
         request: Request,
         x_telegram_bot_api_secret_token: str | None = Header(default=None),
     ):
-        # защита webhook (если задан WEBHOOK_SECRET)
+        # защита (если включена)
         if settings.webhook_secret:
             if x_telegram_bot_api_secret_token != settings.webhook_secret:
                 raise HTTPException(status_code=401, detail="bad secret token")
 
-        try:
-            raw = await request.json()
-        except Exception:
-            # Telegram иногда шлёт странное — не падаем
-            return JSONResponse({"ok": True})
-
-        upd = Update.parse(raw)  # нормализуем в dict
+        raw = await request.json()
+        upd = Update.parse(raw)
 
         try:
             await router.handle_update(upd)
         except Exception as e:
             log.exception("Unhandled error: %s", e)
 
-        # Telegram должен получать 200 всегда
+        # Telegram всегда 200
         return JSONResponse({"ok": True})
 
     @app.on_event("shutdown")
@@ -75,5 +68,5 @@ def create_app() -> FastAPI:
     return app
 
 
-# Render/uvicorn entrypoint:
+# Render/uvicorn entrypoint
 app = create_app()
