@@ -1,53 +1,81 @@
 # app/services/brain/memory.py
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Any
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
 class InMemoryStore:
     """
-    Простейшая память: хранит последние N сообщений на чат.
-    Совместима с твоими вызовами:
-      - InMemoryStore(memory_max_turns=...)
-      - store.add/get/clear/stats
-      - store.set_profile(...) (на случай фолбэка)
+    Память в RAM (Render free тоже ок).
+    Хранит:
+    - историю сообщений (для ИИ)
+    - профиль пользователя (для настроек/кнопок)
+    - простую статистику
+
+    Ничего не режем: поддерживаем любые поля профиля.
     """
     memory_max_turns: int = 20
-    _data: Dict[int, List[dict]] = field(default_factory=dict)
-    _profiles: Dict[int, dict] = field(default_factory=dict)
 
-    def __init__(self, memory_max_turns: int = 20, max_turns: int | None = None):
-        if max_turns is not None:
-            memory_max_turns = max_turns
-        self.memory_max_turns = int(memory_max_turns or 20)
-        self._data = {}
-        self._profiles = {}
+    _history: Dict[int, List[dict]] = field(default_factory=dict)
+    _profiles: Dict[int, Dict[str, Any]] = field(default_factory=dict)
 
+    # -------- history --------
     def add(self, chat_id: int, role: str, content: str) -> None:
-        arr = self._data.setdefault(int(chat_id), [])
+        if not chat_id:
+            return
+        role = (role or "").strip()
+        if role not in ("user", "assistant", "system"):
+            role = "user"
+
+        content = "" if content is None else str(content)
+
+        arr = self._history.setdefault(chat_id, [])
         arr.append({"role": role, "content": content})
-        # держим только последние 2*turns (user+assistant)
-        limit = max(2, self.memory_max_turns * 2)
-        if len(arr) > limit:
-            self._data[int(chat_id)] = arr[-limit:]
+
+        # ограничение памяти
+        if self.memory_max_turns and len(arr) > self.memory_max_turns:
+            self._history[chat_id] = arr[-self.memory_max_turns :]
 
     def get(self, chat_id: int) -> List[dict]:
-        return list(self._data.get(int(chat_id), []))
+        return list(self._history.get(chat_id, []) or [])
 
     def clear(self, chat_id: int) -> None:
-        self._data.pop(int(chat_id), None)
+        self._history.pop(chat_id, None)
+        # профиль НЕ трогаем при очистке памяти (это важно)
+        # если нужен полный сброс — Router вызывает profiles.reset()
 
-    def stats(self, chat_id: int) -> dict:
-        arr = self._data.get(int(chat_id), [])
-        return {"turns": len(arr), "max_turns": self.memory_max_turns}
+    def stats(self, chat_id: int) -> Dict[str, Any]:
+        h = self._history.get(chat_id, []) or []
+        p = self._profiles.get(chat_id, {}) or {}
+        return {
+            "turns": len(h),
+            "max_turns": self.memory_max_turns,
+            "has_profile": bool(p),
+            "profile_keys": list(p.keys())[:20],
+        }
 
-    # optional fallback profile storage
-    def set_profile(self, chat_id: int, patch: dict) -> None:
-        base = self._profiles.get(int(chat_id), {})
-        base.update(patch or {})
-        self._profiles[int(chat_id)] = base
+    # -------- profile --------
+    def get_profile(self, chat_id: int) -> Dict[str, Any]:
+        return dict(self._profiles.get(chat_id, {}) or {})
 
-    def get_profile(self, chat_id: int) -> dict:
-        return dict(self._profiles.get(int(chat_id), {}))
+    def set_profile(self, chat_id: int, patch: Dict[str, Any]) -> None:
+        if not chat_id:
+            return
+        cur = self._profiles.get(chat_id, {}) or {}
+        if not isinstance(cur, dict):
+            cur = {}
+        if not isinstance(patch, dict):
+            patch = {}
+
+        # обновляем поля, не удаляем существующие
+        for k, v in patch.items():
+            if v is None:
+                continue
+            cur[str(k)] = v
+        self._profiles[chat_id] = cur
+
+    def wipe_profile(self, chat_id: int) -> None:
+        self._profiles.pop(chat_id, None)
