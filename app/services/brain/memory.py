@@ -4,78 +4,90 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+import time
 
 
 @dataclass
 class InMemoryStore:
     """
-    Память в RAM (Render free тоже ок).
-    Хранит:
-    - историю сообщений (для ИИ)
-    - профиль пользователя (для настроек/кнопок)
-    - простую статистику
+    Один store = 2 сущности (НЕ ПУТАЕМ):
+    1) history: список сообщений user/assistant для AI
+    2) profile: настройки пользователя (game/platform/input/difficulty/voice/role/bf6_class)
 
-    Ничего не режем: поддерживаем любые поля профиля.
+    Это убирает главную боль:
+    - бот "молчит" / "тупит" из-за того, что профиль случайно читается как история или наоборот
+    - настройки не сохраняются, voice не влияет и кажется что AI "одинаковый"
     """
+
     memory_max_turns: int = 20
 
-    _history: Dict[int, List[dict]] = field(default_factory=dict)
+    # chat_id -> list[{"role": "...", "content": "...", "ts": ...}]
+    _history: Dict[int, List[Dict[str, Any]]] = field(default_factory=dict)
+
+    # chat_id -> dict profile
     _profiles: Dict[int, Dict[str, Any]] = field(default_factory=dict)
 
-    # -------- history --------
+    # ---------------- HISTORY API ----------------
     def add(self, chat_id: int, role: str, content: str) -> None:
         if not chat_id:
             return
-        role = (role or "").strip()
-        if role not in ("user", "assistant", "system"):
-            role = "user"
+        r = (role or "").strip().lower()
+        if r not in ("user", "assistant", "system"):
+            r = "user"
+        msg = {"role": r, "content": str(content), "ts": int(time.time())}
 
-        content = "" if content is None else str(content)
+        arr = self._history.setdefault(int(chat_id), [])
+        arr.append(msg)
 
-        arr = self._history.setdefault(chat_id, [])
-        arr.append({"role": role, "content": content})
+        # ограничение по длине: max_turns = пары user+assistant, поэтому держим 2x
+        limit = max(2, int(self.memory_max_turns) * 2)
+        if len(arr) > limit:
+            self._history[int(chat_id)] = arr[-limit:]
 
-        # ограничение памяти
-        if self.memory_max_turns and len(arr) > self.memory_max_turns:
-            self._history[chat_id] = arr[-self.memory_max_turns :]
-
-    def get(self, chat_id: int) -> List[dict]:
-        return list(self._history.get(chat_id, []) or [])
+    def get(self, chat_id: int) -> List[Dict[str, Any]]:
+        return list(self._history.get(int(chat_id), []) or [])
 
     def clear(self, chat_id: int) -> None:
-        self._history.pop(chat_id, None)
-        # профиль НЕ трогаем при очистке памяти (это важно)
-        # если нужен полный сброс — Router вызывает profiles.reset()
+        self._history.pop(int(chat_id), None)
 
     def stats(self, chat_id: int) -> Dict[str, Any]:
-        h = self._history.get(chat_id, []) or []
-        p = self._profiles.get(chat_id, {}) or {}
+        h = self._history.get(int(chat_id), []) or []
+        p = self._profiles.get(int(chat_id), {}) or {}
         return {
             "turns": len(h),
-            "max_turns": self.memory_max_turns,
-            "has_profile": bool(p),
-            "profile_keys": list(p.keys())[:20],
+            "max_turns": int(self.memory_max_turns),
+            "profile_keys": sorted(list(p.keys())) if isinstance(p, dict) else [],
         }
 
-    # -------- profile --------
+    # ---------------- PROFILE API ----------------
     def get_profile(self, chat_id: int) -> Dict[str, Any]:
-        return dict(self._profiles.get(chat_id, {}) or {})
+        v = self._profiles.get(int(chat_id))
+        return dict(v) if isinstance(v, dict) else {}
 
     def set_profile(self, chat_id: int, patch: Dict[str, Any]) -> None:
         if not chat_id:
             return
-        cur = self._profiles.get(chat_id, {}) or {}
+        cur = self._profiles.get(int(chat_id))
         if not isinstance(cur, dict):
             cur = {}
-        if not isinstance(patch, dict):
-            patch = {}
+        if isinstance(patch, dict):
+            # patch merge
+            for k, v in patch.items():
+                if v is None:
+                    continue
+                cur[str(k)] = v
+        self._profiles[int(chat_id)] = cur
 
-        # обновляем поля, не удаляем существующие
-        for k, v in patch.items():
-            if v is None:
-                continue
-            cur[str(k)] = v
-        self._profiles[chat_id] = cur
+    # совместимость с ProfileService (на всякий)
+    def read_profile(self, chat_id: int) -> Dict[str, Any]:
+        return self.get_profile(chat_id)
 
-    def wipe_profile(self, chat_id: int) -> None:
-        self._profiles.pop(chat_id, None)
+    def write_profile(self, chat_id: int, prof: Dict[str, Any]) -> None:
+        # перезапись целиком
+        if not isinstance(prof, dict):
+            return
+        self._profiles[int(chat_id)] = dict(prof)
+
+    # иногда удобно
+    def reset_profile(self, chat_id: int) -> None:
+        self._profiles.pop(int(chat_id), None)
