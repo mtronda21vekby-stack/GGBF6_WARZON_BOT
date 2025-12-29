@@ -2,7 +2,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from typing import Dict
 
+
+# =========================
+# PREMIUM MAIN QUICKBAR
+# =========================
 def kb_main() -> dict:
     return {
         "keyboard": [
@@ -18,7 +23,26 @@ def kb_main() -> dict:
     }
 
 
-# -------- ИГРЫ --------
+# =========================
+# SETTINGS ROOT
+# =========================
+def kb_settings() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🎮 Выбрать игру"}],
+            [{"text": "🖥 Платформа"}, {"text": "⌨️ Input"}],
+            [{"text": "😈 Режим мышления"}],
+            [{"text": "🧩 Настройки игры"}],  # пер-игровые настройки
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+# =========================
+# GAMES
+# =========================
 def kb_games() -> dict:
     return {
         "keyboard": [
@@ -31,7 +55,9 @@ def kb_games() -> dict:
     }
 
 
-# -------- ПЛАТФОРМА --------
+# =========================
+# PLATFORM
+# =========================
 def kb_platform() -> dict:
     return {
         "keyboard": [
@@ -43,7 +69,9 @@ def kb_platform() -> dict:
     }
 
 
-# -------- INPUT --------
+# =========================
+# INPUT
+# =========================
 def kb_input() -> dict:
     return {
         "keyboard": [
@@ -55,7 +83,9 @@ def kb_input() -> dict:
     }
 
 
-# -------- РЕЖИМ МЫШЛЕНИЯ --------
+# =========================
+# DIFFICULTY / MODE
+# =========================
 def kb_difficulty() -> dict:
     return {
         "keyboard": [
@@ -67,22 +97,9 @@ def kb_difficulty() -> dict:
     }
 
 
-# -------- НАСТРОЙКИ (КОНТЕЙНЕР) --------
-def kb_settings() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🎮 Выбрать игру"}],
-            [{"text": "🖥 Платформа"}, {"text": "⌨️ Input"}],
-            [{"text": "😈 Режим мышления"}],
-            [{"text": "🧩 Настройки игры"}],
-            [{"text": "⬅️ Назад"}],
-        ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-    }
-
-
-# -------- BF6: CLASSES --------
+# =========================
+# BF6 CLASSES
+# =========================
 def kb_bf6_classes() -> dict:
     return {
         "keyboard": [
@@ -95,11 +112,31 @@ def kb_bf6_classes() -> dict:
     }
 
 
-# -------- GAME SETTINGS MENUS (per world) --------
-def kb_game_settings_menu(game: str) -> dict:
-    game = (game or "AUTO").strip()
+# =========================
+# WZ/BO7 ROLES (не режем)
+# =========================
+def kb_roles() -> dict:
+    # универсальные роли для CoD режимов
+    return {
+        "keyboard": [
+            [{"text": "⚔️ Slayer"}, {"text": "🚪 Entry"}],
+            [{"text": "🧠 IGL"}, {"text": "🛡 Support"}],
+            [{"text": "🌀 Flex"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
 
-    if game == "BF6":
+
+# =========================
+# GAME SETTINGS MENU (per world)
+# =========================
+def kb_game_settings_menu(game: str) -> dict:
+    g = (game or "Warzone").strip()
+
+    # BF6 — отдельное меню с классом и тюнингами
+    if g == "BF6":
         return {
             "keyboard": [
                 [{"text": "🪖 BF6: Class Settings"}],
@@ -111,34 +148,14 @@ def kb_game_settings_menu(game: str) -> dict:
             "is_persistent": True,
         }
 
-    if game == "Warzone":
-        return {
-            "keyboard": [
-                [{"text": "🎯 Warzone: Aim"}],
-                [{"text": "🌀 Warzone: Movement/Positioning"}],
-                [{"text": "🎮 Warzone: Controller"}, {"text": "⌨️ Warzone: KBM"}],
-                [{"text": "⬅️ Назад"}],
-            ],
-            "resize_keyboard": True,
-            "is_persistent": True,
-        }
-
-    if game == "BO7":
-        return {
-            "keyboard": [
-                [{"text": "🎯 BO7: Aim"}],
-                [{"text": "🌀 BO7: Movement/Positioning"}],
-                [{"text": "🎮 BO7: Controller"}, {"text": "⌨️ BO7: KBM"}],
-                [{"text": "⬅️ Назад"}],
-            ],
-            "resize_keyboard": True,
-            "is_persistent": True,
-        }
-
-    # fallback
+    # Warzone / BO7 — устройство-зависимые пакеты
     return {
         "keyboard": [
-            [{"text": "AUTO: Movement/Positioning"}],
+            [{"text": f"🎯 {g}: Aim/Sens"}],
+            [{"text": f"🎮 {g}: Controller Tuning"}, {"text": f"⌨️ {g}: KBM Tuning"}],
+            [{"text": f"🧠 {g}: Movement/Positioning"}],
+            [{"text": f"🎧 {g}: Audio/Visual"}],
+            [{"text": f"🎭 {g}: Role Setup"}],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
