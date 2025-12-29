@@ -23,7 +23,7 @@ def _fmt(title: str, lines: List[str]) -> str:
 def _ensure_profile(x: Any) -> Dict[str, Any]:
     """
     Роутер иногда передаёт 'Ashes'/'Astra' строкой.
-    Мы приводим к профилю, чтобы ВСЕ функции работали стабильно.
+    Приводим к профилю, чтобы всё работало стабильно.
     """
     if isinstance(x, dict):
         return x
@@ -39,7 +39,8 @@ def _norm_map(profile_or_name: Any) -> str:
 
 
 # =========================================================
-# ZOMBIES — HUB / HOME (router ожидает zombies_hub_text)
+# ZOMBIES — HUB / HOME
+# (router ожидает zombies_hub_text)
 # =========================================================
 def zombies_hub_text(profile_or_name: Any) -> str:
     m = _norm_map(profile_or_name)
@@ -63,6 +64,7 @@ def zombies_hub_text(profile_or_name: Any) -> str:
 
 
 def zombies_home_text(profile_or_name: Any) -> str:
+    # совместимость (если где-то зовётся home)
     return zombies_hub_text(profile_or_name)
 
 
@@ -70,8 +72,8 @@ def zombies_maps_text(profile_or_name: Optional[Any] = None) -> str:
     return _fmt(
         "🗺 ZOMBIES — КАРТЫ",
         [
-            "🧟 Ashes — проще для соло: игра от позиции/двух выходов.",
-            "🧟 Astra — динамика/мувмент: лучше в коопе, на месте не стоять.",
+            "🧟 Ashes — проще для соло: позиционка + два выхода.",
+            "🧟 Astra — темп/мувмент: лучше в коопе, на месте не стоять.",
             "",
             "Мини-выбор:",
             "• новичок соло → Ashes до ~20",
@@ -362,7 +364,9 @@ def zombies_map_quick_tips_text(profile_or_name: Any) -> str:
     return zombies_quick_tips_text(profile_or_name)
 
 
-# Доп. алиасы на всякий (если где-то в будущем будут дергаться)
+# =========================================================
+# EXTRA ALIASES (на будущее/совместимость)
+# =========================================================
 def zombies_map_weapons_text(profile_or_name: Any) -> str:
     return zombies_map_loadout_text(profile_or_name)
 
