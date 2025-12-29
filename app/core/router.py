@@ -26,6 +26,15 @@ from app.worlds.bf6.presets import (
     bf6_kbm_tuning_text,
 )
 
+from app.worlds.warzone.presets import (
+    warzone_role_setup_text,
+    warzone_aim_sens_text,
+    warzone_controller_tuning_text,
+    warzone_kbm_tuning_text,
+    warzone_movement_positioning_text,
+    warzone_audio_visual_text,
+)
+
 
 def _safe_get(d: dict, path: list, default=None):
     cur = d
@@ -237,7 +246,33 @@ class Router:
             await self._send_main(chat_id, bf6_class_text(self._get_profile(chat_id)))
             return
 
-        # ---------- BF6 world settings ----------
+        # ---------- GAME SETTINGS MENUS CONTENT ----------
+        # Warzone (RU)
+        if text == "🎭 Warzone: Роль":
+            await self._send(chat_id, "🎭 Warzone: выбери роль:", kb_roles())
+            return
+
+        if text == "🎯 Warzone: Aim/Sens":
+            await self._send_main(chat_id, warzone_aim_sens_text(self._get_profile(chat_id)))
+            return
+
+        if text == "🎮 Warzone: Controller":
+            await self._send_main(chat_id, warzone_controller_tuning_text(self._get_profile(chat_id)))
+            return
+
+        if text == "⌨️ Warzone: KBM":
+            await self._send_main(chat_id, warzone_kbm_tuning_text(self._get_profile(chat_id)))
+            return
+
+        if text == "🧠 Warzone: Мувмент/Позиционка":
+            await self._send_main(chat_id, warzone_movement_positioning_text(self._get_profile(chat_id)))
+            return
+
+        if text == "🎧 Warzone: Аудио/Видео":
+            await self._send_main(chat_id, warzone_audio_visual_text(self._get_profile(chat_id)))
+            return
+
+        # BF6 (EN device settings)
         if text in ("🪖 BF6: Class Settings", "🪖 BF6 Class Settings"):
             await self._send(chat_id, "🪖 Pick BF6 class:", kb_bf6_classes())
             return
