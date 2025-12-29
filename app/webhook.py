@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.observability.log import setup_logging, get_logger
+from app.adapters.telegram.types import Update
 from app.adapters.telegram.client import TelegramClient
 from app.core.router import Router
 from app.services.brain.engine import BrainEngine
@@ -23,12 +24,10 @@ def create_app() -> FastAPI:
 
     tg = TelegramClient(settings.bot_token)
 
-    # IMPORTANT: Store должен принимать разные имена аргументов (мы это починим в memory.py)
     store = InMemoryStore(memory_max_turns=getattr(settings, "memory_max_turns", 20))
     profiles = ProfileService(store=store)
     brain = BrainEngine(store=store, profiles=profiles, settings=settings)
 
-    # IMPORTANT: передаём store в Router (иначе память/статус/очистка не работают)
     router = Router(tg=tg, brain=brain, profiles=profiles, store=store, settings=settings)
 
     @app.get("/")
@@ -44,16 +43,15 @@ def create_app() -> FastAPI:
         request: Request,
         x_telegram_bot_api_secret_token: str | None = Header(default=None),
     ):
-        # защита от левых запросов
         if getattr(settings, "webhook_secret", ""):
             if x_telegram_bot_api_secret_token != settings.webhook_secret:
                 raise HTTPException(status_code=401, detail="bad secret token")
 
         raw = await request.json()
+        upd = Update.parse(raw)
 
         try:
-            # IMPORTANT: в роутер отдаём СЫРОЙ dict (100% совместимо)
-            await router.handle_update(raw)
+            await router.handle_update(upd)
         except Exception as e:
             log.exception("Unhandled error: %s", e)
 
