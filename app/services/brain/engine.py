@@ -24,21 +24,28 @@ class BrainEngine:
         model = (getattr(self.settings, "openai_model", "gpt-4.1-mini") or "gpt-4.1-mini").strip()
         return AIHook(api_key=key, model=model), "OK"
 
-    async def reply(self, *, text: str, profile: Dict[str, Any], history: List[dict]) -> str:
-        """
-        ВАЖНО: async — чтобы AIHook.generate (async) работал нормально и бот не молчал.
-        """
+    def reply(self, *, text: str, profile: Dict[str, Any], history: List[dict]) -> str:
         ai, reason = self._ai()
         if not ai:
             return (
                 "🧠 ИИ: OFF\n"
                 f"Причина: {reason}\n\n"
-                "Render ENV проверь:\n"
-                "• OPENAI_API_KEY\n"
+                "Render ENV (Environment):\n"
+                "• OPENAI_API_KEY=...\n"
                 "• AI_ENABLED=1\n"
-                "• OPENAI_MODEL=gpt-4.1-mini\n"
-                "И сделай Restart сервиса после правок.\n"
+                "• OPENAI_MODEL=gpt-4.1-mini (или другой)\n"
             )
 
-        # AIHook.generate — async
-        return await ai.generate(profile=profile, history=history, user_text=text)
+        # нормализуем историю до списка сообщений
+        hist = history or []
+        try:
+            return ai.generate(profile=profile, history=hist, user_text=text)
+        except Exception as e:
+            return (
+                "🧠 ИИ: ERROR\n"
+                f"{type(e).__name__}: {e}\n\n"
+                "Проверь:\n"
+                "• OPENAI_API_KEY\n"
+                "• AI_ENABLED=1\n"
+                "• OPENAI_MODEL\n"
+            )
