@@ -35,6 +35,15 @@ from app.worlds.warzone.presets import (
     warzone_audio_visual_text,
 )
 
+from app.worlds.bo7.presets import (
+    bo7_role_setup_text,
+    bo7_aim_sens_text,
+    bo7_controller_tuning_text,
+    bo7_kbm_tuning_text,
+    bo7_movement_positioning_text,
+    bo7_audio_visual_text,
+)
+
 
 def _safe_get(d: dict, path: list, default=None):
     cur = d
@@ -251,40 +260,52 @@ class Router:
         if text == "🎭 Warzone: Роль":
             await self._send(chat_id, "🎭 Warzone: выбери роль:", kb_roles())
             return
-
         if text == "🎯 Warzone: Aim/Sens":
             await self._send_main(chat_id, warzone_aim_sens_text(self._get_profile(chat_id)))
             return
-
         if text == "🎮 Warzone: Controller":
             await self._send_main(chat_id, warzone_controller_tuning_text(self._get_profile(chat_id)))
             return
-
         if text == "⌨️ Warzone: KBM":
             await self._send_main(chat_id, warzone_kbm_tuning_text(self._get_profile(chat_id)))
             return
-
         if text == "🧠 Warzone: Мувмент/Позиционка":
             await self._send_main(chat_id, warzone_movement_positioning_text(self._get_profile(chat_id)))
             return
-
         if text == "🎧 Warzone: Аудио/Видео":
             await self._send_main(chat_id, warzone_audio_visual_text(self._get_profile(chat_id)))
+            return
+
+        # BO7 (RU)
+        if text == "🎭 BO7: Роль":
+            await self._send(chat_id, "🎭 BO7: выбери роль:", kb_roles())
+            return
+        if text == "🎯 BO7: Aim/Sens":
+            await self._send_main(chat_id, bo7_aim_sens_text(self._get_profile(chat_id)))
+            return
+        if text == "🎮 BO7: Controller":
+            await self._send_main(chat_id, bo7_controller_tuning_text(self._get_profile(chat_id)))
+            return
+        if text == "⌨️ BO7: KBM":
+            await self._send_main(chat_id, bo7_kbm_tuning_text(self._get_profile(chat_id)))
+            return
+        if text == "🧠 BO7: Мувмент/Позиционка":
+            await self._send_main(chat_id, bo7_movement_positioning_text(self._get_profile(chat_id)))
+            return
+        if text == "🎧 BO7: Аудио/Видео":
+            await self._send_main(chat_id, bo7_audio_visual_text(self._get_profile(chat_id)))
             return
 
         # BF6 (EN device settings)
         if text in ("🪖 BF6: Class Settings", "🪖 BF6 Class Settings"):
             await self._send(chat_id, "🪖 Pick BF6 class:", kb_bf6_classes())
             return
-
         if text in ("🎯 BF6: Aim/Sens", "🎯 BF6 Aim/Sens"):
             await self._send_main(chat_id, bf6_aim_sens_text(self._get_profile(chat_id)))
             return
-
         if text in ("🎮 BF6: Controller Tuning", "🎮 BF6 Controller Tuning"):
             await self._send_main(chat_id, bf6_controller_tuning_text(self._get_profile(chat_id)))
             return
-
         if text in ("⌨️ BF6: KBM Tuning", "⌨️ BF6 KBM Tuning"):
             await self._send_main(chat_id, bf6_kbm_tuning_text(self._get_profile(chat_id)))
             return
