@@ -6,7 +6,6 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.observability.log import setup_logging, get_logger
-from app.adapters.telegram.types import Update
 from app.adapters.telegram.client import TelegramClient
 from app.core.router import Router
 from app.services.brain.engine import BrainEngine
@@ -24,7 +23,7 @@ def create_app() -> FastAPI:
 
     tg = TelegramClient(settings.bot_token)
 
-    store = InMemoryStore(memory_max_turns=getattr(settings, "memory_max_turns", 20))
+    store = InMemoryStore(memory_max_turns=settings.memory_max_turns)
     profiles = ProfileService(store=store)
     brain = BrainEngine(store=store, profiles=profiles, settings=settings)
 
@@ -43,18 +42,20 @@ def create_app() -> FastAPI:
         request: Request,
         x_telegram_bot_api_secret_token: str | None = Header(default=None),
     ):
-        if getattr(settings, "webhook_secret", ""):
+        # защита от левых запросов
+        if settings.webhook_secret:
             if x_telegram_bot_api_secret_token != settings.webhook_secret:
                 raise HTTPException(status_code=401, detail="bad secret token")
 
         raw = await request.json()
-        upd = Update.parse(raw)
 
         try:
-            await router.handle_update(upd)
+            # ВАЖНО: Router ждёт dict, а не объект Update
+            await router.handle_update(raw)
         except Exception as e:
-            log.exception("Unhandled error: %s", e)
+            log.exception("Unhandled error in router: %s", e)
 
+        # Telegram всегда 200
         return JSONResponse({"ok": True})
 
     @app.on_event("shutdown")
