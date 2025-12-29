@@ -2,11 +2,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Dict
-
 
 # =========================
-# PREMIUM MAIN QUICKBAR
+# PREMIUM MAIN QUICKBAR (нижняя клавиатура)
 # =========================
 def kb_main() -> dict:
     return {
@@ -17,14 +15,14 @@ def kb_main() -> dict:
             [{"text": "💎 Premium"}, {"text": "🧹 Очистить память"}, {"text": "🧨 Сброс"}],
         ],
         "resize_keyboard": True,
-        "is_persistent": True,
+        "is_persistent": True,          # закрепляет клавиатуру снизу (premium feel)
         "one_time_keyboard": False,
-        "input_field_placeholder": "Опиши ситуацию — разбор как от тиммейта…",
+        "input_field_placeholder": "Опиши ситуацию/смерть одной строкой — разбор как от тиммейта…",
     }
 
 
 # =========================
-# SETTINGS ROOT
+# SETTINGS ROOT (контейнер)
 # =========================
 def kb_settings() -> dict:
     return {
@@ -32,11 +30,13 @@ def kb_settings() -> dict:
             [{"text": "🎮 Выбрать игру"}],
             [{"text": "🖥 Платформа"}, {"text": "⌨️ Input"}],
             [{"text": "😈 Режим мышления"}],
-            [{"text": "🧩 Настройки игры"}],  # пер-игровые настройки
+            [{"text": "🧩 Настройки игры"}],  # per-world settings menu
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Выбери пункт настроек…",
     }
 
 
@@ -52,6 +52,7 @@ def kb_games() -> dict:
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
@@ -66,6 +67,7 @@ def kb_platform() -> dict:
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
@@ -80,11 +82,12 @@ def kb_input() -> dict:
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
 # =========================
-# DIFFICULTY / MODE
+# DIFFICULTY / BRAIN MODE
 # =========================
 def kb_difficulty() -> dict:
     return {
@@ -94,11 +97,12 @@ def kb_difficulty() -> dict:
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
 # =========================
-# BF6 CLASSES
+# BF6 CLASSES (EN)
 # =========================
 def kb_bf6_classes() -> dict:
     return {
@@ -109,34 +113,36 @@ def kb_bf6_classes() -> dict:
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
 # =========================
-# WZ/BO7 ROLES (не режем)
+# ROLES (Warzone/BO7) (RU/EN mix ok, ты хотел ultra-бот стиль)
 # =========================
 def kb_roles() -> dict:
-    # универсальные роли для CoD режимов
     return {
         "keyboard": [
-            [{"text": "⚔️ Slayer"}, {"text": "🚪 Entry"}],
-            [{"text": "🧠 IGL"}, {"text": "🛡 Support"}],
-            [{"text": "🌀 Flex"}],
+            [{"text": "⚔️ Slayer"}, {"text": "🚪 Entry"}, {"text": "🧠 IGL"}],
+            [{"text": "🛡 Support"}, {"text": "🌀 Flex"}],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
     }
 
 
 # =========================
-# GAME SETTINGS MENU (per world)
+# PER-WORLD GAME SETTINGS MENU
+# game = "Warzone" / "BO7" / "BF6"
+# Требование: у BF6 настройки на EN, у Warzone/BO7 — RU.
 # =========================
 def kb_game_settings_menu(game: str) -> dict:
     g = (game or "Warzone").strip()
+    g_up = g.upper()
 
-    # BF6 — отдельное меню с классом и тюнингами
-    if g == "BF6":
+    if g_up == "BF6":
         return {
             "keyboard": [
                 [{"text": "🪖 BF6: Class Settings"}],
@@ -146,18 +152,36 @@ def kb_game_settings_menu(game: str) -> dict:
             ],
             "resize_keyboard": True,
             "is_persistent": True,
+            "one_time_keyboard": False,
+            "input_field_placeholder": "BF6 settings (EN)…",
         }
 
-    # Warzone / BO7 — устройство-зависимые пакеты
+    if g_up == "BO7":
+        return {
+            "keyboard": [
+                [{"text": "🎭 BO7: Role Setup"}],
+                [{"text": "🎯 BO7: Aim/Sens"}],
+                [{"text": "🎮 BO7: Controller Tuning"}, {"text": "⌨️ BO7: KBM Tuning"}],
+                [{"text": "🧠 BO7: Movement/Positioning"}, {"text": "🎧 BO7: Audio/Visual"}],
+                [{"text": "⬅️ Назад"}],
+            ],
+            "resize_keyboard": True,
+            "is_persistent": True,
+            "one_time_keyboard": False,
+            "input_field_placeholder": "Настройки BO7…",
+        }
+
+    # default Warzone
     return {
         "keyboard": [
-            [{"text": f"🎯 {g}: Aim/Sens"}],
-            [{"text": f"🎮 {g}: Controller Tuning"}, {"text": f"⌨️ {g}: KBM Tuning"}],
-            [{"text": f"🧠 {g}: Movement/Positioning"}],
-            [{"text": f"🎧 {g}: Audio/Visual"}],
-            [{"text": f"🎭 {g}: Role Setup"}],
+            [{"text": "🎭 Warzone: Role Setup"}],
+            [{"text": "🎯 Warzone: Aim/Sens"}],
+            [{"text": "🎮 Warzone: Controller Tuning"}, {"text": "⌨️ Warzone: KBM Tuning"}],
+            [{"text": "🧠 Warzone: Movement/Positioning"}, {"text": "🎧 Warzone: Audio/Visual"}],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Настройки Warzone…",
     }
