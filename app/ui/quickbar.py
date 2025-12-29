@@ -220,3 +220,51 @@ def kb_game_settings_menu(game: str) -> dict:
         "one_time_keyboard": False,
         "input_field_placeholder": "Настройки Warzone…",
     }
+
+
+# =========================
+# ZOMBIES (RU) — отдельный мир
+# =========================
+def kb_zombies_home() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🗺 Карта"}, {"text": "⚡ Перки"}, {"text": "🔫 Оружие"}],
+            [{"text": "🧩 Пасхалки"}, {"text": "🧠 Тактика по раундам"}, {"text": "💀 Ошибки/вайпы"}],
+            [{"text": "🆘 Я застрял"}, {"text": "🔎 Поиск по гайду"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Zombies: раунд | карта | от чего падаешь | что открыл…",
+    }
+
+
+def kb_zombies_maps() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🔥 Ashes of the Damned"}, {"text": "🌙 Astra Malorum"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Выбери карту…",
+    }
+
+
+def kb_zombies_sections() -> dict:
+    # универсальная навигация по секциям карты
+    return {
+        "keyboard": [
+            [{"text": "🚀 Старт/маршрут"}, {"text": "⚡ Pack-a-Punch"}, {"text": "🔫 Чудо-оружие"}],
+            [{"text": "⚡ Перки (порядок)"}, {"text": "🔫 Оружие (2 слота)"}, {"text": "🧠 Ротации/позиции"}],
+            [{"text": "👹 Спец-зомби/боссы"}, {"text": "🧩 Пасхалка (основная)"}, {"text": "🎁 Мини-пасхалки"}],
+            [{"text": "💀 Ошибки/вайпы"}, {"text": "🧾 Чек-лист раунда"}, {"text": "🆘 Я застрял"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Напиши ключевое слово или выбери секцию…",
+    }
