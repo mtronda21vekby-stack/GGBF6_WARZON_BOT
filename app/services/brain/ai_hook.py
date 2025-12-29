@@ -4,21 +4,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
-import httpx
-
-try:
-    from openai import OpenAI
-except Exception:
-    OpenAI = None
+from openai import OpenAI
 
 
 def _difficulty_style(diff: str) -> str:
     d = (diff or "Normal").lower()
     if "demon" in d:
-        return "очень жёстко, коротко, ультра-практично, без воды"
+        return "DEMON"
     if "pro" in d:
-        return "строго, по делу, как капитан/коуч"
-    return "дружелюбно и понятно, но всё равно по делу"
+        return "PRO"
+    return "NORMAL"
 
 
 @dataclass
@@ -27,53 +22,53 @@ class AIHook:
     model: str = "gpt-4.1-mini"
 
     def generate(self, *, profile: Dict[str, Any], history: List[dict], user_text: str) -> str:
-        if OpenAI is None:
-            return "ИИ: ERROR\nopenai package not installed. Добавь в requirements: openai>=1.40.0"
+        client = OpenAI(api_key=self.api_key)
 
-        style = _difficulty_style(str(profile.get("difficulty", "Normal")))
         game = profile.get("game", "Warzone")
         platform = profile.get("platform", "PC")
-        inp = profile.get("input", "Controller")
+        input_ = profile.get("input", "Controller")
+        diff = profile.get("difficulty", "Normal")
         bf6_class = profile.get("bf6_class", "Assault")
+        style = _difficulty_style(diff)
 
-        system = (
-            "Ты — FPS coach и тиммейт топ уровня.\n"
-            f"Стиль ответа: {style}.\n"
-            "Формат: 1) Диагноз 2) СЕЙЧАС (3 пункта) 3) ДАЛЬШЕ (3 пункта) 4) Тренировка (2 упражнения).\n"
-            "Если не хватает данных — задай 2 коротких вопроса в конце, не больше.\n"
-            "Не пиши общие советы, всегда привязывай к ситуации.\n\n"
-            f"Профиль игрока:\n"
-            f"- game: {game}\n- platform: {platform}\n- input: {inp}\n- bf6_class: {bf6_class}\n"
-        )
+        system = f"""
+Ты — ultra-premium FPS Coach. Отвечай как живой сильный тиммейт: коротко, по делу, но умно.
+Стиль: {style}
+Правила:
+- Не отвечай шаблоном. Веди диалог.
+- Всегда уточняй 1-2 вещи ТОЛЬКО если реально нужно, иначе сразу давай план.
+- Формат ответа: 1) Диагноз (почему) 2) СЕЙЧАС (что делать прямо в бою) 3) ДАЛЬШЕ (тренировка/настройки)
+- Учитывай текущий мир: game/platform/input и если BF6 — класс.
+Контекст игрока:
+- game={game}, platform={platform}, input={input_}, bf6_class={bf6_class}, difficulty={diff}
+"""
 
-        msgs: List[dict] = [{"role": "system", "content": system}]
+        msgs = [{"role": "system", "content": system.strip()}]
 
-        # ограничим историю, но НЕ режем функционал
-        tail = (history or [])[-12:]
-        for m in tail:
-            r = m.get("role")
-            c = m.get("content")
-            if r in ("user", "assistant") and c:
-                msgs.append({"role": r, "content": str(c)})
+        # добавим последние N из памяти
+        for m in (history or [])[-20:]:
+            role = m.get("role")
+            content = m.get("content")
+            if role in ("user", "assistant") and content:
+                msgs.append({"role": role, "content": str(content)})
 
         msgs.append({"role": "user", "content": user_text})
 
         try:
-            client = OpenAI(api_key=self.api_key, timeout=30)
             resp = client.chat.completions.create(
                 model=self.model,
                 messages=msgs,
-                temperature=0.7,
+                temperature=0.7 if style != "NORMAL" else 0.6,
             )
             return resp.choices[0].message.content.strip()
-        except httpx.ConnectError as e:
-            return (
-                "ИИ: ERROR\nAPIConnectionError: Connection error.\n\n"
-                "Проверь в Render:\n"
-                "• OPENAI_API_KEY (валидный)\n"
-                "• AI_ENABLED=1\n"
-                "• outbound network не блокируется\n"
-                f"\nДетали: {e}"
-            )
         except Exception as e:
-            return f"ИИ: ERROR\n{type(e).__name__}: {e}"
+            # важно: не молчать, а показать причину
+            return (
+                "🤖 ИИ: ERROR\n"
+                f"{type(e).__name__}: {e}\n\n"
+                "Проверь:\n"
+                "• OPENAI_API_KEY\n"
+                "• AI_ENABLED=1\n"
+                "• requirements.txt: openai>=1.40.0\n"
+                "• доступ Render к интернету (free иногда тупит)\n"
+            )
