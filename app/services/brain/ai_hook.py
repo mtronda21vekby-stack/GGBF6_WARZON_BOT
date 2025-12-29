@@ -35,11 +35,12 @@ def _difficulty_style(diff: str) -> str:
 
 def _voice_mode(profile: Dict[str, Any]) -> str:
     """
-    voice_mode in profile:
-      - "TEAMMATE" => разговорно, по делу, с подколом
-      - "COACH"    => структурно, по пунктам, но без занудства
+    IMPORTANT:
+    В твоём проекте профиль хранит voice как "TEAMMATE"/"COACH".
+    Раньше тут читалось "voice_mode" -> из-за этого коуч мог не включаться.
+    Теперь поддерживаем ОБА ключа (voice и voice_mode), ничего не ломаем.
     """
-    v = _s((profile or {}).get("voice_mode"), "TEAMMATE").upper()
+    v = _s((profile or {}).get("voice") or (profile or {}).get("voice_mode"), "TEAMMATE").upper()
     return "COACH" if "COACH" in v else "TEAMMATE"
 
 
@@ -205,7 +206,6 @@ class AIHook:
         client = self._client()
         msgs = self._build_messages(profile, history or [], user_text)
 
-        # Ретраим max_attempts раз на сетевые фейлы
         last_err: Optional[Exception] = None
         temp = self._temperature(profile)
 
@@ -228,7 +228,6 @@ class AIHook:
                     )
                     text_out = (resp2.choices[0].message.content or "").strip()
 
-                # пустой ответ — тоже считаем ошибкой, но без падения
                 if not text_out:
                     return (
                         "🧠 ИИ вернул пустоту (да, бывает 😅).\n"
@@ -240,10 +239,8 @@ class AIHook:
 
             except Exception as e:
                 last_err = e
-                # backoff
                 time.sleep(self.base_sleep * attempt)
 
-        # Если упало после ретраев — выдаём полезную диагностику, НЕ крашим бот
         return (
             "🧠 ИИ: ERROR (после ретраев)\n"
             f"{type(last_err).__name__}: {last_err}\n\n"
