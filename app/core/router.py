@@ -28,6 +28,15 @@ from app.worlds.bf6.presets import (
     bf6_kbm_tuning_text,
 )
 
+# ---- Zombies (RU) world ----
+try:
+    from app.worlds.zombies import ZombiesWorld
+except Exception as e:
+    ZombiesWorld = None  # type: ignore
+    _ZOMBIES_IMPORT_ERR = e
+else:
+    _ZOMBIES_IMPORT_ERR = None
+
 # Warzone/BO7 presets (RU) — ты их уже вставил
 # ВАЖНО: если файл не найден/ошибка импорта — мы НЕ молчим, а пишем понятный текст.
 try:
@@ -139,6 +148,42 @@ def _role_map_ru_to_en(text: str) -> str:
     return m.get(text, "Flex")
 
 
+def _is_zombies_trigger(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    # все кнопки и команды зомби-мира
+    triggers = (
+        "🧟 Zombies",
+        "🗺 Карта",
+        "⚡ Перки",
+        "🔫 Оружие",
+        "🧩 Пасхалки",
+        "🧠 Тактика по раундам",
+        "💀 Ошибки/вайпы",
+        "🆘 Я застрял",
+        "🔎 Поиск по гайду",
+        "🔥 Ashes of the Damned",
+        "🌙 Astra Malorum",
+        "🚀 Старт/маршрут",
+        "⚡ Pack-a-Punch",
+        "🔫 Чудо-оружие",
+        "⚡ Перки (порядок)",
+        "🔫 Оружие (2 слота)",
+        "🧠 Ротации/позиции",
+        "👹 Спец-зомби/боссы",
+        "🧩 Пасхалка (основная)",
+        "🎁 Мини-пасхалки",
+        "🧾 Чек-лист раунда",
+    )
+    if t in triggers:
+        return True
+    # выбор по номеру после поиска
+    if t in ("1", "2", "3"):
+        return True
+    return False
+
+
 @dataclass
 class Router:
     tg: Any
@@ -146,6 +191,30 @@ class Router:
     profiles: Any = None
     store: Any = None
     settings: Any = None
+
+    # ленивый ZombiesWorld (чтобы не ломать импортами, если кто-то удалит файлы)
+    _zombies_world: Any = None
+
+    def _get_zombies_world(self):
+        if self._zombies_world is not None:
+            return self._zombies_world
+        if ZombiesWorld is None:
+            self._zombies_world = None
+            return None
+        try:
+            self._zombies_world = ZombiesWorld(tg=self.tg, profiles=self.profiles)
+        except Exception as e:
+            log.exception("ZombiesWorld init failed: %s", e)
+            self._zombies_world = None
+        return self._zombies_world
+
+    def _zombies_active(self, chat_id: int) -> bool:
+        p = self._get_profile(chat_id)
+        v = str(p.get("zombies_active", "")).strip().lower()
+        return v in ("1", "true", "yes", "on")
+
+    def _set_zombies_active(self, chat_id: int, active: bool) -> None:
+        self._set_profile_field(chat_id, "zombies_active", "1" if active else "0")
 
     async def handle_update(self, update: Dict[str, Any]) -> None:
         """
@@ -173,9 +242,39 @@ class Router:
             return
 
         # =========================
+        # ZOMBIES (делегирование ПЕРЕД "Назад", чтобы "⬅️ Назад" работал внутри Zombies)
+        # =========================
+        zw = self._get_zombies_world()
+        if zw is not None:
+            # если пользователь в zombies-контексте — пропускаем "⬅️ Назад" внутрь zombies
+            if self._zombies_active(chat_id) or _is_zombies_trigger(text):
+                try:
+                    handled = await zw.handle(chat_id, text)
+                except Exception as e:
+                    handled = False
+                    log.exception("Zombies handle failed: %s", e)
+                    await self._send_main(
+                        chat_id,
+                        "🧟 Zombies: ERROR\n"
+                        f"{type(e).__name__}: {e}\n\n"
+                        "Проверь, что файлы есть:\n"
+                        "• app/worlds/zombies/router.py\n"
+                        "• app/worlds/zombies/astra_malorum.py\n"
+                        "• app/worlds/zombies/ashes_of_damned.py\n",
+                    )
+
+                if handled:
+                    # включаем контекст зомби, чтобы кнопки/назад работали ожидаемо
+                    if text == "🧟 Zombies":
+                        self._set_zombies_active(chat_id, True)
+                    return
+
+        # =========================
         # COMMANDS
         # =========================
         if text in ("/start", "/menu", "Меню", "📋 Меню"):
+            # выход из зомби-контекста по старту/меню
+            self._set_zombies_active(chat_id, False)
             await self._send_main(
                 chat_id,
                 "🧠 FPS Coach Bot | Warzone / BO7 / BF6\n"
@@ -194,18 +293,22 @@ class Router:
         # MAIN PREMIUM QUICKBAR
         # =========================
         if text == "🎮 Игра":
+            self._set_zombies_active(chat_id, False)
             await self._on_game(chat_id)
             return
 
         if text == "⚙️ Настройки":
+            self._set_zombies_active(chat_id, False)
             await self._send(chat_id, "⚙️ Настройки (профиль):", kb_settings())
             return
 
         if text == "🎭 Роль/Класс":
+            self._set_zombies_active(chat_id, False)
             await self._on_role_or_class(chat_id)
             return
 
         if text in ("🧠 ИИ", "ИИ"):
+            self._set_zombies_active(chat_id, False)
             # ВАЖНО: НЕ подменяем текст и НЕ запускаем “шаблон-цикл”.
             prof = self._get_profile(chat_id)
             voice = _norm_voice(prof.get("voice", "TEAMMATE"))
@@ -222,6 +325,7 @@ class Router:
             return
 
         if text == "🎯 Тренировка":
+            self._set_zombies_active(chat_id, False)
             await self._send_main(
                 chat_id,
                 "🎯 Тренировка\n\n"
@@ -233,6 +337,7 @@ class Router:
             return
 
         if text == "🎬 VOD":
+            self._set_zombies_active(chat_id, False)
             await self._send_main(
                 chat_id,
                 "🎬 VOD (разбор)\n\n"
@@ -244,18 +349,29 @@ class Router:
             return
 
         if text == "🧟 Zombies":
-            # Зомби сейчас НЕ подключаем (как ты просил), но кнопку держим живой.
-            await self._send_main(
-                chat_id,
-                "🧟 Zombies\n\n"
-                "Зомби-режим сейчас НЕ трогаем (фиксируем UI/ИИ).\n"
-                "Позже воткнём карты Ashes/Astra и расширим инфу.\n\n"
-                "Если прямо сейчас горит:\n"
-                "карта | раунд | от чего падаешь | что открыл — дам план.",
-            )
+            # Если ZombiesWorld недоступен — честно скажем почему.
+            if zw is None:
+                why = ""
+                if _ZOMBIES_IMPORT_ERR:
+                    why = f"\nТехнически: {type(_ZOMBIES_IMPORT_ERR).__name__}: {_ZOMBIES_IMPORT_ERR}"
+                await self._send_main(
+                    chat_id,
+                    "🧟 Zombies сейчас не подключились.\n"
+                    "Проверь, что файлы существуют:\n"
+                    "• app/worlds/zombies/router.py\n"
+                    "• app/worlds/zombies/astra_malorum.py\n"
+                    "• app/worlds/zombies/ashes_of_damned.py\n"
+                    f"{why}",
+                )
+                return
+
+            # если ZombiesWorld есть, но по какой-то причине не отработал выше — покажем home
+            self._set_zombies_active(chat_id, True)
+            await zw.show_home(chat_id)
             return
 
         if text == "📌 Профиль":
+            self._set_zombies_active(chat_id, False)
             await self._on_profile(chat_id)
             return
 
@@ -264,6 +380,7 @@ class Router:
             return
 
         if text == "💎 Premium":
+            self._set_zombies_active(chat_id, False)
             await self._send(chat_id, "💎 Premium Hub:", kb_premium())
             return
 
@@ -279,16 +396,19 @@ class Router:
         # PREMIUM HUB
         # =========================
         if text == "🎙 Голос: Тиммейт/Коуч":
+            self._set_zombies_active(chat_id, False)
             await self._send(chat_id, "🎙 Выбери стиль общения:", kb_voice())
             return
 
         if text in ("🤝 Тиммейт", "📚 Коуч"):
+            self._set_zombies_active(chat_id, False)
             voice = "TEAMMATE" if "Тиммейт" in text else "COACH"
             self._set_profile_field(chat_id, "voice", voice)
             await self._send(chat_id, f"✅ Голос = {voice}", kb_premium())
             return
 
         if text == "🎯 Тренировка: План":
+            self._set_zombies_active(chat_id, False)
             await self._send_main(
                 chat_id,
                 "🎯 План тренировки (20 минут)\n"
@@ -300,6 +420,7 @@ class Router:
             return
 
         if text == "🎬 VOD: Разбор":
+            self._set_zombies_active(chat_id, False)
             await self._send_main(chat_id, "🎬 Кидай 3 таймкода + что хотел сделать. Разберу.")
             return
 
@@ -311,44 +432,54 @@ class Router:
         # SETTINGS FLOW (PROFILE)
         # =========================
         if text in ("⬅️ Назад", "Назад"):
+            # если не в zombies (там Back перехватывается выше) — возвращаемся в main
+            self._set_zombies_active(chat_id, False)
             await self._send_main(chat_id, "↩️ Ок. Меню снизу 👇")
             return
 
         if text == "🎮 Выбрать игру":
+            self._set_zombies_active(chat_id, False)
             await self._send(chat_id, "🎮 Выбери игру:", kb_games())
             return
 
         if text in ("🔥 Warzone", "💣 BO7", "🪖 BF6"):
+            self._set_zombies_active(chat_id, False)
             game = "Warzone" if "Warzone" in text else ("BO7" if "BO7" in text else "BF6")
             self._set_profile_field(chat_id, "game", game)
             await self._send(chat_id, f"✅ Игра = {game}", kb_settings())
             return
 
         if text == "🖥 Платформа":
+            self._set_zombies_active(chat_id, False)
             await self._send(chat_id, "🖥 Выбери платформу:", kb_platform())
             return
 
         if text in ("🖥 PC", "🎮 PlayStation", "🎮 Xbox"):
+            self._set_zombies_active(chat_id, False)
             platform = "PC" if "PC" in text else ("PlayStation" if "PlayStation" in text else "Xbox")
             self._set_profile_field(chat_id, "platform", platform)
             await self._send(chat_id, f"✅ Платформа = {platform}", kb_settings())
             return
 
         if text == "⌨️ Input":
+            self._set_zombies_active(chat_id, False)
             await self._send(chat_id, "⌨️ Выбери input:", kb_input())
             return
 
         if text in ("⌨️ KBM", "🎮 Controller"):
+            self._set_zombies_active(chat_id, False)
             inp = "KBM" if "KBM" in text else "Controller"
             self._set_profile_field(chat_id, "input", inp)
             await self._send(chat_id, f"✅ Input = {inp}", kb_settings())
             return
 
         if text == "😈 Режим мышления":
+            self._set_zombies_active(chat_id, False)
             await self._send(chat_id, "😈 Выбери режим:", kb_difficulty())
             return
 
         if text in ("🧠 Normal", "🔥 Pro", "😈 Demon"):
+            self._set_zombies_active(chat_id, False)
             diff = "Normal" if "Normal" in text else ("Pro" if "Pro" in text else "Demon")
             self._set_profile_field(chat_id, "difficulty", diff)
             await self._send(chat_id, f"✅ Режим = {diff}", kb_settings())
@@ -358,6 +489,7 @@ class Router:
         # GAME SETTINGS (PER WORLD)
         # =========================
         if text == "🧩 Настройки игры":
+            self._set_zombies_active(chat_id, False)
             prof = self._get_profile(chat_id)
             game = _norm_game(prof.get("game", "Warzone"))
             await self._send(chat_id, f"🧩 Настройки игры: {game}", kb_game_settings_menu(game))
@@ -367,6 +499,7 @@ class Router:
         # ROLE / CLASS PICK
         # =========================
         if text in ("⚔️ Слэйер", "🚪 Энтри", "🧠 IGL", "🛡 Саппорт", "🌀 Флекс"):
+            self._set_zombies_active(chat_id, False)
             role = _role_map_ru_to_en(text)
             self._set_profile_field(chat_id, "role", role)
             await self._send_main(
@@ -377,6 +510,7 @@ class Router:
             return
 
         if text in ("🟥 Assault", "🟦 Recon", "🟨 Engineer", "🟩 Medic"):
+            self._set_zombies_active(chat_id, False)
             cls = text.split(" ", 1)[-1].strip()
             self._set_profile_field(chat_id, "bf6_class", cls)
             await self._send_main(chat_id, bf6_class_text(self._get_profile(chat_id)))
@@ -390,11 +524,13 @@ class Router:
 
         # --- Warzone ---
         if text == "🎭 Warzone: Роль":
+            self._set_zombies_active(chat_id, False)
             self._set_profile_field(chat_id, "game", "Warzone")
             await self._send(chat_id, "🎭 Warzone: выбери роль:", kb_roles())
             return
 
         if text == "🎯 Warzone: Aim/Sens":
+            self._set_zombies_active(chat_id, False)
             if wz_aim_sens_text:
                 await self._send_main(chat_id, wz_aim_sens_text(self._get_profile(chat_id)))
             else:
@@ -402,6 +538,7 @@ class Router:
             return
 
         if text == "🎮 Warzone: Controller":
+            self._set_zombies_active(chat_id, False)
             if wz_controller_tuning_text:
                 await self._send_main(chat_id, wz_controller_tuning_text(self._get_profile(chat_id)))
             else:
@@ -409,6 +546,7 @@ class Router:
             return
 
         if text == "⌨️ Warzone: KBM":
+            self._set_zombies_active(chat_id, False)
             if wz_kbm_tuning_text:
                 await self._send_main(chat_id, wz_kbm_tuning_text(self._get_profile(chat_id)))
             else:
@@ -416,6 +554,7 @@ class Router:
             return
 
         if text == "🧠 Warzone: Мувмент/Позиционка":
+            self._set_zombies_active(chat_id, False)
             if wz_movement_positioning_text:
                 await self._send_main(chat_id, wz_movement_positioning_text(self._get_profile(chat_id)))
             else:
@@ -423,6 +562,7 @@ class Router:
             return
 
         if text == "🎧 Warzone: Аудио/Видео":
+            self._set_zombies_active(chat_id, False)
             if wz_audio_visual_text:
                 await self._send_main(chat_id, wz_audio_visual_text(self._get_profile(chat_id)))
             else:
@@ -431,11 +571,13 @@ class Router:
 
         # --- BO7 ---
         if text == "🎭 BO7: Роль":
+            self._set_zombies_active(chat_id, False)
             self._set_profile_field(chat_id, "game", "BO7")
             await self._send(chat_id, "🎭 BO7: выбери роль:", kb_roles())
             return
 
         if text == "🎯 BO7: Aim/Sens":
+            self._set_zombies_active(chat_id, False)
             if bo7_aim_sens_text:
                 await self._send_main(chat_id, bo7_aim_sens_text(self._get_profile(chat_id)))
             else:
@@ -443,6 +585,7 @@ class Router:
             return
 
         if text == "🎮 BO7: Controller":
+            self._set_zombies_active(chat_id, False)
             if bo7_controller_tuning_text:
                 await self._send_main(chat_id, bo7_controller_tuning_text(self._get_profile(chat_id)))
             else:
@@ -450,6 +593,7 @@ class Router:
             return
 
         if text == "⌨️ BO7: KBM":
+            self._set_zombies_active(chat_id, False)
             if bo7_kbm_tuning_text:
                 await self._send_main(chat_id, bo7_kbm_tuning_text(self._get_profile(chat_id)))
             else:
@@ -457,6 +601,7 @@ class Router:
             return
 
         if text == "🧠 BO7: Мувмент/Позиционка":
+            self._set_zombies_active(chat_id, False)
             if bo7_movement_positioning_text:
                 await self._send_main(chat_id, bo7_movement_positioning_text(self._get_profile(chat_id)))
             else:
@@ -464,6 +609,7 @@ class Router:
             return
 
         if text == "🎧 BO7: Аудио/Видео":
+            self._set_zombies_active(chat_id, False)
             if bo7_audio_visual_text:
                 await self._send_main(chat_id, bo7_audio_visual_text(self._get_profile(chat_id)))
             else:
@@ -472,21 +618,25 @@ class Router:
 
         # --- BF6 (EN settings menu ONLY) ---
         if text == "🪖 BF6: Class Settings":
+            self._set_zombies_active(chat_id, False)
             self._set_profile_field(chat_id, "game", "BF6")
             await self._send(chat_id, "🪖 Pick BF6 class:", kb_bf6_classes())
             return
 
         if text == "🎯 BF6: Aim/Sens":
+            self._set_zombies_active(chat_id, False)
             self._set_profile_field(chat_id, "game", "BF6")
             await self._send_main(chat_id, bf6_aim_sens_text(self._get_profile(chat_id)))
             return
 
         if text == "🎮 BF6: Controller Tuning":
+            self._set_zombies_active(chat_id, False)
             self._set_profile_field(chat_id, "game", "BF6")
             await self._send_main(chat_id, bf6_controller_tuning_text(self._get_profile(chat_id)))
             return
 
         if text == "⌨️ BF6: KBM Tuning":
+            self._set_zombies_active(chat_id, False)
             self._set_profile_field(chat_id, "game", "BF6")
             await self._send_main(chat_id, bf6_kbm_tuning_text(self._get_profile(chat_id)))
             return
@@ -541,6 +691,11 @@ class Router:
                             prof["voice"] = _norm_voice(prof.get("voice", "TEAMMATE"))
                             prof.setdefault("role", "Flex")
                             prof.setdefault("bf6_class", "Assault")
+                            # zombies state defaults (не ломаем старые профили)
+                            prof.setdefault("zombies_active", "0")
+                            prof.setdefault("zombies_map", "ashes")
+                            prof.setdefault("zombies_mode", "")
+                            prof.setdefault("zombies_search_last", "")
                             return prof
                     except Exception as e:
                         log.exception("profiles.get failed: %s", e)
@@ -554,6 +709,10 @@ class Router:
             "voice": "TEAMMATE",
             "role": "Flex",
             "bf6_class": "Assault",
+            "zombies_active": "0",
+            "zombies_map": "ashes",
+            "zombies_mode": "",
+            "zombies_search_last": "",
         }
 
     def _set_profile_field(self, chat_id: int, key: str, val: str) -> None:
@@ -603,7 +762,8 @@ class Router:
             f"• Brain Mode: {prof.get('difficulty')}\n"
             f"• Voice: {voice}\n"
             f"• Role: {prof.get('role')}\n"
-            f"• BF6 Class: {prof.get('bf6_class')}\n\n"
+            f"• BF6 Class: {prof.get('bf6_class')}\n"
+            f"• Zombies Map: {prof.get('zombies_map')}\n\n"
             "😄 Юмор: если всё выставил, но всё равно умираешь — значит пора не цифры менять, а решения.",
         )
 
@@ -625,6 +785,8 @@ class Router:
             f"• voice: {prof.get('voice')}",
             f"• role: {prof.get('role')}",
             f"• bf6_class: {prof.get('bf6_class')}",
+            f"• zombies_active: {prof.get('zombies_active')}",
+            f"• zombies_map: {prof.get('zombies_map')}",
         ]
         await self._send_main(chat_id, "📌 Профиль:\n" + "\n".join(lines))
 
@@ -643,11 +805,15 @@ class Router:
         ai_state = "ON" if (ai_enabled and ai_key) else "OFF"
         why = "OK" if ai_state == "ON" else ("OPENAI_API_KEY missing" if not ai_key else "AI_ENABLED=0")
 
+        z_state = "OK" if ZombiesWorld is not None else "OFF"
+        z_why = "OK" if z_state == "OK" else (f"{type(_ZOMBIES_IMPORT_ERR).__name__}: {_ZOMBIES_IMPORT_ERR}" if _ZOMBIES_IMPORT_ERR else "ZombiesWorld missing")
+
         await self._send_main(
             chat_id,
             "📊 Статус: OK\n"
             f"🧠 Memory: {mem or 'on'}\n"
-            f"🤖 AI: {ai_state} | model={model} | reason={why}\n\n"
+            f"🤖 AI: {ai_state} | model={model} | reason={why}\n"
+            f"🧟 Zombies: {z_state} | reason={z_why}\n\n"
             "Если AI OFF — это не демоны, это ENV-переменные 😄",
         )
 
@@ -670,6 +836,8 @@ class Router:
                 self.profiles.reset(chat_id)
             except Exception:
                 pass
+        # сбросим zombies active на всякий
+        self._set_zombies_active(chat_id, False)
         await self._send_main(chat_id, "🧨 Сброс выполнен ✅\nВернул дефолтные настройки.")
 
     # ---------------- AI chat ----------------
