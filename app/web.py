@@ -8,7 +8,12 @@ app = FastAPI(title="GGBF6 WARZON BOT")
 
 @app.get("/")
 def root():
-    return {"ok": True, "service": "ggbf6-warzon-bot"}
+    return {"ok": True, "service": "ggbf6-warzon-bot", "status": "alive"}
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "status": "healthy"}
 
 
 @app.post("/telegram/webhook/{secret}")
@@ -23,10 +28,9 @@ async def telegram_webhook(secret: str, request: Request):
         log.exception("Failed to parse JSON body")
         raise HTTPException(status_code=400, detail="bad json")
 
-    # ВАЖНО: webhook должен ВСЕГДА быстро отвечать 200,
-    # поэтому любые ошибки ловим и возвращаем {"ok": True}
+    # ВАЖНО: webhook должен ВСЕГДА быстро отвечать 200
+    # поэтому любые ошибки ловим и всё равно возвращаем {"ok": True}
     try:
-        # Точка интеграции: один-единственный обработчик Telegram
         from app.adapters.telegram.webhook import handle_update
         await handle_update(update)
     except Exception:
