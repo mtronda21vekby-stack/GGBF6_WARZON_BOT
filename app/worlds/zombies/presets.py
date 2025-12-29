@@ -322,35 +322,47 @@ def zombies_quick_tips_text(profile: Dict[str, Any]) -> str:
 
 # =========================================================
 # ROUTER-COMPAT ALIASES (ВАЖНО!)
-# Роутер часто импортирует эти имена.
-# Мы НЕ меняем твой контент — только добавляем “мостики”.
+# Роутер/меню могли ожидать эти имена.
+# Мы НЕ меняем контент — только добавляем “мостики”.
 # =========================================================
 def zombies_map_overview_text(profile: Dict[str, Any]) -> str:
     m = _norm_map(profile)
+    return astra_overview_text(profile) if m == "Astra" else ashes_overview_text(profile)
+
+
+def zombies_map_perks_text(profile: Dict[str, Any]) -> str:
+    m = _norm_map(profile)
+    return astra_perks_text(profile) if m == "Astra" else ashes_perks_text(profile)
+
+
+def zombies_map_weapons_text(profile: Dict[str, Any]) -> str:
+    m = _norm_map(profile)
+    return astra_weapons_text(profile) if m == "Astra" else ashes_weapons_text(profile)
+
+
+def zombies_map_easter_egg_text(profile: Dict[str, Any]) -> str:
+    m = _norm_map(profile)
+    return astra_easter_egg_text(profileresets = profile  # keep exact object reference
     if m == "Astra":
-        return astra_overview_text(profile)
-    return ashes_overview_text(profile)
+        return astra_easter_egg_text(profile)
+    return ashes_easter_egg_text(profile)
+
+
+def zombies_map_strategy_text(profile: Dict[str, Any]) -> str:
+    m = _norm_map(profile)
+    return astra_strategy_text(profile) if m == "Astra" else ashes_strategy_text(profile)
 
 
 def zombies_strategy_text(profile: Dict[str, Any]) -> str:
-    """
-    Если роутер просит zombies_strategy_text — отдаём стратегию по выбранной карте.
-    """
-    m = _norm_map(profile)
-    if m == "Astra":
-        return astra_strategy_text(profile)
-    return ashes_strategy_text(profile)
+    # иногда роутер просит zombies_strategy_text
+    return zombies_map_strategy_text(profile)
 
 
 def zombies_eggs_text(profile: Dict[str, Any]) -> str:
-    """
-    Иногда в роутере имя короткое: zombies_eggs_text
-    """
+    # иногда имя короткое
     return zombies_easter_eggs_text(profile)
 
 
 def zombies_rounds_text(profile: Dict[str, Any]) -> str:
-    """
-    Иногда: zombies_rounds_text
-    """
+    # иногда имя короткое
     return zombies_rounds_strategy_text(profile)
