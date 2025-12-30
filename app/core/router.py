@@ -1,8 +1,11 @@
+# app/services/router.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import inspect
+import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -169,33 +172,24 @@ def _role_map_ru_to_en(text: str) -> str:
 
 # =========================
 # PREMIUM DIALOG STYLE HELPERS
-# (НЕ ломают логику, просто делают подачу "дорогой")
 # =========================
 def _cap(s: str) -> str:
-    s = (s or "").strip()
-    return s
+    return (s or "").strip()
 
 
 def _sig(voice: str) -> str:
-    # короткая сигнатура в конце — премиум ощущение
     return "— BLACK CROWN OPS 😈" if voice == "COACH" else "— BCO 😈"
 
 
 def _wrap_premium(text: str, *, profile: dict) -> str:
-    """
-    Универсальная обёртка: визуально аккуратные блоки, без спама эмодзи,
-    без “ботовости”. НИЧЕГО не обрезает.
-    """
     voice = _norm_voice(profile.get("voice", "TEAMMATE"))
 
-    # не трогаем короткие системные сообщения типа "✅ ..." чтобы не засорять
     t = _cap(text)
     if not t:
         return t
     if t.startswith("✅") or t.startswith("❗️") or t.startswith("📊") or t.startswith("🧹") or t.startswith("🧨"):
         return t
 
-    # делаем аккуратный “премиум контейнер”
     header = "👑 BLACK CROWN OPS" if voice == "COACH" else "🖤 BLACK CROWN OPS"
     mode = "📚 КОУЧ" if voice == "COACH" else "🤝 ТИММЕЙТ"
     line = "━━━━━━━━━━━━━━━━━━"
@@ -210,9 +204,6 @@ def _wrap_premium(text: str, *, profile: dict) -> str:
 
 
 def _start_text(profile: dict) -> str:
-    """
-    Твой элитный старт. Не бот. TEAMMATE дефолт.
-    """
     voice = _norm_voice(profile.get("voice", "TEAMMATE"))
     mode_line = "🤝 ТИММЕЙТ — режим по умолчанию" if voice == "TEAMMATE" else "📚 КОУЧ — активен"
 
@@ -249,9 +240,17 @@ def _start_text(profile: dict) -> str:
         "Игра | input | где ты сейчас | где должен быть\n\n"
         "Дальше — контроль на моей стороне. 😈"
     )
-
-    # старт тоже в премиум контейнер
     return _wrap_premium(body, profile=profile)
+
+
+def _webapp_url() -> str:
+    url = (os.getenv("WEBAPP_URL") or "").strip()
+    if url:
+        return url
+    base = (os.getenv("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if base:
+        return base + "/webapp"
+    return ""
 
 
 @dataclass
@@ -268,10 +267,12 @@ class Router:
 
         chat_id: Optional[int] = None
         text: str = ""
+        webapp_data: Optional[str] = None
 
         if msg:
             chat_id = _safe_get(msg, ["chat", "id"])
             text = (msg.get("text") or "").strip()
+            webapp_data = _safe_get(msg, ["web_app_data", "data"])
         elif cbq:
             chat_id = _safe_get(cbq, ["message", "chat", "id"])
             text = (cbq.get("data") or "").strip()
@@ -279,6 +280,13 @@ class Router:
             return
 
         if not chat_id:
+            return
+
+        # =========================
+        # MINI APP PAYLOAD (Telegram WebApp)
+        # =========================
+        if webapp_data:
+            await self._on_webapp_data(chat_id, webapp_data)
             return
 
         # =========================
@@ -306,6 +314,40 @@ class Router:
 
         if text == "🎭 Роль/Класс":
             await self._on_role_or_class(chat_id)
+            return
+
+        if text == "🛰 MINI APP":
+            prof = self._get_profile(chat_id)
+            url = _webapp_url()
+            if url:
+                await self._send_main(
+                    chat_id,
+                    _wrap_premium(
+                        (
+                            "🛰 MINI APP готов.\n"
+                            "Нажми кнопку 🛰 MINI APP на клавиатуре — откроется панель.\n\n"
+                            "Если не открывается:\n"
+                            "• проверь WEBAPP_URL / PUBLIC_BASE_URL в Render\n"
+                            "• проверь что домен https\n"
+                        ),
+                        profile=prof,
+                    ),
+                )
+            else:
+                await self._send_main(
+                    chat_id,
+                    _wrap_premium(
+                        (
+                            "🛰 MINI APP пока не подключён.\n\n"
+                            "Нужно добавить в Render → Environment:\n"
+                            "• WEBAPP_URL=https://<твой-домен>/webapp\n"
+                            "или\n"
+                            "• PUBLIC_BASE_URL=https://<твой-домен>\n\n"
+                            "После этого кнопка откроет панель."
+                        ),
+                        profile=prof,
+                    ),
+                )
             return
 
         if text in ("🧠 ИИ", "ИИ"):
@@ -369,11 +411,7 @@ class Router:
             if zombies_hub_text:
                 await self._send(chat_id, _wrap_premium(zombies_hub_text(prof), profile=prof), kb_zombies_hub())
             else:
-                await self._send(
-                    chat_id,
-                    self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR),
-                    kb_zombies_hub(),
-                )
+                await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
             return
 
         if text == "📌 Профиль":
@@ -497,11 +535,7 @@ class Router:
         if text in ("⚔️ Слэйер", "🚪 Энтри", "🧠 IGL", "🛡 Саппорт", "🌀 Флекс"):
             role = _role_map_ru_to_en(text)
             self._set_profile_field(chat_id, "role", role)
-            await self._send_main(
-                chat_id,
-                f"✅ Роль = {role}\n"
-                "Теперь открой 🧩 Настройки игры — там будут цифры и детали 😈",
-            )
+            await self._send_main(chat_id, f"✅ Роль = {role}\nТеперь открой 🧩 Настройки игры — там будут цифры и детали 😈")
             return
 
         if text in ("🟥 Assault", "🟦 Recon", "🟨 Engineer", "🟩 Medic"):
@@ -568,7 +602,6 @@ class Router:
                 await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
             return
 
-        # map menu buttons (per-map)
         if text.startswith("🧟 ") and ":" in text:
             left, right = text.split(":", 1)
             map_name = left.replace("🧟", "").strip()
@@ -577,55 +610,31 @@ class Router:
             self._set_profile_field(chat_id, "zombies_map", map_name)
             prof = self._get_profile(chat_id)
 
-            if "обзор" in action:
-                if zombies_map_overview_text:
-                    await self._send(chat_id, _wrap_premium(zombies_map_overview_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
-                else:
-                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
+            if "обзор" in action and zombies_map_overview_text:
+                await self._send(chat_id, _wrap_premium(zombies_map_overview_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
+                return
+            if "перки" in action and zombies_map_perks_text:
+                await self._send(chat_id, _wrap_premium(zombies_map_perks_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
+                return
+            if "оружие" in action and zombies_map_loadout_text:
+                await self._send(chat_id, _wrap_premium(zombies_map_loadout_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
+                return
+            if "пасх" in action and zombies_map_easter_eggs_text:
+                await self._send(chat_id, _wrap_premium(zombies_map_easter_eggs_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
+                return
+            if "стратег" in action and zombies_map_round_strategy_text:
+                await self._send(chat_id, _wrap_premium(zombies_map_round_strategy_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
+                return
+            if ("быстр" in action or "совет" in action) and zombies_map_quick_tips_text:
+                await self._send(chat_id, _wrap_premium(zombies_map_quick_tips_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
                 return
 
-            if "перки" in action:
-                if zombies_map_perks_text:
-                    await self._send(chat_id, _wrap_premium(zombies_map_perks_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
-                else:
-                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
-                return
-
-            if "оружие" in action:
-                if zombies_map_loadout_text:
-                    await self._send(chat_id, _wrap_premium(zombies_map_loadout_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
-                else:
-                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
-                return
-
-            if "пасх" in action:
-                if zombies_map_easter_eggs_text:
-                    await self._send(chat_id, _wrap_premium(zombies_map_easter_eggs_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
-                else:
-                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
-                return
-
-            if "стратег" in action:
-                if zombies_map_round_strategy_text:
-                    await self._send(chat_id, _wrap_premium(zombies_map_round_strategy_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
-                else:
-                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
-                return
-
-            if "быстр" in action or "совет" in action:
-                if zombies_map_quick_tips_text:
-                    await self._send(chat_id, _wrap_premium(zombies_map_quick_tips_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
-                else:
-                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
-                return
+            await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
+            return
 
         # =========================
         # MENU ITEMS (MUST MATCH quickbar.py)
-        # Warzone/BO7 = RU
-        # BF6 settings menu = EN (ONLY BF6 settings are EN)
         # =========================
-
-        # --- Warzone ---
         if text == "🎭 Warzone: Роль":
             self._set_profile_field(chat_id, "game", "Warzone")
             await self._send(chat_id, "🎭 Warzone: выбери роль:", kb_roles())
@@ -671,7 +680,6 @@ class Router:
                 await self._send_main(chat_id, self._missing_presets_msg("warzone", _WARZONE_IMPORT_ERR))
             return
 
-        # --- BO7 ---
         if text == "🎭 BO7: Роль":
             self._set_profile_field(chat_id, "game", "BO7")
             await self._send(chat_id, "🎭 BO7: выбери роль:", kb_roles())
@@ -717,7 +725,6 @@ class Router:
                 await self._send_main(chat_id, self._missing_presets_msg("bo7", _BO7_IMPORT_ERR))
             return
 
-        # --- BF6 (EN settings menu ONLY) ---
         if text == "🪖 BF6: Class Settings":
             self._set_profile_field(chat_id, "game", "BF6")
             await self._send(chat_id, "🪖 Pick BF6 class:", kb_bf6_classes())
@@ -746,6 +753,58 @@ class Router:
         # =========================
         await self._chat_to_brain(chat_id, text)
 
+    # ---------------- MINI APP receiver ----------------
+    async def _on_webapp_data(self, chat_id: int, data: str) -> None:
+        prof = self._get_profile(chat_id)
+
+        payload = None
+        raw = (data or "").strip()
+        if not raw:
+            await self._send_main(chat_id, _wrap_premium("🛰 MINI APP прислал пустые данные.", profile=prof))
+            return
+
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = {"type": "text", "text": raw}
+
+        if not isinstance(payload, dict):
+            payload = {"type": "text", "text": raw}
+
+        ptype = str(payload.get("type") or "text").strip().lower()
+        text = str(payload.get("text") or payload.get("value") or "").strip()
+
+        if ptype in ("profile", "settings"):
+            for key in ("game", "platform", "input", "difficulty", "voice", "role", "bf6_class", "zombies_map"):
+                if key in payload and str(payload.get(key)).strip():
+                    self._set_profile_field(chat_id, key, str(payload.get(key)).strip())
+            prof = self._get_profile(chat_id)
+            await self._send_main(chat_id, _wrap_premium("✅ Настройки приняты из MINI APP.", profile=prof))
+            return
+
+        if ptype in ("vod",):
+            if not text:
+                text = "VOD из MINI APP: пришли 3 таймкода + что хотел сделать."
+            await self._send_main(chat_id, _wrap_premium(f"🎬 {text}", profile=prof))
+            return
+
+        if ptype in ("train", "training"):
+            if not text:
+                text = "Тренировка из MINI APP: игра | input | что болит | где умираешь"
+            await self._send_main(chat_id, _wrap_premium(f"🎯 {text}", profile=prof))
+            return
+
+        if ptype in ("ai", "chat", "text"):
+            if text:
+                await self._chat_to_brain(chat_id, text)
+                return
+
+        if text:
+            await self._chat_to_brain(chat_id, text)
+            return
+
+        await self._send_main(chat_id, _wrap_premium("🛰 MINI APP прислал данные, но без текста.", profile=prof))
+
     # ---------------- messaging helpers ----------------
     async def _send(self, chat_id: int, text: str, reply_markup: Optional[dict] = None) -> None:
         if reply_markup is None:
@@ -757,10 +816,7 @@ class Router:
 
     # ---------------- presets missing helper ----------------
     def _missing_presets_msg(self, world: str, err: Exception | None) -> str:
-        base = (
-            f"❗️Не вижу пресеты для {world}.\n"
-            "Проверь путь файла:\n"
-        )
+        base = f"❗️Не вижу пресеты для {world}.\nПроверь путь файла:\n"
         if world == "warzone":
             base += "• app/worlds/warzone/presets.py\n"
         elif world == "bo7":
@@ -769,7 +825,6 @@ class Router:
             base += "• app/worlds/zombies/presets.py\n"
         else:
             base += "• app/worlds/<world>/presets.py\n"
-
         if err:
             base += f"\nТехнически: {type(err).__name__}: {err}\n"
         base += "\nЮмор: «бот не тупой — он просто не видит файл» 😄"
@@ -788,7 +843,7 @@ class Router:
                             prof["platform"] = _norm_platform(prof.get("platform", "PC"))
                             prof["input"] = _norm_input(prof.get("input", "Controller"))
                             prof["difficulty"] = _norm_diff(prof.get("difficulty", "Normal"))
-                            prof["voice"] = _norm_voice(prof.get("voice", "TEAMMATE"))  # дефолт всегда TEAMMATE
+                            prof["voice"] = _norm_voice(prof.get("voice", "TEAMMATE"))
                             prof.setdefault("role", "Flex")
                             prof.setdefault("bf6_class", "Assault")
                             prof.setdefault("zombies_map", "Ashes")
@@ -796,7 +851,6 @@ class Router:
                     except Exception as e:
                         log.exception("profiles.get failed: %s", e)
 
-        # дефолтный профиль — TEAMMATE
         return {
             "game": "Warzone",
             "platform": "PC",
@@ -964,10 +1018,8 @@ class Router:
                     "• OPENAI_MODEL\n"
                 )
 
-        # Fallback — тоже делаем “элитно”
         if not reply:
             voice = _norm_voice(prof.get("voice", "TEAMMATE"))
-
             if voice == "COACH":
                 reply = (
                     "📚 Коуч (fallback | абсолютный контроль):\n"
@@ -999,5 +1051,4 @@ class Router:
             except Exception:
                 pass
 
-        # Премиум-обёртка для ВСЕХ AI-ответов (ничего не режет)
         await self._send_main(chat_id, _wrap_premium(str(reply), profile=prof))
