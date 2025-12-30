@@ -12,30 +12,37 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
 
-def _index():
-    return FileResponse(STATIC_DIR / "index.html")
+def _safe_file(path: str | None):
+    # index.html по умолчанию
+    if not path:
+        file_path = (STATIC_DIR / "index.html").resolve()
+        return file_path
 
-
-@router.get("/webapp", include_in_schema=False)
-def webapp_index():
-    return _index()
-
-
-@router.get("/webapp/", include_in_schema=False)
-def webapp_index_slash():
-    return _index()
-
-
-@router.get("/webapp/{path:path}", include_in_schema=False)
-def webapp_static(path: str):
     file_path = (STATIC_DIR / path).resolve()
 
     # защита от ../
     if not str(file_path).startswith(str(STATIC_DIR.resolve())):
-        return _index()
+        return (STATIC_DIR / "index.html").resolve()
 
+    # если файл существует — отдаём
     if file_path.exists() and file_path.is_file():
-        return FileResponse(file_path)
+        return file_path
 
     # SPA fallback
-    return _index()
+    return (STATIC_DIR / "index.html").resolve()
+
+
+@router.get("/webapp", include_in_schema=False)
+def webapp_index():
+    return FileResponse(_safe_file("index.html"))
+
+
+# ВОТ ЭТО ГЛАВНОЕ: поддержка /webapp/
+@router.get("/webapp/", include_in_schema=False)
+def webapp_index_slash():
+    return FileResponse(_safe_file("index.html"))
+
+
+@router.get("/webapp/{path:path}", include_in_schema=False)
+def webapp_static(path: str):
+    return FileResponse(_safe_file(path))
