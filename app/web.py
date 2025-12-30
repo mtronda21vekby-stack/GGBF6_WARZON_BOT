@@ -10,18 +10,13 @@ from app.observability.log import log
 app = FastAPI(title="GGBF6 WARZON BOT")
 
 # =========================================================
-# MINI APP (Telegram WebApp) — MAX / PRODUCTION-SAFE
-# ВАЖНО:
-# - У тебя структура: app/webapp/static/index.html + app/webapp/webapp_router.py
-# - Значит НУЖНО include_router, а не mount на папку app/webapp (иначе будет 404)
+# MINI APP (Telegram WebApp) — PRODUCTION-SAFE
+# Твоя структура: app/webapp/static/index.html + app/webapp/webapp_router.py
+# Значит подключаем router, а не mount на app/webapp
 # =========================================================
 try:
-    # app/webapp/webapp_router.py (у тебя уже есть)
     from app.webapp.webapp_router import router as webapp_router
-
-    # /webapp и /webapp/* будет отдавать index.html + статику из app/webapp/static
     app.include_router(webapp_router)
-
 except Exception as e:
     log.exception("Mini App router not loaded: %s", e)
 
@@ -37,23 +32,14 @@ except Exception as e:
             "<p>Fix the paths and redeploy.</p>"
         )
 
-
-# =========================================================
-# ROOT / HEALTH
-# =========================================================
 @app.get("/", include_in_schema=False)
 def root():
     return {"ok": True, "service": "ggbf6-warzon-bot", "status": "alive"}
-
 
 @app.get("/health", include_in_schema=False)
 def health():
     return {"ok": True, "status": "healthy"}
 
-
-# =========================================================
-# TELEGRAM WEBHOOK (FAST + SAFE)
-# =========================================================
 @app.post("/telegram/webhook/{secret}", include_in_schema=False)
 async def telegram_webhook(secret: str, request: Request):
     s = get_settings()
@@ -66,8 +52,6 @@ async def telegram_webhook(secret: str, request: Request):
         log.exception("Failed to parse JSON body")
         raise HTTPException(status_code=400, detail="bad json")
 
-    # ВАЖНО: webhook должен ВСЕГДА быстро отвечать 200
-    # поэтому любые ошибки ловим и всё равно возвращаем {"ok": True}
     try:
         from app.adapters.telegram.webhook import handle_update
         await handle_update(update)
