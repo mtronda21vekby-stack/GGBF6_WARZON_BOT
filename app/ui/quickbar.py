@@ -2,6 +2,39 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
+
+
+# =========================
+# MINI APP URL (Telegram WebApp)
+# =========================
+def _webapp_url() -> str:
+    """
+    Берём URL мини-аппа из ENV:
+      WEBAPP_URL=https://<host>/webapp
+    Если не задан — пробуем собрать из PUBLIC_BASE_URL:
+      PUBLIC_BASE_URL=https://<host>  -> /webapp
+    """
+    url = (os.getenv("WEBAPP_URL") or "").strip()
+    if url:
+        return url
+    base = (os.getenv("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if base:
+        return base + "/webapp"
+    return ""
+
+
+def _miniapp_button() -> dict:
+    """
+    Кнопка MINI APP:
+    - если URL есть -> web_app кнопка
+    - если URL нет -> обычная кнопка (не ломаем UI)
+    """
+    url = _webapp_url()
+    if url:
+        return {"text": "🛰 MINI APP", "web_app": {"url": url}}
+    return {"text": "🛰 MINI APP"}
+
 
 # =========================
 # PREMIUM MAIN QUICKBAR (нижняя клавиатура)
@@ -13,6 +46,7 @@ def kb_main() -> dict:
             [{"text": "🧠 ИИ"}, {"text": "🎯 Тренировка"}, {"text": "🎬 VOD"}],
             [{"text": "🧟 Zombies"}, {"text": "📌 Профиль"}, {"text": "📊 Статус"}],
             [{"text": "💎 Premium"}, {"text": "🧹 Очистить память"}, {"text": "🧨 Сброс"}],
+            [_miniapp_button()],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
@@ -31,6 +65,7 @@ def kb_premium() -> dict:
             [{"text": "😈 Режим мышления"}, {"text": "🧩 Настройки игры"}],
             [{"text": "🎯 Тренировка: План"}, {"text": "🎬 VOD: Разбор"}],
             [{"text": "🧠 Память: Статус"}],
+            [_miniapp_button()],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
