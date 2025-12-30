@@ -1,0 +1,203 @@
+:root{
+  --bg:#07070c;
+  --glass: rgba(255,255,255,.06);
+  --line: rgba(255,255,255,.10);
+  --txt: rgba(255,255,255,.92);
+  --muted: rgba(255,255,255,.62);
+  --gold: #d9b25a;
+  --shadow: 0 18px 60px rgba(0,0,0,.55);
+  --r: 18px;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family: -apple-system,BlinkMacSystemFont,Inter,Segoe UI,Roboto,Arial;
+  background: var(--bg);
+  color: var(--txt);
+  overflow:hidden;
+}
+
+.bg{
+  position:fixed; inset:-20px;
+  background:
+    radial-gradient(900px 700px at 20% 10%, rgba(217,178,90,.18), transparent 55%),
+    radial-gradient(900px 700px at 90% 30%, rgba(130,90,255,.16), transparent 60%),
+    radial-gradient(900px 700px at 50% 95%, rgba(0,190,255,.10), transparent 55%),
+    linear-gradient(180deg, #05050a, #07070c 35%, #07070c);
+  filter: saturate(1.08);
+}
+
+.top{
+  position:relative;
+  padding: 14px 14px 10px;
+  display:flex; gap:12px; align-items:center; justify-content:space-between;
+}
+
+.brand{display:flex; gap:10px; align-items:center;}
+.crown{
+  width:42px; height:42px;
+  display:grid; place-items:center;
+  border:1px solid var(--line);
+  background: var(--glass);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+.title .name{font-weight:800; letter-spacing:.4px}
+.title .sub{color:var(--muted); font-size:12px; margin-top:2px}
+
+.chip{
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.05);
+  color: var(--txt);
+  border-radius: 999px;
+  padding:10px 12px;
+  font-weight:700;
+  box-shadow: var(--shadow);
+}
+
+.wrap{
+  position:relative;
+  height: calc(100% - 68px);
+  padding: 0 14px 14px;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+
+.heroCard{
+  border:1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.04));
+  border-radius: var(--r);
+  padding:16px;
+  box-shadow: var(--shadow);
+}
+
+.kicker{
+  display:inline-block;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(217,178,90,.35);
+  background: rgba(217,178,90,.08);
+  color: rgba(217,178,90,.95);
+  font-weight:800;
+  font-size:12px;
+  letter-spacing:.6px;
+}
+
+.heroCard h1{
+  margin:12px 0 8px;
+  font-size:26px;
+  line-height:1.12;
+}
+.heroCard p{
+  margin:0 0 12px;
+  color: var(--muted);
+  line-height:1.35;
+}
+.hint{
+  margin-top:10px;
+  color: rgba(255,255,255,.65);
+  font-size:12.5px;
+}
+
+.ctaRow{display:flex; gap:10px; margin-top:10px;}
+.btnPrimary{
+  flex:1;
+  border:none;
+  border-radius: 14px;
+  padding:12px 14px;
+  font-weight:900;
+  color:#0b0b10;
+  background: linear-gradient(135deg, #f0d38a, #caa24c);
+  box-shadow: 0 18px 45px rgba(217,178,90,.20);
+}
+.btnGhost{
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.04);
+  color: var(--txt);
+  border-radius: 14px;
+  padding:12px 14px;
+  font-weight:900;
+}
+
+.chat{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.035);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  overflow:hidden;
+}
+
+.messages{
+  flex:1;
+  overflow:auto;
+  padding:12px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.msg{
+  max-width: 92%;
+  padding:10px 12px;
+  border-radius: 16px;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.05);
+  line-height:1.35;
+  white-space:pre-wrap;
+}
+.me{
+  margin-left:auto;
+  background: rgba(217,178,90,.08);
+  border-color: rgba(217,178,90,.22);
+}
+.ai{
+  margin-right:auto;
+}
+
+.composer{
+  display:flex;
+  gap:10px;
+  padding:10px;
+  border-top:1px solid var(--line);
+  background: rgba(0,0,0,.18);
+}
+.composer input{
+  flex:1;
+  border:1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.04);
+  color: var(--txt);
+  border-radius: 14px;
+  padding:12px 12px;
+  outline:none;
+}
+.send{
+  width:52px;
+  border:none;
+  border-radius: 14px;
+  font-weight:900;
+  color:#0b0b10;
+  background: linear-gradient(135deg, #f0d38a, #caa24c);
+}
+
+.mini{
+  display:flex;
+  gap:8px;
+  padding: 0 10px 10px;
+}
+.miniBtn{
+  flex:1;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.04);
+  color: rgba(255,255,255,.86);
+  border-radius: 12px;
+  padding:10px 8px;
+  font-weight:800;
+  font-size:12px;
+}
