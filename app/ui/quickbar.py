@@ -15,14 +15,14 @@ def kb_main() -> dict:
             [{"text": "💎 Premium"}, {"text": "🧹 Очистить память"}, {"text": "🧨 Сброс"}],
         ],
         "resize_keyboard": True,
-        "is_persistent": True,  # premium feel: закрепляем снизу
+        "is_persistent": True,
         "one_time_keyboard": False,
         "input_field_placeholder": "Опиши ситуацию/смерть одной строкой — разбор как от тиммейта…",
     }
 
 
 # =========================
-# PREMIUM HUB (быстрые функции)
+# PREMIUM HUB
 # =========================
 def kb_premium() -> dict:
     return {
@@ -41,7 +41,7 @@ def kb_premium() -> dict:
 
 
 # =========================
-# VOICE MODE (TEAMMATE/COACH)
+# VOICE MODE
 # =========================
 def kb_voice() -> dict:
     return {
@@ -57,7 +57,7 @@ def kb_voice() -> dict:
 
 
 # =========================
-# SETTINGS ROOT (контейнер)
+# SETTINGS ROOT
 # =========================
 def kb_settings() -> dict:
     return {
@@ -65,7 +65,7 @@ def kb_settings() -> dict:
             [{"text": "🎮 Выбрать игру"}],
             [{"text": "🖥 Платформа"}, {"text": "⌨️ Input"}],
             [{"text": "😈 Режим мышления"}],
-            [{"text": "🧩 Настройки игры"}],  # per-world settings menu
+            [{"text": "🧩 Настройки игры"}],
             [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
@@ -75,9 +75,6 @@ def kb_settings() -> dict:
     }
 
 
-# =========================
-# GAMES
-# =========================
 def kb_games() -> dict:
     return {
         "keyboard": [
@@ -91,9 +88,6 @@ def kb_games() -> dict:
     }
 
 
-# =========================
-# PLATFORM
-# =========================
 def kb_platform() -> dict:
     return {
         "keyboard": [
@@ -106,9 +100,6 @@ def kb_platform() -> dict:
     }
 
 
-# =========================
-# INPUT
-# =========================
 def kb_input() -> dict:
     return {
         "keyboard": [
@@ -121,9 +112,6 @@ def kb_input() -> dict:
     }
 
 
-# =========================
-# DIFFICULTY / BRAIN MODE
-# =========================
 def kb_difficulty() -> dict:
     return {
         "keyboard": [
@@ -136,9 +124,6 @@ def kb_difficulty() -> dict:
     }
 
 
-# =========================
-# BF6 CLASSES (EN)
-# =========================
 def kb_bf6_classes() -> dict:
     return {
         "keyboard": [
@@ -152,9 +137,6 @@ def kb_bf6_classes() -> dict:
     }
 
 
-# =========================
-# ROLES (Warzone/BO7) (RU labels -> values inside profile EN)
-# =========================
 def kb_roles() -> dict:
     return {
         "keyboard": [
@@ -168,11 +150,6 @@ def kb_roles() -> dict:
     }
 
 
-# =========================
-# PER-WORLD GAME SETTINGS MENU
-# game = "Warzone" / "BO7" / "BF6"
-# Требование: у BF6 настройки на EN, у Warzone/BO7 — RU.
-# =========================
 def kb_game_settings_menu(game: str) -> dict:
     g = (game or "Warzone").strip()
     g_up = g.upper()
@@ -206,10 +183,9 @@ def kb_game_settings_menu(game: str) -> dict:
             "input_field_placeholder": "Настройки BO7…",
         }
 
-    # default Warzone
     return {
         "keyboard": [
-            [{"text": "🎭 Warzone: Роль"}],
+            [{"text": "🎭 Warzone (Роль)"}] if False else [{"text": "🎭 Warzone: Роль"}],
             [{"text": "🎯 Warzone: Aim/Sens"}],
             [{"text": "🎮 Warzone: Controller"}, {"text": "⌨️ Warzone: KBM"}],
             [{"text": "🧠 Warzone: Мувмент/Позиционка"}, {"text": "🎧 Warzone: Аудио/Видео"}],
@@ -219,4 +195,54 @@ def kb_game_settings_menu(game: str) -> dict:
         "is_persistent": True,
         "one_time_keyboard": False,
         "input_field_placeholder": "Настройки Warzone…",
+    }
+
+
+# =========================================================
+# ZOMBIES (BACKWARD COMPAT)
+# ВАЖНО: эти функции НУЖНЫ, потому что у тебя где-то
+# всё ещё есть импорт kb_zombies_home из app.ui.quickbar
+# =========================================================
+
+def kb_zombies_home() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🗺 Карты"}, {"text": "🧪 Перки"}],
+            [{"text": "🔫 Оружие"}, {"text": "🥚 Пасхалки"}],
+            [{"text": "🧠 Стратегия раундов"}, {"text": "⚡ Быстрые советы"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Zombies: карта | раунд | от чего падаешь | что открыл…",
+    }
+
+
+def kb_zombies_maps() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🧟 Ashes"}, {"text": "🧟 Astra"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Выбери карту…",
+    }
+
+
+def kb_zombies_sections() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🚀 Старт/маршрут"}, {"text": "⚡ Pack-a-Punch"}, {"text": "🔫 Чудо-оружие"}],
+            [{"text": "⚡ Перки (порядок)"}, {"text": "🔫 Оружие (2 слота)"}, {"text": "🧠 Ротации/позиции"}],
+            [{"text": "👹 Спец-зомби/боссы"}, {"text": "🧩 Пасхалка (основная)"}, {"text": "🎁 Мини-пасхалки"}],
+            [{"text": "💀 Ошибки/вайпы"}, {"text": "🧾 Чек-лист раунда"}, {"text": "🆘 Я застрял"}],
+            [{"text": "⬅️ Назад"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Напиши ключевое слово или выбери секцию…",
     }
