@@ -167,6 +167,93 @@ def _role_map_ru_to_en(text: str) -> str:
     return m.get(text, "Flex")
 
 
+# =========================
+# PREMIUM DIALOG STYLE HELPERS
+# (НЕ ломают логику, просто делают подачу "дорогой")
+# =========================
+def _cap(s: str) -> str:
+    s = (s or "").strip()
+    return s
+
+
+def _sig(voice: str) -> str:
+    # короткая сигнатура в конце — премиум ощущение
+    return "— BLACK CROWN OPS 😈" if voice == "COACH" else "— BCO 😈"
+
+
+def _wrap_premium(text: str, *, profile: dict) -> str:
+    """
+    Универсальная обёртка: визуально аккуратные блоки, без спама эмодзи,
+    без “ботовости”. НИЧЕГО не обрезает.
+    """
+    voice = _norm_voice(profile.get("voice", "TEAMMATE"))
+
+    # не трогаем короткие системные сообщения типа "✅ ..." чтобы не засорять
+    t = _cap(text)
+    if not t:
+        return t
+    if t.startswith("✅") or t.startswith("❗️") or t.startswith("📊") or t.startswith("🧹") or t.startswith("🧨"):
+        return t
+
+    # делаем аккуратный “премиум контейнер”
+    header = "👑 BLACK CROWN OPS" if voice == "COACH" else "🖤 BLACK CROWN OPS"
+    mode = "📚 КОУЧ" if voice == "COACH" else "🤝 ТИММЕЙТ"
+    line = "━━━━━━━━━━━━━━━━━━"
+
+    return (
+        f"{header} · {mode}\n"
+        f"{line}\n"
+        f"{t}\n"
+        f"{line}\n"
+        f"{_sig(voice)}"
+    )
+
+
+def _start_text(profile: dict) -> str:
+    """
+    Твой элитный старт. Не бот. TEAMMATE дефолт.
+    """
+    voice = _norm_voice(profile.get("voice", "TEAMMATE"))
+    mode_line = "🤝 ТИММЕЙТ — режим по умолчанию" if voice == "TEAMMATE" else "📚 КОУЧ — активен"
+
+    body = (
+        "BLACK CROWN OPS — это искусственный разум,\n"
+        "созданный для соревновательных FPS.\n\n"
+        "Он не отвечает.\n"
+        "Он анализирует.\n\n"
+        "Он не подсказывает.\n"
+        "Он ведёт.\n\n"
+        f"{mode_line}\n\n"
+        "🤝 ТИММЕЙТ\n"
+        "Ты говоришь с ним, как с бойцом из своего отряда.\n\n"
+        "Без лекций и воды:\n"
+        "• где тебя читают\n"
+        "• почему ты умираешь именно здесь\n"
+        "• что сделать в следующем файте\n\n"
+        "Коротко. Жёстко. По ситуации.\n"
+        "Как напарник, который всегда на шаг впереди.\n\n"
+        "📚 КОУЧ — режим абсолютного контроля\n"
+        "Здесь нет «попробуй».\n\n"
+        "Я:\n"
+        "• перестраиваю мышление\n"
+        "• убираю хаос в решениях\n"
+        "• выстраиваю путь от текущего уровня до мирового ТОП-1\n\n"
+        "Это не мотивация.\n"
+        "Это система доминирования.\n\n"
+        "Ты выполняешь — ты растёшь.\n"
+        "Ты растёшь — ты выигрываешь.\n"
+        "Если не выполняешь — ты знаешь почему.\n\n"
+        "BLACK CROWN OPS не обещает результат.\n"
+        "Он создаёт игрока, способного его удерживать.\n\n"
+        "Напиши одной строкой:\n"
+        "Игра | input | где ты сейчас | где должен быть\n\n"
+        "Дальше — контроль на моей стороне. 😈"
+    )
+
+    # старт тоже в премиум контейнер
+    return _wrap_premium(body, profile=profile)
+
+
 @dataclass
 class Router:
     tg: Any
@@ -199,43 +286,7 @@ class Router:
         # =========================
         if text in ("/start", "/menu", "Меню", "📋 Меню"):
             prof = self._get_profile(chat_id)
-            voice = _norm_voice(prof.get("voice", "TEAMMATE"))
-            vv = "🤝 Тиммейт" if voice == "TEAMMATE" else "📚 Коуч"
-
-            await self._send_main(
-                chat_id,
-                "👑 BLACK CROWN OPS\n\n"
-        "Искусственный разум,\n"
-        "созданный для соревновательных FPS.\n\n"
-        "Он не отвечает.\n"
-        "Он анализирует.\n\n"
-        "Он не подсказывает.\n"
-        "Он ведёт.\n\n"
-        "🤝 ТИММЕЙТ — режим по умолчанию\n"
-        "Ты говоришь с ним, как с бойцом из своего отряда.\n\n"
-        "Без лекций и воды:\n"
-        "• где тебя читают\n"
-        "• почему ты умираешь именно здесь\n"
-        "• что сделать в следующем файте\n\n"
-        "Коротко. Жёстко. По ситуации.\n"
-        "Как напарник, который всегда на шаг впереди.\n\n"
-        "📚 КОУЧ — режим абсолютного контроля\n"
-        "Здесь нет «попробуй».\n\n"
-        "Я:\n"
-        "• перестраиваю мышление\n"
-        "• убираю хаос в решениях\n"
-        "• выстраиваю путь от текущего уровня до мирового ТОП-1\n\n"
-        "Это не мотивация.\n"
-        "Это система доминирования.\n\n"
-        "Ты выполняешь — ты растёшь.\n"
-        "Ты растёшь — ты выигрываешь.\n"
-        "Если не выполняешь — ты знаешь почему.\n\n"
-        "BLACK CROWN OPS не обещает результат.\n"
-        "Он создаёт игрока, способного его удерживать.\n\n"
-        "Напиши одной строкой:\n"
-        "Игра | input | где ты сейчас | где должен быть\n\n"
-        "Дальше — контроль на моей стороне. 😈",
-            )
+            await self._send_main(chat_id, _start_text(prof))
             return
 
         if text in ("/status", "/health"):
@@ -263,42 +314,60 @@ class Router:
             vv = "🤝 Тиммейт" if voice == "TEAMMATE" else "📚 Коуч"
             await self._send_main(
                 chat_id,
-                f"🧠 ИИ включён | Голос: {vv}\n\n"
-                "Формат (чтобы я выдал элитный ответ):\n"
-                "• что случилось\n"
-                "• где умираешь (угол/ротация/трекинг/паника)\n"
-                "• цель (стабильность/киллы/выживание)\n\n"
-                "Если хочешь сменить стиль: 💎 Premium → 🎙 Голос.\n"
-                "Отвечу без копипасты, по делу 😈",
+                _wrap_premium(
+                    (
+                        f"🧠 ИИ активен | Стиль: {vv}\n\n"
+                        "Формат (чтобы я дал элитный разбор):\n"
+                        "• что случилось\n"
+                        "• где умираешь (угол/ротация/трекинг/паника)\n"
+                        "• цель (стабильность/киллы/выживание)\n\n"
+                        "Сменить стиль: 💎 Premium → 🎙 Голос.\n"
+                        "Отвечу без копипасты. По делу. 😈"
+                    ),
+                    profile=prof,
+                ),
             )
             return
 
         if text == "🎯 Тренировка":
+            prof = self._get_profile(chat_id)
             await self._send_main(
                 chat_id,
-                "🎯 Тренировка\n\n"
-                "Напиши одной строкой:\n"
-                "Игра | input | что болит (аим/мувмент/позиционка) | где чаще умираешь\n\n"
-                "Сделаю план на 20 минут + метрика прогресса.\n"
-                "Юмор: «план без метрики — это мечта, а не тренировка» 😄",
+                _wrap_premium(
+                    (
+                        "🎯 Тренировка\n\n"
+                        "Напиши одной строкой:\n"
+                        "Игра | input | что болит (аим/мувмент/позиционка) | где чаще умираешь\n\n"
+                        "Сделаю план на 20 минут + метрика прогресса.\n"
+                        "Юмор: «план без метрики — это мечта, а не тренировка» 😄"
+                    ),
+                    profile=prof,
+                ),
             )
             return
 
         if text == "🎬 VOD":
+            prof = self._get_profile(chat_id)
             await self._send_main(
                 chat_id,
-                "🎬 VOD (разбор)\n\n"
-                "Пока без загрузки видео.\n"
-                "Кинь 3 таймкода текстом (00:12 / 01:40 / 03:05)\n"
-                "+ что ты хотел сделать.\n\n"
-                "Разберу решения как тиммейт/коуч.",
+                _wrap_premium(
+                    (
+                        "🎬 VOD (разбор)\n\n"
+                        "Пока без загрузки видео.\n"
+                        "Кинь 3 таймкода текстом (00:12 / 01:40 / 03:05)\n"
+                        "+ что ты хотел сделать.\n\n"
+                        "Разберу решения как тиммейт/коуч."
+                    ),
+                    profile=prof,
+                ),
             )
             return
 
         # ===== ZOMBIES MAIN ENTRY =====
         if text == "🧟 Zombies":
+            prof = self._get_profile(chat_id)
             if zombies_hub_text:
-                await self._send(chat_id, zombies_hub_text(self._get_profile(chat_id)), kb_zombies_hub())
+                await self._send(chat_id, _wrap_premium(zombies_hub_text(prof), profile=prof), kb_zombies_hub())
             else:
                 await self._send(
                     chat_id,
@@ -341,18 +410,25 @@ class Router:
             return
 
         if text == "🎯 Тренировка: План":
+            prof = self._get_profile(chat_id)
             await self._send_main(
                 chat_id,
-                "🎯 План тренировки (20 минут)\n"
-                "1) 5 мин — разминка (контроль)\n"
-                "2) 10 мин — основной фокус (твой слабый элемент)\n"
-                "3) 5 мин — закрепление в реальном бою\n\n"
-                "Напиши: игра | input | слабое место — сделаю план под тебя 😈",
+                _wrap_premium(
+                    (
+                        "🎯 План тренировки (20 минут)\n"
+                        "1) 5 мин — разминка (контроль)\n"
+                        "2) 10 мин — основной фокус (твой слабый элемент)\n"
+                        "3) 5 мин — закрепление в реальном бою\n\n"
+                        "Напиши: игра | input | слабое место — сделаю план под тебя 😈"
+                    ),
+                    profile=prof,
+                ),
             )
             return
 
         if text == "🎬 VOD: Разбор":
-            await self._send_main(chat_id, "🎬 Кидай 3 таймкода + что хотел сделать. Разберу.")
+            prof = self._get_profile(chat_id)
+            await self._send_main(chat_id, _wrap_premium("🎬 Кидай 3 таймкода + что хотел сделать. Разберу.", profile=prof))
             return
 
         if text == "🧠 Память: Статус":
@@ -451,7 +527,7 @@ class Router:
             prof = self._get_profile(chat_id)
             m = prof.get("zombies_map", "Ashes")
             if zombies_map_perks_text:
-                await self._send(chat_id, zombies_map_perks_text(m), kb_zombies_map_menu(m))
+                await self._send(chat_id, _wrap_premium(zombies_map_perks_text(m), profile=prof), kb_zombies_map_menu(m))
             else:
                 await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
             return
@@ -460,7 +536,7 @@ class Router:
             prof = self._get_profile(chat_id)
             m = prof.get("zombies_map", "Ashes")
             if zombies_map_loadout_text:
-                await self._send(chat_id, zombies_map_loadout_text(m), kb_zombies_map_menu(m))
+                await self._send(chat_id, _wrap_premium(zombies_map_loadout_text(m), profile=prof), kb_zombies_map_menu(m))
             else:
                 await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
             return
@@ -469,7 +545,7 @@ class Router:
             prof = self._get_profile(chat_id)
             m = prof.get("zombies_map", "Ashes")
             if zombies_map_easter_eggs_text:
-                await self._send(chat_id, zombies_map_easter_eggs_text(m), kb_zombies_map_menu(m))
+                await self._send(chat_id, _wrap_premium(zombies_map_easter_eggs_text(m), profile=prof), kb_zombies_map_menu(m))
             else:
                 await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
             return
@@ -478,7 +554,7 @@ class Router:
             prof = self._get_profile(chat_id)
             m = prof.get("zombies_map", "Ashes")
             if zombies_map_round_strategy_text:
-                await self._send(chat_id, zombies_map_round_strategy_text(m), kb_zombies_map_menu(m))
+                await self._send(chat_id, _wrap_premium(zombies_map_round_strategy_text(m), profile=prof), kb_zombies_map_menu(m))
             else:
                 await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
             return
@@ -487,7 +563,7 @@ class Router:
             prof = self._get_profile(chat_id)
             m = prof.get("zombies_map", "Ashes")
             if zombies_map_quick_tips_text:
-                await self._send(chat_id, zombies_map_quick_tips_text(m), kb_zombies_map_menu(m))
+                await self._send(chat_id, _wrap_premium(zombies_map_quick_tips_text(m), profile=prof), kb_zombies_map_menu(m))
             else:
                 await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
             return
@@ -499,45 +575,46 @@ class Router:
             action = right.strip().lower()
 
             self._set_profile_field(chat_id, "zombies_map", map_name)
+            prof = self._get_profile(chat_id)
 
             if "обзор" in action:
                 if zombies_map_overview_text:
-                    await self._send(chat_id, zombies_map_overview_text(map_name), kb_zombies_map_menu(map_name))
+                    await self._send(chat_id, _wrap_premium(zombies_map_overview_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
                 else:
                     await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
                 return
 
             if "перки" in action:
                 if zombies_map_perks_text:
-                    await self._send(chat_id, zombies_map_perks_text(map_name), kb_zombies_map_menu(map_name))
+                    await self._send(chat_id, _wrap_premium(zombies_map_perks_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
                 else:
                     await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
                 return
 
             if "оружие" in action:
                 if zombies_map_loadout_text:
-                    await self._send(chat_id, zombies_map_loadout_text(map_name), kb_zombies_map_menu(map_name))
+                    await self._send(chat_id, _wrap_premium(zombies_map_loadout_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
                 else:
                     await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
                 return
 
             if "пасх" in action:
                 if zombies_map_easter_eggs_text:
-                    await self._send(chat_id, zombies_map_easter_eggs_text(map_name), kb_zombies_map_menu(map_name))
+                    await self._send(chat_id, _wrap_premium(zombies_map_easter_eggs_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
                 else:
                     await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
                 return
 
             if "стратег" in action:
                 if zombies_map_round_strategy_text:
-                    await self._send(chat_id, zombies_map_round_strategy_text(map_name), kb_zombies_map_menu(map_name))
+                    await self._send(chat_id, _wrap_premium(zombies_map_round_strategy_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
                 else:
                     await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
                 return
 
             if "быстр" in action or "совет" in action:
                 if zombies_map_quick_tips_text:
-                    await self._send(chat_id, zombies_map_quick_tips_text(map_name), kb_zombies_map_menu(map_name))
+                    await self._send(chat_id, _wrap_premium(zombies_map_quick_tips_text(map_name), profile=prof), kb_zombies_map_menu(map_name))
                 else:
                     await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
                 return
@@ -556,35 +633,40 @@ class Router:
 
         if text == "🎯 Warzone: Aim/Sens":
             if wz_aim_sens_text:
-                await self._send_main(chat_id, wz_aim_sens_text(self._get_profile(chat_id)))
+                prof = self._get_profile(chat_id)
+                await self._send_main(chat_id, _wrap_premium(wz_aim_sens_text(prof), profile=prof))
             else:
                 await self._send_main(chat_id, self._missing_presets_msg("warzone", _WARZONE_IMPORT_ERR))
             return
 
         if text == "🎮 Warzone: Controller":
             if wz_controller_tuning_text:
-                await self._send_main(chat_id, wz_controller_tuning_text(self._get_profile(chat_id)))
+                prof = self._get_profile(chat_id)
+                await self._send_main(chat_id, _wrap_premium(wz_controller_tuning_text(prof), profile=prof))
             else:
                 await self._send_main(chat_id, self._missing_presets_msg("warzone", _WARZONE_IMPORT_ERR))
             return
 
         if text == "⌨️ Warzone: KBM":
             if wz_kbm_tuning_text:
-                await self._send_main(chat_id, wz_kbm_tuning_text(self._get_profile(chat_id)))
+                prof = self._get_profile(chat_id)
+                await self._send_main(chat_id, _wrap_premium(wz_kbm_tuning_text(prof), profile=prof))
             else:
                 await self._send_main(chat_id, self._missing_presets_msg("warzone", _WARZONE_IMPORT_ERR))
             return
 
         if text == "🧠 Warzone: Мувмент/Позиционка":
             if wz_movement_positioning_text:
-                await self._send_main(chat_id, wz_movement_positioning_text(self._get_profile(chat_id)))
+                prof = self._get_profile(chat_id)
+                await self._send_main(chat_id, _wrap_premium(wz_movement_positioning_text(prof), profile=prof))
             else:
                 await self._send_main(chat_id, self._missing_presets_msg("warzone", _WARZONE_IMPORT_ERR))
             return
 
         if text == "🎧 Warzone: Аудио/Видео":
             if wz_audio_visual_text:
-                await self._send_main(chat_id, wz_audio_visual_text(self._get_profile(chat_id)))
+                prof = self._get_profile(chat_id)
+                await self._send_main(chat_id, _wrap_premium(wz_audio_visual_text(prof), profile=prof))
             else:
                 await self._send_main(chat_id, self._missing_presets_msg("warzone", _WARZONE_IMPORT_ERR))
             return
@@ -597,35 +679,40 @@ class Router:
 
         if text == "🎯 BO7: Aim/Sens":
             if bo7_aim_sens_text:
-                await self._send_main(chat_id, bo7_aim_sens_text(self._get_profile(chat_id)))
+                prof = self._get_profile(chat_id)
+                await self._send_main(chat_id, _wrap_premium(bo7_aim_sens_text(prof), profile=prof))
             else:
                 await self._send_main(chat_id, self._missing_presets_msg("bo7", _BO7_IMPORT_ERR))
             return
 
         if text == "🎮 BO7: Controller":
             if bo7_controller_tuning_text:
-                await self._send_main(chat_id, bo7_controller_tuning_text(self._get_profile(chat_id)))
+                prof = self._get_profile(chat_id)
+                await self._send_main(chat_id, _wrap_premium(bo7_controller_tuning_text(prof), profile=prof))
             else:
                 await self._send_main(chat_id, self._missing_presets_msg("bo7", _BO7_IMPORT_ERR))
             return
 
         if text == "⌨️ BO7: KBM":
             if bo7_kbm_tuning_text:
-                await self._send_main(chat_id, bo7_kbm_tuning_text(self._get_profile(chat_id)))
+                prof = self._get_profile(chat_id)
+                await self._send_main(chat_id, _wrap_premium(bo7_kbm_tuning_text(prof), profile=prof))
             else:
                 await self._send_main(chat_id, self._missing_presets_msg("bo7", _BO7_IMPORT_ERR))
             return
 
         if text == "🧠 BO7: Мувмент/Позиционка":
             if bo7_movement_positioning_text:
-                await self._send_main(chat_id, bo7_movement_positioning_text(self._get_profile(chat_id)))
+                prof = self._get_profile(chat_id)
+                await self._send_main(chat_id, _wrap_premium(bo7_movement_positioning_text(prof), profile=prof))
             else:
                 await self._send_main(chat_id, self._missing_presets_msg("bo7", _BO7_IMPORT_ERR))
             return
 
         if text == "🎧 BO7: Аудио/Видео":
             if bo7_audio_visual_text:
-                await self._send_main(chat_id, bo7_audio_visual_text(self._get_profile(chat_id)))
+                prof = self._get_profile(chat_id)
+                await self._send_main(chat_id, _wrap_premium(bo7_audio_visual_text(prof), profile=prof))
             else:
                 await self._send_main(chat_id, self._missing_presets_msg("bo7", _BO7_IMPORT_ERR))
             return
@@ -638,17 +725,20 @@ class Router:
 
         if text == "🎯 BF6: Aim/Sens":
             self._set_profile_field(chat_id, "game", "BF6")
-            await self._send_main(chat_id, bf6_aim_sens_text(self._get_profile(chat_id)))
+            prof = self._get_profile(chat_id)
+            await self._send_main(chat_id, _wrap_premium(bf6_aim_sens_text(prof), profile=prof))
             return
 
         if text == "🎮 BF6: Controller Tuning":
             self._set_profile_field(chat_id, "game", "BF6")
-            await self._send_main(chat_id, bf6_controller_tuning_text(self._get_profile(chat_id)))
+            prof = self._get_profile(chat_id)
+            await self._send_main(chat_id, _wrap_premium(bf6_controller_tuning_text(prof), profile=prof))
             return
 
         if text == "⌨️ BF6: KBM Tuning":
             self._set_profile_field(chat_id, "game", "BF6")
-            await self._send_main(chat_id, bf6_kbm_tuning_text(self._get_profile(chat_id)))
+            prof = self._get_profile(chat_id)
+            await self._send_main(chat_id, _wrap_premium(bf6_kbm_tuning_text(prof), profile=prof))
             return
 
         # =========================
@@ -698,8 +788,7 @@ class Router:
                             prof["platform"] = _norm_platform(prof.get("platform", "PC"))
                             prof["input"] = _norm_input(prof.get("input", "Controller"))
                             prof["difficulty"] = _norm_diff(prof.get("difficulty", "Normal"))
-                            # дефолт всегда TEAMMATE
-                            prof["voice"] = _norm_voice(prof.get("voice", "TEAMMATE"))
+                            prof["voice"] = _norm_voice(prof.get("voice", "TEAMMATE"))  # дефолт всегда TEAMMATE
                             prof.setdefault("role", "Flex")
                             prof.setdefault("bf6_class", "Assault")
                             prof.setdefault("zombies_map", "Ashes")
@@ -756,16 +845,21 @@ class Router:
         voice = "🤝 Тиммейт" if _norm_voice(prof.get("voice")) == "TEAMMATE" else "📚 Коуч"
         await self._send_main(
             chat_id,
-            "🎮 Текущее:\n"
-            f"• Game: {prof.get('game')}\n"
-            f"• Platform: {prof.get('platform')}\n"
-            f"• Input: {prof.get('input')}\n"
-            f"• Brain Mode: {prof.get('difficulty')}\n"
-            f"• Voice: {voice}\n"
-            f"• Role: {prof.get('role')}\n"
-            f"• BF6 Class: {prof.get('bf6_class')}\n"
-            f"• Zombies Map: {prof.get('zombies_map')}\n\n"
-            "😄 Юмор: если всё выставил, но всё равно умираешь — значит пора не цифры менять, а решения.",
+            _wrap_premium(
+                (
+                    "🎮 Текущее:\n"
+                    f"• Game: {prof.get('game')}\n"
+                    f"• Platform: {prof.get('platform')}\n"
+                    f"• Input: {prof.get('input')}\n"
+                    f"• Brain Mode: {prof.get('difficulty')}\n"
+                    f"• Voice: {voice}\n"
+                    f"• Role: {prof.get('role')}\n"
+                    f"• BF6 Class: {prof.get('bf6_class')}\n"
+                    f"• Zombies Map: {prof.get('zombies_map')}\n\n"
+                    "😄 Юмор: если всё выставил, но всё равно умираешь — значит пора не цифры менять, а решения."
+                ),
+                profile=prof,
+            ),
         )
 
     async def _on_role_or_class(self, chat_id: int) -> None:
@@ -788,7 +882,7 @@ class Router:
             f"• bf6_class: {prof.get('bf6_class')}",
             f"• zombies_map: {prof.get('zombies_map')}",
         ]
-        await self._send_main(chat_id, "📌 Профиль:\n" + "\n".join(lines))
+        await self._send_main(chat_id, _wrap_premium("📌 Профиль:\n" + "\n".join(lines), profile=prof))
 
     async def _on_status(self, chat_id: int) -> None:
         mem = {}
@@ -876,7 +970,7 @@ class Router:
 
             if voice == "COACH":
                 reply = (
-                    "📚 Коуч (fallback | элитный режим):\n"
+                    "📚 Коуч (fallback | абсолютный контроль):\n"
                     "1) Диагноз: мало вводных.\n"
                     "2) Дай 3 факта:\n"
                     "   • игра/режим\n"
@@ -905,4 +999,5 @@ class Router:
             except Exception:
                 pass
 
-        await self._send_main(chat_id, str(reply))
+        # Премиум-обёртка для ВСЕХ AI-ответов (ничего не режет)
+        await self._send_main(chat_id, _wrap_premium(str(reply), profile=prof))
