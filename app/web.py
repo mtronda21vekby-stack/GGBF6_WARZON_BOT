@@ -1,46 +1,60 @@
 # app/web.py
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
-from pathlib import Path
+# -*- coding: utf-8 -*-
+from __future__ import annotations
 
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import HTMLResponse
 from app.config import get_settings
 from app.observability.log import log
 
 app = FastAPI(title="GGBF6 WARZON BOT")
 
+# =========================================================
+# MINI APP (Telegram WebApp) — MAX / PRODUCTION-SAFE
+# ВАЖНО:
+# - У тебя структура: app/webapp/static/index.html + app/webapp/webapp_router.py
+# - Значит НУЖНО include_router, а не mount на папку app/webapp (иначе будет 404)
+# =========================================================
+try:
+    # app/webapp/webapp_router.py (у тебя уже есть)
+    from app.webapp.webapp_router import router as webapp_router
 
-# =========================
-# MINI APP (Telegram WebApp)
-# =========================
-WEBAPP_DIR = Path(__file__).resolve().parent / "webapp"
+    # /webapp и /webapp/* будет отдавать index.html + статику из app/webapp/static
+    app.include_router(webapp_router)
 
-if WEBAPP_DIR.exists() and WEBAPP_DIR.is_dir():
-    # /webapp -> index.html
-    # /webapp/assets/... -> статика
-    app.mount("/webapp", StaticFiles(directory=str(WEBAPP_DIR), html=True), name="webapp")
-else:
-    # Чтобы сервис не падал, если папки нет
-    @app.get("/webapp", response_class=HTMLResponse)
+except Exception as e:
+    log.exception("Mini App router not loaded: %s", e)
+
+    @app.get("/webapp", response_class=HTMLResponse, include_in_schema=False)
     def webapp_missing():
         return (
             "<h3>Mini App is not configured</h3>"
-            "<p>Create folder <b>app/webapp</b> and add <b>index.html</b>.</p>"
-            "<p>Example path: <code>app/webapp/index.html</code></p>"
+            "<p>Expected files:</p>"
+            "<ul>"
+            "<li><code>app/webapp/webapp_router.py</code></li>"
+            "<li><code>app/webapp/static/index.html</code></li>"
+            "</ul>"
+            "<p>Fix the paths and redeploy.</p>"
         )
 
 
-@app.get("/")
+# =========================================================
+# ROOT / HEALTH
+# =========================================================
+@app.get("/", include_in_schema=False)
 def root():
     return {"ok": True, "service": "ggbf6-warzon-bot", "status": "alive"}
 
 
-@app.get("/health")
+@app.get("/health", include_in_schema=False)
 def health():
     return {"ok": True, "status": "healthy"}
 
 
-@app.post("/telegram/webhook/{secret}")
+# =========================================================
+# TELEGRAM WEBHOOK (FAST + SAFE)
+# =========================================================
+@app.post("/telegram/webhook/{secret}", include_in_schema=False)
 async def telegram_webhook(secret: str, request: Request):
     s = get_settings()
     if secret != s.WEBHOOK_SECRET:
