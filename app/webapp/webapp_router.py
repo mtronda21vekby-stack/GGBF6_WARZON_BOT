@@ -11,9 +11,20 @@ router = APIRouter()
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
+
+def _index():
+    return FileResponse(STATIC_DIR / "index.html")
+
+
 @router.get("/webapp", include_in_schema=False)
 def webapp_index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return _index()
+
+
+@router.get("/webapp/", include_in_schema=False)
+def webapp_index_slash():
+    return _index()
+
 
 @router.get("/webapp/{path:path}", include_in_schema=False)
 def webapp_static(path: str):
@@ -21,10 +32,10 @@ def webapp_static(path: str):
 
     # защита от ../
     if not str(file_path).startswith(str(STATIC_DIR.resolve())):
-        return FileResponse(STATIC_DIR / "index.html")
+        return _index()
 
     if file_path.exists() and file_path.is_file():
         return FileResponse(file_path)
 
     # SPA fallback
-    return FileResponse(STATIC_DIR / "index.html")
+    return _index()
