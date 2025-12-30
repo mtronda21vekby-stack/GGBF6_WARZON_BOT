@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, Request, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 
 from app.config import get_settings
 from app.observability.log import setup_logging, get_logger
@@ -24,28 +24,66 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="GGBF6 WARZON BOT", version="3.0.0")
 
+    # =========================================================
+    # CORE SERVICES (НЕ ТРОГАЕМ)
+    # =========================================================
     tg = TelegramClient(settings.bot_token)
 
     store = InMemoryStore(memory_max_turns=settings.memory_max_turns)
     profiles = ProfileService(store=store)
     brain = BrainEngine(store=store, profiles=profiles, settings=settings)
 
-    router = Router(tg=tg, brain=brain, profiles=profiles, store=store, settings=settings)
+    router = Router(
+        tg=tg,
+        brain=brain,
+        profiles=profiles,
+        store=store,
+        settings=settings,
+    )
 
-    @app.get("/")
+    # =========================================================
+    # MINI APP (Telegram WebApp) — SAFE + FUTURE-PROOF
+    # Структура:
+    # app/webapp/webapp_router.py
+    # app/webapp/static/index.html
+    # =========================================================
+    try:
+        from app.webapp.webapp_router import router as webapp_router
+        app.include_router(webapp_router)
+        log.info("Mini App router loaded")
+    except Exception as e:
+        log.exception("Mini App router NOT loaded: %s", e)
+
+        @app.get("/webapp", response_class=HTMLResponse, include_in_schema=False)
+        async def webapp_missing():
+            return (
+                "<h3>Mini App is not configured</h3>"
+                "<p>Expected:</p>"
+                "<ul>"
+                "<li>app/webapp/webapp_router.py</li>"
+                "<li>app/webapp/static/index.html</li>"
+                "</ul>"
+            )
+
+    # =========================================================
+    # HEALTH / ROOT
+    # =========================================================
+    @app.get("/", include_in_schema=False)
     async def root():
         return {"ok": True, "service": "ggbf6-warzon-bot"}
 
-    @app.get("/health")
+    @app.get("/health", include_in_schema=False)
     async def health():
         return {"ok": True, "status": "alive"}
 
-    @app.post("/tg/webhook")
+    # =========================================================
+    # TELEGRAM WEBHOOK (НЕ ТРОГАЕМ)
+    # =========================================================
+    @app.post("/tg/webhook", include_in_schema=False)
     async def telegram_webhook(
         request: Request,
         x_telegram_bot_api_secret_token: str | None = Header(default=None),
     ):
-        # защита (если включена)
         if settings.webhook_secret:
             if x_telegram_bot_api_secret_token != settings.webhook_secret:
                 raise HTTPException(status_code=401, detail="bad secret token")
@@ -58,9 +96,11 @@ def create_app() -> FastAPI:
         except Exception as e:
             log.exception("Unhandled error: %s", e)
 
-        # Telegram всегда 200
         return JSONResponse({"ok": True})
 
+    # =========================================================
+    # SHUTDOWN
+    # =========================================================
     @app.on_event("shutdown")
     async def _shutdown():
         await tg.close()
@@ -68,5 +108,7 @@ def create_app() -> FastAPI:
     return app
 
 
-# Render/uvicorn entrypoint
+# =========================================================
+# Render / uvicorn ENTRYPOINT (НЕ ТРОГАЕМ)
+# =========================================================
 app = create_app()
