@@ -10,13 +10,10 @@ router = APIRouter()
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-INDEX_FILE = STATIC_DIR / "index.html"
-
 
 @router.get("/webapp", include_in_schema=False)
 def webapp_index():
-    return FileResponse(INDEX_FILE)
-
+    return FileResponse(STATIC_DIR / "index.html")
 
 @router.get("/webapp/{path:path}", include_in_schema=False)
 def webapp_static(path: str):
@@ -24,10 +21,10 @@ def webapp_static(path: str):
 
     # защита от ../
     if not str(file_path).startswith(str(STATIC_DIR.resolve())):
-        return FileResponse(INDEX_FILE)
+        return FileResponse(STATIC_DIR / "index.html")
 
-    # отдаём файл если есть, иначе SPA fallback
     if file_path.exists() and file_path.is_file():
         return FileResponse(file_path)
 
-    return FileResponse(INDEX_FILE)
+    # SPA fallback
+    return FileResponse(STATIC_DIR / "index.html")
