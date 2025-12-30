@@ -10,9 +10,7 @@ from app.observability.log import log
 app = FastAPI(title="GGBF6 WARZON BOT")
 
 # =========================================================
-# MINI APP (Telegram WebApp) — PRODUCTION-SAFE
-# Твоя структура: app/webapp/static/index.html + app/webapp/webapp_router.py
-# Значит подключаем router, а не mount на app/webapp
+# MINI APP (Telegram WebApp) — PRODUCTION SAFE
 # =========================================================
 try:
     from app.webapp.webapp_router import router as webapp_router
@@ -20,8 +18,11 @@ try:
 except Exception as e:
     log.exception("Mini App router not loaded: %s", e)
 
+    # Fallback покрывает /webapp, /webapp/ и всё внутри
     @app.get("/webapp", response_class=HTMLResponse, include_in_schema=False)
-    def webapp_missing():
+    @app.get("/webapp/", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/webapp/{path:path}", response_class=HTMLResponse, include_in_schema=False)
+    def webapp_missing(path: str = ""):
         return (
             "<h3>Mini App is not configured</h3>"
             "<p>Expected files:</p>"
