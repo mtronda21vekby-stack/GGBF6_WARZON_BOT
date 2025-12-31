@@ -107,8 +107,46 @@ if not log.handlers:
 
 
 # =========================
+# HARDENING HELPERS (NO FUNCTION CUT)
+# =========================
+_MAX_WEBAPP_BYTES = int(os.getenv("WEBAPP_MAX_BYTES", "16000") or "16000")  # защита от гигантских payload
+_MAX_LOG_CHARS = int(os.getenv("WEBAPP_LOG_CHARS", "1200") or "1200")
+
+
+def _truncate(s: Any, n: int) -> str:
+    try:
+        x = str(s if s is not None else "")
+    except Exception:
+        x = ""
+    if n <= 0:
+        return ""
+    return x if len(x) <= n else (x[: n - 1] + "…")
+
+
+def _safe_json_loads(raw: str) -> dict:
+    """
+    Никогда не падаем и не жрём бесконечный payload.
+    Возвращаем dict.
+    """
+    txt = (raw or "").strip()
+    if not txt:
+        return {}
+
+    # лимит на вход (безопасность/память)
+    if len(txt.encode("utf-8", errors="ignore")) > _MAX_WEBAPP_BYTES:
+        # пробуем обрезать по символам (достаточно для UI payload)
+        txt = _truncate(txt, _MAX_WEBAPP_BYTES)
+
+    try:
+        obj = json.loads(txt)
+        return obj if isinstance(obj, dict) else {"type": "text", "text": txt}
+    except Exception:
+        return {"type": "text", "text": txt}
+
+
+# =========================
 # UPDATE NORMALIZER (MAX SAFE)
-# Принимаем И dict, И pydantic-объект Update (который приходит из app.adapters.telegram.types.Update)
+# Принимаем И dict, И pydantic-объект Update
 # =========================
 def _to_update_dict(update: Any) -> Dict[str, Any]:
     if isinstance(update, dict):
@@ -142,11 +180,10 @@ def _to_update_dict(update: Any) -> Dict[str, Any]:
             except Exception:
                 pass
 
-    # крайний вариант
     return {}
 
 
-def _safe_get(d: dict, path: list, default=None):
+def _safe_get(d: Any, path: list, default=None):
     cur = d
     for k in path:
         if not isinstance(cur, dict) or k not in cur:
@@ -155,6 +192,9 @@ def _safe_get(d: dict, path: list, default=None):
     return cur
 
 
+# =========================
+# NORMALIZERS
+# =========================
 def _norm_game(game: str) -> str:
     g = (game or "").strip().upper()
     if g in ("BF6", "BATTLEFIELD", "BATTLEFIELD6"):
@@ -238,7 +278,7 @@ def _wrap_premium(text: str, *, profile: dict) -> str:
     t = _cap(text)
     if not t:
         return t
-    if t.startswith("✅") or t.startswith("❗️") or t.startswith("📊") or t.startswith("🧹") or t.startswith("🧨"):
+    if t.startswith(("✅", "❗️", "📊", "🧹", "🧨")):
         return t
 
     header = "👑 BLACK CROWN OPS" if voice == "COACH" else "🖤 BLACK CROWN OPS"
@@ -316,7 +356,6 @@ def _make_training_plan(profile: dict, focus: str) -> str:
     voice = _norm_voice(prof.get("voice", "TEAMMATE"))
     focus = _norm_focus(focus)
 
-    # микро-стиль: Demon/Pro/Normal влияет на жёсткость подачи
     if diff == "Demon":
         tone = "Жёстко. Быстро. Без оправданий."
     elif diff == "Pro":
@@ -328,7 +367,8 @@ def _make_training_plan(profile: dict, focus: str) -> str:
         "🎮 Input: Controller\n"
         "• правило: левый стик — позиция, правый — подтверждение.\n"
         "• цель: стабильность трекинга + меньше паники в файте.\n"
-        if inp == "Controller" else
+        if inp == "Controller"
+        else
         "⌨️ Input: KBM\n"
         "• правило: мышь — микро, клавиатура — макро.\n"
         "• цель: чистый кроссхейр + тайминг на пике.\n"
@@ -336,7 +376,6 @@ def _make_training_plan(profile: dict, focus: str) -> str:
 
     focus_title = {"aim": "🎯 AIM", "movement": "🧠 МУВМЕНТ", "position": "🗺 ПОЗИЦИОНКА"}[focus]
 
-    # “фокусный” 10-мин блок
     if focus == "aim":
         block10 = (
             "10 мин — AIM (ядро)\n"
@@ -377,6 +416,13 @@ def _make_training_plan(profile: dict, focus: str) -> str:
         "• после: 1 фраза отчёта — что было легче/сложнее\n"
     )
 
+    tail = (
+        "📚 Коуч-правило: если ты не можешь описать план в 1 строку — у тебя не план, у тебя надежда.\n"
+        if voice == "COACH"
+        else
+        "🤝 Тиммейт: сделай это 2 дня подряд — и ты сам увидишь разницу.\n"
+    )
+
     return (
         f"{focus_title} · 20-мин план\n"
         f"Игра: {game} | Режим: {diff}\n"
@@ -388,8 +434,7 @@ def _make_training_plan(profile: dict, focus: str) -> str:
         f"{finisher5}\n"
         f"{input_block}\n"
         f"{metric}\n\n"
-        + ("📚 Коуч-правило: если ты не можешь описать план в 1 строку — у тебя не план, у тебя надежда.\n" if voice == "COACH"
-           else "🤝 Тиммейт: сделай это 2 дня подряд — и ты сам увидишь разницу.\n")
+        f"{tail}"
     )
 
 
@@ -426,7 +471,6 @@ class Router:
 
     # =========================================================
     # PUBLIC: Mini App data entrypoint (для webhook.py pre-handler)
-    # Не ломает ничего: просто вызывает внутренний обработчик.
     # =========================================================
     async def handle_webapp_data(self, update: Any, data_raw: str) -> None:
         upd = _to_update_dict(update)
@@ -928,7 +972,12 @@ class Router:
         # =========================
         # DEFAULT -> AI CHAT (REAL)
         # =========================
-        await self._chat_to_brain(chat_id, text)
+        if text:
+            await self._chat_to_brain(chat_id, text)
+        else:
+            # пустые сообщения не отправляем в brain
+            prof = self._get_profile(chat_id)
+            await self._send_main(chat_id, _wrap_premium("🤝 Пусто прилетело. Напиши текстом, что болит — разберу 😈", profile=prof))
 
     # ---------------- MINI APP receiver ----------------
     async def _on_webapp_data(self, chat_id: int, data: str) -> None:
@@ -952,18 +1001,15 @@ class Router:
             await self._send_main(chat_id, _wrap_premium("🛰 MINI APP прислал пустые данные.", profile=prof))
             return
 
+        # лог — безопасно
         try:
-            log.info("WEBAPP_DATA chat=%s raw=%s", chat_id, raw[:1200])
+            log.info("WEBAPP_DATA chat=%s raw=%s", chat_id, _truncate(raw, _MAX_LOG_CHARS))
         except Exception:
             pass
 
-        try:
-            payload = json.loads(raw)
-        except Exception:
-            payload = {"type": "text", "text": raw}
-
+        payload = _safe_json_loads(raw)
         if not isinstance(payload, dict):
-            payload = {"type": "text", "text": raw}
+            payload = {"type": "text", "text": _truncate(raw, 4000)}
 
         ptype = str(payload.get("type") or "text").strip().lower()
 
@@ -982,6 +1028,7 @@ class Router:
             apply_profile_dict(profile_from_payload)
             prof = self._get_profile(chat_id)
 
+        # flat profile keys support
         flat_profile_like = {}
         for k in ("game", "platform", "input", "difficulty", "voice", "role", "bf6_class", "zombies_map"):
             if k in payload and str(payload.get(k)).strip():
@@ -1163,7 +1210,7 @@ class Router:
 
         if ptype in ("pay", "payment"):
             plan = str(payload.get("plan") or "").strip()
-            pretty = "Month" if "month" in plan else ("Lifetime" if "life" in plan else (plan or "—"))
+            pretty = "Month" if "month" in plan.lower() else ("Lifetime" if "life" in plan.lower() else (plan or "—"))
 
             await self._send(
                 chat_id,
@@ -1189,9 +1236,18 @@ class Router:
 
     # ---------------- messaging helpers ----------------
     async def _send(self, chat_id: int, text: str, reply_markup: Optional[dict] = None) -> None:
+        """
+        Усилено: не даём одному падению Telegram API уронить весь webhook.
+        """
         if reply_markup is None:
             reply_markup = kb_main()
-        await self.tg.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+        try:
+            await self.tg.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+        except Exception as e:
+            try:
+                log.exception("tg.send_message failed: %s", e)
+            except Exception:
+                pass
 
     async def _send_main(self, chat_id: int, text: str) -> None:
         await self._send(chat_id, text, kb_main())
@@ -1231,7 +1287,10 @@ class Router:
                             prof.setdefault("zombies_map", "Ashes")
                             return prof
                     except Exception as e:
-                        log.exception("profiles.get failed: %s", e)
+                        try:
+                            log.exception("profiles.get failed: %s", e)
+                        except Exception:
+                            pass
 
         return {
             "game": "Warzone",
@@ -1267,13 +1326,19 @@ class Router:
                             fn(chat_id, {key: val})
                         return
                     except Exception as e:
-                        log.exception("profiles.set failed: %s", e)
+                        try:
+                            log.exception("profiles.set failed: %s", e)
+                        except Exception:
+                            pass
 
         if self.store and hasattr(self.store, "set_profile"):
             try:
                 self.store.set_profile(chat_id, {key: val})
             except Exception as e:
-                log.exception("store.set_profile failed: %s", e)
+                try:
+                    log.exception("store.set_profile failed: %s", e)
+                except Exception:
+                    pass
 
     # ---------------- UI handlers ----------------
     async def _on_game(self, chat_id: int) -> None:
@@ -1366,6 +1431,16 @@ class Router:
 
     # ---------------- AI chat ----------------
     async def _chat_to_brain(self, chat_id: int, text: str) -> None:
+        # защита: не пихаем гигантский текст в память/brain
+        text = (text or "").strip()
+        if not text:
+            prof = self._get_profile(chat_id)
+            await self._send_main(chat_id, _wrap_premium("🤝 Напиши текстом. Пустое не разбирать 😄", profile=prof))
+            return
+
+        if len(text) > 6000:
+            text = _truncate(text, 6000)
+
         if self.store and hasattr(self.store, "add"):
             try:
                 self.store.add(chat_id, "user", text)
