@@ -1,7 +1,8 @@
+/* app/webapp/static/app.js */
 (() => {
   const tg = window.Telegram?.WebApp;
 
-  const VERSION = "1.0.1";
+  const VERSION = "1.0.0";
   const STORAGE_KEY = "bco_state_v1";
 
   const defaults = {
@@ -31,7 +32,7 @@
     try {
       if (!tg?.HapticFeedback) return;
       if (type === "impact") tg.HapticFeedback.impactOccurred(style);
-      if (type === "notif") tg.HapticFeedback.notificationOccurred(style); // 'success'|'warning'|'error'
+      if (type === "notif") tg.HapticFeedback.notificationOccurred(style);
     } catch {}
   }
 
@@ -63,8 +64,8 @@
       if (v) root.style.setProperty(k, v);
     });
 
-    const dbg = qs("#dbgTheme");
-    if (dbg) dbg.textContent = tg.colorScheme ?? "—";
+    const dbgTheme = qs("#dbgTheme");
+    if (dbgTheme) dbgTheme.textContent = tg.colorScheme ?? "—";
   }
 
   // ---------- Storage ----------
@@ -81,12 +82,13 @@
   async function cloudSet(key, value) {
     if (!tg?.CloudStorage?.setItem) return false;
     return new Promise((resolve) => {
-      tg.CloudStorage.setItem(key, value, (err) => resolve(!err));
+      tg.CloudStorage.setItem(key, value, (err) => {
+        resolve(!err);
+      });
     });
   }
 
   async function loadState() {
-    // 1) CloudStorage
     const fromCloud = await cloudGet(STORAGE_KEY);
     const parsedCloud = fromCloud ? safeJsonParse(fromCloud) : null;
     if (parsedCloud && typeof parsedCloud === "object") {
@@ -94,7 +96,6 @@
       return "cloud";
     }
 
-    // 2) localStorage fallback
     const fromLocal = localStorage.getItem(STORAGE_KEY);
     const parsedLocal = fromLocal ? safeJsonParse(fromLocal) : null;
     if (parsedLocal && typeof parsedLocal === "object") {
@@ -120,16 +121,9 @@
     const pillRole = qs("#pillRole");
     const pillBf6 = qs("#pillBf6");
 
-    if (chipVoice) chipVoice.textContent = state.voice === "COACH" ? "📚 Коуч" : "🤝 Тиммейт";
-
-    const mm = state.mode === "Demon" ? "😈 Demon" : (state.mode === "Pro" ? "🔥 Pro" : "🧠 Normal");
-    if (chipMode) chipMode.textContent = mm;
-
-    const pp =
-      state.platform === "PlayStation" ? "🎮 PlayStation" :
-      (state.platform === "Xbox" ? "🎮 Xbox" : "🖥 PC");
-    if (chipPlatform) chipPlatform.textContent = pp;
-
+    if (chipVoice) chipVoice.textContent = (state.voice === "COACH" ? "📚 Коуч" : "🤝 Тиммейт");
+    if (chipMode) chipMode.textContent = (state.mode === "Demon" ? "😈 Demon" : (state.mode === "Pro" ? "🔥 Pro" : "🧠 Normal"));
+    if (chipPlatform) chipPlatform.textContent = (state.platform === "PlayStation" ? "🎮 PlayStation" : (state.platform === "Xbox" ? "🎮 Xbox" : "🖥 PC"));
     if (pillRole) pillRole.textContent = `🎭 Role: ${state.role}`;
     if (pillBf6) pillBf6.textContent = `🟩 Class: ${state.bf6_class}`;
   }
@@ -142,16 +136,10 @@
     });
   }
 
-  // ---------- Tabs (BOTTOM) ----------
-  let currentTab = "home";
-
   function selectTab(tab) {
-    currentTab = tab;
-
     qsa(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
     qsa(".tabpane").forEach(p => p.classList.toggle("active", p.id === `tab-${tab}`));
-
-    updateTelegramButtons();
+    updateTelegramButtons(tab);
   }
 
   function setTabs() {
@@ -170,13 +158,12 @@
     root.addEventListener("click", async (e) => {
       const btn = e.target.closest(".seg-btn");
       if (!btn) return;
-
       haptic("impact", "light");
+
       onPick(btn.dataset.value);
-
       root.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("active", b === btn));
-      setChipText();
 
+      setChipText();
       await saveState();
       toast("Сохранено");
     });
@@ -200,18 +187,10 @@
     try {
       const pack = enrichPayload(payload);
       const data = JSON.stringify(pack);
-
-      if (!tg?.sendData) {
-        toast("Открой Mini App из Telegram");
-        haptic("notif", "warning");
-        return;
-      }
-
-      tg.sendData(data);
+      tg?.sendData(data);
       haptic("notif", "success");
-
-      const st = qs("#statSession");
-      if (st) st.textContent = "SENT";
+      const statSession = qs("#statSession");
+      if (statSession) statSession.textContent = "SENT";
       toast("Отправлено в бота");
     } catch {
       haptic("notif", "error");
@@ -223,61 +202,62 @@
     sendToBot({ type: "nav", target });
   }
 
-  // ---------- Telegram native buttons (NO duplicated listeners) ----------
-  let mainButtonBound = false;
+  // ---------- Telegram native buttons ----------
+  // ✅ фикс: НЕ вешаем onClick при каждом tab switch (иначе копится)
+  function setMainButtonHandlerOnce() {
+    if (!tg?.MainButton) return;
+    if (tg.MainButton.__bcoBound) return;
+    tg.MainButton.__bcoBound = true;
 
-  function mainButtonAction() {
-    haptic("impact", "medium");
+    tg.MainButton.onClick(() => {
+      haptic("impact", "medium");
+      const activeTab = document.querySelector(".tab.active")?.dataset?.tab || "home";
 
-    if (currentTab === "settings") {
-      sendToBot({ type: "set_profile", profile: state });
-      return;
-    }
-    if (currentTab === "coach") {
-      sendToBot({ type: "training_plan", focus: state.focus, profile: state });
-      return;
-    }
-    if (currentTab === "vod") {
-      const t1 = (qs("#vod1")?.value || "").trim();
-      const t2 = (qs("#vod2")?.value || "").trim();
-      const t3 = (qs("#vod3")?.value || "").trim();
-      const note = (qs("#vodNote")?.value || "").trim();
-      sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
-      return;
-    }
-    if (currentTab === "zombies") {
-      sendToBot({ type: "zombies_open", map: state.zombies_map });
-      return;
-    }
-
-    // home -> premium
-    openBotMenuHint("premium");
+      if (activeTab === "settings") {
+        sendToBot({ type: "set_profile", profile: state });
+        return;
+      }
+      if (activeTab === "coach") {
+        sendToBot({ type: "training_plan", focus: state.focus, profile: state });
+        return;
+      }
+      if (activeTab === "vod") {
+        const t1 = (qs("#vod1")?.value || "").trim();
+        const t2 = (qs("#vod2")?.value || "").trim();
+        const t3 = (qs("#vod3")?.value || "").trim();
+        const note = (qs("#vodNote")?.value || "").trim();
+        sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
+        return;
+      }
+      if (activeTab === "zombies") {
+        sendToBot({ type: "zombies_open", map: state.zombies_map });
+        return;
+      }
+      openBotMenuHint("premium");
+    });
   }
 
-  function updateTelegramButtons() {
+  function updateTelegramButtons(activeTab) {
     if (!tg) return;
 
     // BackButton
     try {
-      if (currentTab !== "home") tg.BackButton.show();
+      if (activeTab !== "home") tg.BackButton.show();
       else tg.BackButton.hide();
     } catch {}
 
-    // MainButton text
+    // MainButton
     try {
-      const text =
-        currentTab === "settings" ? "✅ Применить профиль" :
-        currentTab === "coach" ? "🎯 План тренировки" :
-        currentTab === "vod" ? "🎬 Отправить VOD" :
-        currentTab === "zombies" ? "🧟 Открыть Zombies" :
-        "💎 Premium";
-
-      tg.MainButton.setParams({ is_visible: true, text });
-
-      if (!mainButtonBound) {
-        mainButtonBound = true;
-        tg.MainButton.onClick(mainButtonAction);
-      }
+      tg.MainButton.setParams({
+        is_visible: true,
+        text:
+          activeTab === "settings" ? "✅ Применить профиль" :
+          activeTab === "coach" ? "🎯 План тренировки" :
+          activeTab === "vod" ? "🎬 Отправить VOD" :
+          activeTab === "zombies" ? "🧟 Открыть Zombies" :
+          "💎 Premium"
+      });
+      setMainButtonHandlerOnce();
     } catch {}
   }
 
@@ -285,7 +265,7 @@
   function tryShare(text) {
     try {
       navigator.clipboard?.writeText?.(text);
-      toast("Скопировано");
+      toast("Текст скопирован");
     } catch {
       alert(text);
     }
@@ -315,9 +295,7 @@
     qs("#btnSync")?.addEventListener("click", () => sendToBot({ type: "sync_request" }));
 
     qs("#btnOpenTraining")?.addEventListener("click", () => openBotMenuHint("training"));
-    qs("#btnSendPlan")?.addEventListener("click", () => {
-      sendToBot({ type: "training_plan", focus: state.focus, profile: state });
-    });
+    qs("#btnSendPlan")?.addEventListener("click", () => sendToBot({ type: "training_plan", focus: state.focus, profile: state }));
 
     qs("#btnOpenVod")?.addEventListener("click", () => openBotMenuHint("vod"));
     qs("#btnSendVod")?.addEventListener("click", () => {
@@ -328,7 +306,7 @@
       sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
     });
 
-    // ✅ FIX: "clicks" -> "click"
+    // ✅ FIX: было "clicks" — из-за этого кнопка не работала
     qs("#btnOpenSettings")?.addEventListener("click", () => openBotMenuHint("settings"));
 
     qs("#btnApplyProfile")?.addEventListener("click", () => {
@@ -343,10 +321,11 @@
     qs("#btnZRound")?.addEventListener("click", () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map }));
     qs("#btnZTips")?.addEventListener("click", () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map }));
 
-    // Premium “buy” (пока оставляем как команды в бота)
+    // Premium “buy”
     qs("#btnBuyMonth")?.addEventListener("click", () => sendToBot({ type: "pay", plan: "premium_month" }));
     qs("#btnBuyLife")?.addEventListener("click", () => sendToBot({ type: "pay", plan: "premium_lifetime" }));
 
+    // Share
     qs("#btnShare")?.addEventListener("click", () => {
       const text =
         "BLACK CROWN OPS 😈\n" +
@@ -354,22 +333,17 @@
         "Открой мини-апп внутри Telegram и стань сильнее.";
       tryShare(text);
     });
-
-    // Chips tap -> quick switch tabs
-    qs("#chipVoice")?.addEventListener("click", () => { haptic("impact","light"); selectTab("settings"); });
-    qs("#chipMode")?.addEventListener("click", () => { haptic("impact","light"); selectTab("coach"); });
-    qs("#chipPlatform")?.addEventListener("click", () => { haptic("impact","light"); selectTab("settings"); });
   }
 
   // ---------- Init Telegram ----------
   function initTelegram() {
-    const online = qs("#statOnline");
+    const statOnline = qs("#statOnline");
     const dbgInit = qs("#dbgInit");
     const dbgUser = qs("#dbgUser");
     const dbgChat = qs("#dbgChat");
 
     if (!tg) {
-      if (online) online.textContent = "BROWSER";
+      if (statOnline) statOnline.textContent = "BROWSER";
       if (dbgInit) dbgInit.textContent = "no tg";
       return;
     }
@@ -377,11 +351,9 @@
     tg.ready();
     tg.expand();
 
-    // Theme sync
     applyTelegramTheme();
     try { tg.onEvent("themeChanged", applyTelegramTheme); } catch {}
 
-    // Back button behavior
     try {
       tg.BackButton.onClick(() => {
         haptic("impact", "light");
@@ -392,19 +364,18 @@
     if (dbgUser) dbgUser.textContent = tg.initDataUnsafe?.user?.id ?? "—";
     if (dbgChat) dbgChat.textContent = tg.initDataUnsafe?.chat?.id ?? "—";
     if (dbgInit) dbgInit.textContent = (tg.initData ? "ok" : "empty");
-    if (online) online.textContent = "ONLINE";
+    if (statOnline) statOnline.textContent = "ONLINE";
   }
 
   async function boot() {
     initTelegram();
 
     const src = await loadState();
-    const ss = qs("#statSession");
-    if (ss) ss.textContent = src.toUpperCase();
+    const statSession = qs("#statSession");
+    if (statSession) statSession.textContent = src.toUpperCase();
 
     setTabs();
 
-    // Segments
     wireSeg("#segGame", (v) => { state.game = v; });
     wireSeg("#segFocus", (v) => { state.focus = v; });
     wireSeg("#segMode", (v) => { state.mode = v; });
@@ -424,7 +395,6 @@
 
     wireButtons();
 
-    // start HOME and enable Telegram buttons
     selectTab("home");
   }
 
