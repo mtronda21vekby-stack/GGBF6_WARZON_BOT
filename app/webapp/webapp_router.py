@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 log = logging.getLogger("webapp")
 router = APIRouter()
@@ -28,27 +28,51 @@ def _is_safe_rel_path(p: str) -> bool:
         return False
     if "\\" in p:
         return False
-    # простая защита от ../ и ./../
     parts = [x for x in p.split("/") if x]
     if any(x in ("..",) for x in parts):
         return False
     return True
 
 
+def _build_id() -> str:
+    """
+    Build-id для cache-bust.
+    Приоритет:
+      1) WEBAPP_BUILD_ID (если выставишь руками)
+      2) RENDER_GIT_COMMIT (обычно есть на Render)
+      3) mtime index.html (последняя линия обороны)
+    """
+    bid = (os.getenv("WEBAPP_BUILD_ID") or "").strip()
+    if bid:
+        return bid
+
+    bid = (os.getenv("RENDER_GIT_COMMIT") or "").strip()
+    if bid:
+        return bid[:12]
+
+    try:
+        return str(int(INDEX_FILE.stat().st_mtime))
+    except Exception:
+        return "dev"
+
+
 def _cache_headers(kind: str) -> dict:
     """
     kind:
-      - "html": отключаем кэш (Telegram iOS реально кэширует жёстко)
-      - "asset": можно кэшировать, но безопасно коротко
+      - "html": no-store (Telegram iOS кэширует жёстко)
+      - "asset": можно кэшировать, т.к. у нас cache-bust через ?v=BUILD
     """
     if kind == "html":
         return {
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
+            "Expires": "0",
         }
+
     # assets
     return {
-        "Cache-Control": "public, max-age=300",  # 5 минут, без боли
+        # можно жёстко кэшировать, потому что URL меняется (?v=BUILD)
+        "Cache-Control": "public, max-age=31536000, immutable",
     }
 
 
@@ -59,13 +83,31 @@ def _file_response(path: Path, *, kind: str) -> FileResponse:
     )
 
 
-@router.get("/webapp")
-def webapp_root():
-    # Главная Mini App
+def _render_index_html() -> HTMLResponse:
     if not INDEX_FILE.exists():
         log.error("index.html not found at %s", INDEX_FILE)
         raise HTTPException(status_code=500, detail="webapp index missing")
-    return _file_response(INDEX_FILE, kind="html")
+
+    try:
+        html = INDEX_FILE.read_text(encoding="utf-8")
+    except Exception as e:
+        log.exception("Failed to read index.html: %s", e)
+        raise HTTPException(status_code=500, detail="webapp index read failed")
+
+    bid = _build_id()
+
+    # ВАЖНО:
+    # index.html должен содержать ?v=__BUILD__
+    # Мы заменяем __BUILD__ на актуальный build-id.
+    html = html.replace("__BUILD__", bid)
+
+    return HTMLResponse(content=html, headers=_cache_headers("html"))
+
+
+@router.get("/webapp")
+def webapp_root():
+    # Главная Mini App (HTML с динамическим build-id)
+    return _render_index_html()
 
 
 @router.get("/webapp/{req_path:path}")
@@ -76,11 +118,11 @@ def webapp_files(req_path: str):
       /webapp/app.js
       /webapp/assets/...
     SPA fallback:
-      /webapp (handled above)
       /webapp/settings -> index.html
+
     ВАЖНО:
-      - если путь имеет расширение (.css/.js/.png) и файла нет -> 404 (а не index.html),
-        иначе браузер будет получать HTML вместо CSS/JS и “дизайн пропадает”.
+      - если путь имеет расширение и файла нет -> 404 (а не index.html),
+        иначе браузер получает HTML вместо CSS/JS и “дизайн пропадает”.
     """
     req_path = (req_path or "").strip()
 
@@ -95,19 +137,18 @@ def webapp_files(req_path: str):
     except Exception:
         raise HTTPException(status_code=400, detail="bad path")
 
-    # файл существует -> отдаём как asset
+    # файл существует -> отдаём как asset (кэшируем сильно, URL у нас меняется через ?v=BUILD)
     if target.exists() and target.is_file():
-        # html тоже можем отдавать, но лучше считать это asset, кроме index
-        kind = "html" if target.name.lower() == "index.html" else "asset"
-        return _file_response(target, kind=kind)
+        name = target.name.lower()
+        if name == "index.html":
+            # index всегда через render (no-store + build-id)
+            return _render_index_html()
+        return _file_response(target, kind="asset")
 
     # SPA fallback: только для путей БЕЗ расширения
     has_ext = "." in Path(req_path).name
     if not has_ext:
-        if not INDEX_FILE.exists():
-            log.error("index.html not found at %s", INDEX_FILE)
-            raise HTTPException(status_code=500, detail="webapp index missing")
-        return _file_response(INDEX_FILE, kind="html")
+        return _render_index_html()
 
-    # если расширение есть, но файла нет -> 404 (иначе ломаем css/js)
+    # если расширение есть, но файла нет -> 404
     return Response(status_code=404, content="Not Found")
