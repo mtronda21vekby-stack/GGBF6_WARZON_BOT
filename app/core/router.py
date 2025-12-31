@@ -199,6 +199,17 @@ def _norm_voice(v: str) -> str:
     return "TEAMMATE"
 
 
+def _norm_focus(v: str) -> str:
+    x = (v or "").strip().lower()
+    if x in ("aim", "аим", "aiming", "target"):
+        return "aim"
+    if x in ("movement", "мувмент", "move", "movement/"):
+        return "movement"
+    if x in ("position", "позиционка", "позиция", "positioning", "map"):
+        return "position"
+    return "aim"
+
+
 def _role_map_ru_to_en(text: str) -> str:
     m = {
         "⚔️ Слэйер": "Slayer",
@@ -291,6 +302,118 @@ def _webapp_url() -> str:
     if base:
         return base + "/webapp"
     return ""
+
+
+def _make_training_plan(profile: dict, focus: str) -> str:
+    """
+    Детерминированный план (не зависит от AI).
+    focus: aim | movement | position
+    """
+    prof = dict(profile or {})
+    game = _norm_game(prof.get("game", "Warzone"))
+    inp = _norm_input(prof.get("input", "Controller"))
+    diff = _norm_diff(prof.get("difficulty", "Normal"))
+    voice = _norm_voice(prof.get("voice", "TEAMMATE"))
+    focus = _norm_focus(focus)
+
+    # микро-стиль: Demon/Pro/Normal влияет на жёсткость подачи
+    if diff == "Demon":
+        tone = "Жёстко. Быстро. Без оправданий."
+    elif diff == "Pro":
+        tone = "Плотно и дисциплинированно."
+    else:
+        tone = "Спокойно, но результативно."
+
+    input_block = (
+        "🎮 Input: Controller\n"
+        "• правило: левый стик — позиция, правый — подтверждение.\n"
+        "• цель: стабильность трекинга + меньше паники в файте.\n"
+        if inp == "Controller" else
+        "⌨️ Input: KBM\n"
+        "• правило: мышь — микро, клавиатура — макро.\n"
+        "• цель: чистый кроссхейр + тайминг на пике.\n"
+    )
+
+    focus_title = {"aim": "🎯 AIM", "movement": "🧠 МУВМЕНТ", "position": "🗺 ПОЗИЦИОНКА"}[focus]
+
+    # “фокусный” 10-мин блок
+    if focus == "aim":
+        block10 = (
+            "10 мин — AIM (ядро)\n"
+            "1) 4 мин: трекинг (движущиеся цели)\n"
+            "   • правило: кроссхейр на груди/верх-тело, не на голове\n"
+            "2) 3 мин: микрофлики (короткие переносы)\n"
+            "   • правило: перенос → стоп → выстрел (не наоборот)\n"
+            "3) 3 мин: контроль отдачи/темпа\n"
+            "   • правило: темп важнее скорости\n"
+        )
+        metric = "Метрика: 3 раза подряд “чистый клип” без лишнего тряса + меньше 1 паник-пика за катку."
+    elif focus == "movement":
+        block10 = (
+            "10 мин — МУВМЕНТ (ядро)\n"
+            "1) 4 мин: вход/выход из угла\n"
+            "   • правило: не стой — режь угол, меняй высоту\n"
+            "2) 3 мин: ресет после выстрела\n"
+            "   • правило: дал урон → смена линии (не повторяй пик)\n"
+            "3) 3 мин: “выживание”\n"
+            "   • правило: если не можешь выиграть — живи и перезайди\n"
+        )
+        metric = "Метрика: минимум 3 ресета за катку вместо ‘умираю на повторном пике’."
+    else:
+        block10 = (
+            "10 мин — ПОЗИЦИОНКА (ядро)\n"
+            "1) 4 мин: правило углов\n"
+            "   • правило: занимай позицию, где ты видишь первым\n"
+            "2) 3 мин: ротации\n"
+            "   • правило: двигайся раньше, чем ‘надо’ (на 10–15 сек)\n"
+            "3) 3 мин: дисциплина в файте\n"
+            "   • правило: один угол — один контакт, потом смена\n"
+        )
+        metric = "Метрика: 0 смертей ‘в спину’ по своей вине + 2 ранние ротации за матч."
+
+    finisher5 = (
+        "5 мин — закрепление в бою\n"
+        "• 1 файт: играешь только по правилам фокуса (без геройства)\n"
+        "• после: 1 фраза отчёта — что было легче/сложнее\n"
+    )
+
+    return (
+        f"{focus_title} · 20-мин план\n"
+        f"Игра: {game} | Режим: {diff}\n"
+        f"{tone}\n\n"
+        "5 мин — контроль (разминка)\n"
+        "• 2 мин: кроссхейр-плейсмент (всегда на уровне контакта)\n"
+        "• 3 мин: 3 коротких повторения ‘вижу → фиксирую → стреляю’\n\n"
+        f"{block10}\n"
+        f"{finisher5}\n"
+        f"{input_block}\n"
+        f"{metric}\n\n"
+        + ("📚 Коуч-правило: если ты не можешь описать план в 1 строку — у тебя не план, у тебя надежда.\n" if voice == "COACH"
+           else "🤝 Тиммейт: сделай это 2 дня подряд — и ты сам увидишь разницу.\n")
+    )
+
+
+def _vod_prompt(profile: dict, times: list[str], note: str) -> str:
+    game = _norm_game((profile or {}).get("game", "Warzone"))
+    inp = _norm_input((profile or {}).get("input", "Controller"))
+    diff = _norm_diff((profile or {}).get("difficulty", "Normal"))
+    role = (profile or {}).get("role", "Flex")
+    bf6_class = (profile or {}).get("bf6_class", "Assault")
+
+    t = [x for x in (times or []) if (x or "").strip()]
+    tline = ", ".join(t) if t else "таймкоды не указаны"
+
+    return (
+        "VOD разбор без видео.\n"
+        "Дай элитный анализ решений по каждому таймкоду:\n"
+        "• что игрок хотел сделать\n"
+        "• что было ошибкой (1-2 пункта)\n"
+        "• что делать вместо этого (конкретно)\n"
+        "• микро-чеклист на следующий раз\n\n"
+        f"Контекст: game={game}, input={inp}, mode={diff}, role={role}, bf6_class={bf6_class}\n"
+        f"Таймкоды: {tline}\n"
+        f"План игрока/заметка: {note}\n"
+    )
 
 
 @dataclass
@@ -810,6 +933,19 @@ class Router:
 
     # ---------------- MINI APP receiver ----------------
     async def _on_webapp_data(self, chat_id: int, data: str) -> None:
+        """
+        Полная поддержка Mini App payload из app.js:
+        type:
+          - nav {target}
+          - set_profile {profile}
+          - sync_request
+          - one_line {text, profile?}
+          - training_plan {focus, profile?}
+          - vod {times, note, profile?}
+          - zombies_open {map}
+          - zombies {action, map}
+          - pay {plan}
+        """
         prof = self._get_profile(chat_id)
 
         raw = (data or "").strip()
@@ -825,39 +961,217 @@ class Router:
         if not isinstance(payload, dict):
             payload = {"type": "text", "text": raw}
 
+        # ---- normalize: sometimes app packs {meta, v, t, ...}
         ptype = str(payload.get("type") or "text").strip().lower()
-        text = str(payload.get("text") or payload.get("value") or "").strip()
 
-        if ptype in ("profile", "settings"):
+        # profile may come as payload.profile or flat keys
+        profile_from_payload = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
+        if not isinstance(profile_from_payload, dict):
+            profile_from_payload = {}
+
+        # helper: apply profile dict (max safe)
+        def apply_profile_dict(pdict: dict) -> None:
+            if not isinstance(pdict, dict):
+                return
             for key in ("game", "platform", "input", "difficulty", "voice", "role", "bf6_class", "zombies_map"):
-                if key in payload and str(payload.get(key)).strip():
-                    self._set_profile_field(chat_id, key, str(payload.get(key)).strip())
+                if key in pdict and str(pdict.get(key)).strip():
+                    self._set_profile_field(chat_id, key, str(pdict.get(key)).strip())
+
+        # 1) If payload carries profile, apply it first (so next actions are consistent)
+        if profile_from_payload:
+            apply_profile_dict(profile_from_payload)
             prof = self._get_profile(chat_id)
-            await self._send_main(chat_id, _wrap_premium("✅ Настройки приняты из MINI APP.", profile=prof))
+
+        # Also accept flat keys (some clients may send directly)
+        flat_profile_like = {}
+        for k in ("game", "platform", "input", "difficulty", "voice", "role", "bf6_class", "zombies_map"):
+            if k in payload and str(payload.get(k)).strip():
+                flat_profile_like[k] = payload.get(k)
+        if flat_profile_like:
+            apply_profile_dict(flat_profile_like)
+            prof = self._get_profile(chat_id)
+
+        # ---------- ROUTES ----------
+        if ptype == "nav":
+            target = str(payload.get("target") or "").strip().lower()
+
+            if target in ("main", "home", "menu", ""):
+                await self._send_main(chat_id, _start_text(prof))
+                return
+
+            if target in ("premium", "premium_hub"):
+                await self._send(chat_id, "💎 Premium Hub:", kb_premium())
+                return
+
+            if target in ("training", "coach"):
+                # “open training” = показать экран тренировки в боте
+                await self._send_main(chat_id, _wrap_premium("🎯 Открыл: Тренировка.\nЖми кнопки / отправь запрос одной строкой.", profile=prof))
+                await self._send(chat_id, "🎯 Тренировка:", kb_main())
+                return
+
+            if target in ("vod",):
+                await self._send_main(chat_id, _wrap_premium("🎬 Открыл: VOD.\nКинь 3 таймкода + план — разберу.", profile=prof))
+                return
+
+            if target in ("settings",):
+                await self._send(chat_id, "⚙️ Настройки (профиль):", kb_settings())
+                return
+
+            if target in ("zombies", "zombies_open"):
+                if zombies_hub_text:
+                    await self._send(chat_id, _wrap_premium(zombies_hub_text(prof), profile=prof), kb_zombies_hub())
+                else:
+                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
+                return
+
+            # fallback: unknown target
+            await self._send_main(chat_id, _wrap_premium(f"🛰 NAV: неизвестная цель: {target}", profile=prof))
+            return
+
+        if ptype in ("set_profile", "profile", "settings"):
+            pdict = payload.get("profile") if isinstance(payload.get("profile"), dict) else payload
+            apply_profile_dict(pdict if isinstance(pdict, dict) else {})
+            prof = self._get_profile(chat_id)
+            await self._send_main(chat_id, _wrap_premium("✅ Профиль применён из MINI APP.\nТеперь кнопки в боте будут работать под новые настройки.", profile=prof))
+            return
+
+        if ptype in ("sync_request", "sync"):
+            # Mini App сам хранит state в Cloud/Local, но полезно отдать текущий профиль
+            await self._on_profile(chat_id)
+            return
+
+        if ptype in ("one_line",):
+            text = str(payload.get("text") or "").strip()
+            if not text:
+                await self._send_main(chat_id, _wrap_premium("🧠 One-line пустой. Заполни строку и отправь.", profile=prof))
+                return
+            # отправляем в мозг как есть (это и есть формат “1 строка”)
+            await self._chat_to_brain(chat_id, text)
+            return
+
+        if ptype in ("training_plan", "train", "training"):
+            focus = _norm_focus(str(payload.get("focus") or "aim"))
+            # жёсткий детерминированный план (всегда работает)
+            plan = _make_training_plan(prof, focus)
+            await self._send_main(chat_id, _wrap_premium(plan, profile=prof))
             return
 
         if ptype in ("vod",):
-            if not text:
-                text = "VOD из MINI APP: пришли 3 таймкода + что хотел сделать."
-            await self._send_main(chat_id, _wrap_premium(f"🎬 {text}", profile=prof))
-            return
+            times = payload.get("times") or payload.get("timecodes") or []
+            if not isinstance(times, list):
+                times = [str(times)]
+            times = [str(x).strip() for x in times if str(x).strip()]
+            note = str(payload.get("note") or payload.get("text") or "").strip()
 
-        if ptype in ("train", "training"):
-            if not text:
-                text = "Тренировка из MINI APP: игра | input | что болит | где умираешь"
-            await self._send_main(chat_id, _wrap_premium(f"🎯 {text}", profile=prof))
-            return
-
-        if ptype in ("ai", "chat", "text"):
-            if text:
-                await self._chat_to_brain(chat_id, text)
+            if self.brain and hasattr(self.brain, "reply"):
+                # в brain отправляем максимально структурированный запрос
+                prompt = _vod_prompt(prof, times, note)
+                await self._chat_to_brain(chat_id, prompt)
                 return
 
+            # fallback без AI
+            tline = ", ".join(times) if times else "—"
+            await self._send_main(
+                chat_id,
+                _wrap_premium(
+                    (
+                        "🎬 VOD получен.\n\n"
+                        f"Таймкоды: {tline}\n"
+                        f"План/заметка: {note or '—'}\n\n"
+                        "Чтобы сделать элитный разбор автоматически — включи AI (📊 Статус)."
+                    ),
+                    profile=prof,
+                ),
+            )
+            return
+
+        if ptype in ("zombies_open",):
+            m = str(payload.get("map") or prof.get("zombies_map") or "Ashes").strip() or "Ashes"
+            self._set_profile_field(chat_id, "zombies_map", m)
+            prof = self._get_profile(chat_id)
+            if zombies_hub_text:
+                await self._send(chat_id, _wrap_premium(zombies_hub_text(prof), profile=prof), kb_zombies_hub())
+            else:
+                await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
+            return
+
+        if ptype in ("zombies",):
+            action = str(payload.get("action") or "").strip().lower()
+            m = str(payload.get("map") or prof.get("zombies_map") or "Ashes").strip() or "Ashes"
+            self._set_profile_field(chat_id, "zombies_map", m)
+            prof = self._get_profile(chat_id)
+
+            if action in ("perks", "perk", "перки"):
+                if zombies_map_perks_text:
+                    await self._send(chat_id, _wrap_premium(zombies_map_perks_text(m), profile=prof), kb_zombies_map_menu(m))
+                else:
+                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
+                return
+
+            if action in ("loadout", "weapon", "weapons", "оружие"):
+                if zombies_map_loadout_text:
+                    await self._send(chat_id, _wrap_premium(zombies_map_loadout_text(m), profile=prof), kb_zombies_map_menu(m))
+                else:
+                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
+                return
+
+            if action in ("eggs", "easter_eggs", "пасхалки"):
+                if zombies_map_easter_eggs_text:
+                    await self._send(chat_id, _wrap_premium(zombies_map_easter_eggs_text(m), profile=prof), kb_zombies_map_menu(m))
+                else:
+                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
+                return
+
+            if action in ("rounds", "round_strategy", "strategy", "стратегия"):
+                if zombies_map_round_strategy_text:
+                    await self._send(chat_id, _wrap_premium(zombies_map_round_strategy_text(m), profile=prof), kb_zombies_map_menu(m))
+                else:
+                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
+                return
+
+            if action in ("tips", "quick_tips", "советы"):
+                if zombies_map_quick_tips_text:
+                    await self._send(chat_id, _wrap_premium(zombies_map_quick_tips_text(m), profile=prof), kb_zombies_map_menu(m))
+                else:
+                    await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
+                return
+
+            # unknown zombies action -> open hub
+            if zombies_hub_text:
+                await self._send(chat_id, _wrap_premium(zombies_hub_text(prof), profile=prof), kb_zombies_hub())
+            else:
+                await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
+            return
+
+        if ptype in ("pay", "payment"):
+            plan = str(payload.get("plan") or "").strip()
+            # Здесь реальная оплата через Invoice будет отдельным модулем/сервисом.
+            # Сейчас: максимум UX — подтверждение + направление в Premium Hub.
+            pretty = "Month" if "month" in plan else ("Lifetime" if "life" in plan else plan or "—")
+            await self._send(
+                chat_id,
+                _wrap_premium(
+                    (
+                        f"💎 Запрос на оплату принят.\n"
+                        f"План: {pretty}\n\n"
+                        "Следующий шаг (Invoice):\n"
+                        "• я создам счёт в боте и ты оплатишь в 2 тапа.\n\n"
+                        "Сейчас открываю Premium Hub 👇"
+                    ),
+                    profile=prof,
+                ),
+                kb_premium(),
+            )
+            return
+
+        # ---------- fallback ----------
+        # если пришёл какой-то текст — отправим в мозг, иначе покажем payload
+        text = str(payload.get("text") or payload.get("value") or "").strip()
         if text:
             await self._chat_to_brain(chat_id, text)
             return
 
-        await self._send_main(chat_id, _wrap_premium("🛰 MINI APP прислал данные, но без текста.", profile=prof))
+        await self._send_main(chat_id, _wrap_premium(f"🛰 MINI APP payload принят, но без действия.\nТип: {ptype}", profile=prof))
 
     # ---------------- messaging helpers ----------------
     async def _send(self, chat_id: int, text: str, reply_markup: Optional[dict] = None) -> None:
