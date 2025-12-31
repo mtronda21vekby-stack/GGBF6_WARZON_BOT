@@ -13,8 +13,17 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
+  <!-- ✅ preload (ускоряет) -->
+  <link rel="preload" as="style" href="/webapp/style.css?v=__BUILD__" />
+  <link rel="preload" as="script" href="/webapp/app.js?v=__BUILD__" />
+
   <!-- ✅ cache-bust + абсолютный путь -->
   <link rel="stylesheet" href="/webapp/style.css?v=__BUILD__" />
+
+  <!-- ✅ build доступен и до загрузки app.js -->
+  <script>
+    window.__BCO_BUILD__ = "__BUILD__";
+  </script>
 </head>
 
 <body>
@@ -29,6 +38,7 @@
       <div class="logo">👑</div>
       <div class="brand-text">
         <div class="title">BLACK CROWN OPS</div>
+        <!-- ✅ без слова cosmic -->
         <div class="sub">premium • FPS coach</div>
       </div>
     </div>
@@ -211,8 +221,19 @@
           <div class="li">theme: <span id="dbgTheme">—</span></div>
           <div class="li">initData: <span id="dbgInit">—</span></div>
         </div>
+
         <div class="hint">Если initData = empty — ты открыл не из Telegram.</div>
-        <div class="hint" id="buildTag" style="margin-top:8px; opacity:.85;">build: __BUILD__</div>
+
+        <!-- ✅ build в UI -->
+        <div class="hint" id="buildTag" style="margin-top:8px; opacity:.85;">
+          build: __BUILD__
+        </div>
+
+        <!-- ✅ если app.js не загрузился/сломался — увидишь это тут -->
+        <div class="hint" id="jsHealth"
+             style="margin-top:6px; opacity:.85; color:rgba(255,255,255,.65);">
+          js: loading…
+        </div>
       </div>
     </section>
 
@@ -265,5 +286,28 @@
 
   <!-- ✅ cache-bust + абсолютный путь -->
   <script src="/webapp/app.js?v=__BUILD__"></script>
+
+  <!-- ✅ индикатор: js подхватился -->
+  <script>
+    (function () {
+      var el = document.getElementById("jsHealth");
+      if (!el) return;
+
+      // если app.js выставит window.__BCO_JS_OK__ = true — покажем OK
+      var tries = 0;
+      var t = setInterval(function () {
+        tries++;
+        if (window.__BCO_JS_OK__ === true) {
+          el.textContent = "js: OK";
+          clearInterval(t);
+          return;
+        }
+        if (tries >= 20) { // ~2 сек
+          el.textContent = "js: NOT LOADED (cache/route/path)";
+          clearInterval(t);
+        }
+      }, 100);
+    })();
+  </script>
 </body>
 </html>
