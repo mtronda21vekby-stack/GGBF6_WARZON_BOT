@@ -1,4 +1,3 @@
-<!-- app/webapp/static/index.html -->
 <!doctype html>
 <html lang="ru">
 <head>
@@ -71,14 +70,6 @@
           </div>
         </div>
       </div>
-    </section>
-
-    <section class="tabs">
-      <button class="tab active" data-tab="home" type="button">⭐ Главная</button>
-      <button class="tab" data-tab="coach" type="button">🎯 Тренировка</button>
-      <button class="tab" data-tab="vod" type="button">🎬 VOD</button>
-      <button class="tab" data-tab="settings" type="button">⚙️ Настройки</button>
-      <button class="tab" data-tab="zombies" type="button">🧟 Zombies</button>
     </section>
 
     <!-- HOME -->
@@ -244,6 +235,30 @@
       <div class="foot-right"></div>
     </footer>
   </main>
+
+  <!-- ✅ Нижняя iOS-tabbar (premium) -->
+  <nav class="bottombar" aria-label="Навигация">
+    <button class="nav-btn active" data-tab="home" type="button" aria-selected="true">
+      <span class="nav-ico">⭐</span>
+      <span class="nav-txt">Главная</span>
+    </button>
+    <button class="nav-btn" data-tab="coach" type="button" aria-selected="false">
+      <span class="nav-ico">🎯</span>
+      <span class="nav-txt">Тренировка</span>
+    </button>
+    <button class="nav-btn" data-tab="vod" type="button" aria-selected="false">
+      <span class="nav-ico">🎬</span>
+      <span class="nav-txt">VOD</span>
+    </button>
+    <button class="nav-btn" data-tab="settings" type="button" aria-selected="false">
+      <span class="nav-ico">⚙️</span>
+      <span class="nav-txt">Настройки</span>
+    </button>
+    <button class="nav-btn" data-tab="zombies" type="button" aria-selected="false">
+      <span class="nav-ico">🧟</span>
+      <span class="nav-txt">Zombies</span>
+    </button>
+  </nav>
 
   <div class="toast" id="toast">OK</div>
 
