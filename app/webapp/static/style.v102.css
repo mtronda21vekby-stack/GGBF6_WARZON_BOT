@@ -433,4 +433,120 @@ textarea.input{min-height:90px}
 @media (prefers-reduced-motion: reduce){
   .stars,.nebula{animation:none}
   .nav-btn,.seg-btn,.btn,.chip{transition:none}
+}/* =========================
+   BCO PREMIUM BOOST v1.0.2
+   (append-only override)
+========================= */
+
+/* Чуть крупнее типографика на телефоне */
+@media (max-width: 860px){
+  .card-title{font-size:18px}
+  .hero-title{font-size:24px}
+  .hero-desc{font-size:14px}
+  .hint{font-size:13px}
+  .seg-btn{padding:12px 10px}
+  .btn{padding:13px 12px}
+}
+
+/* Tabpane “дороже”: лёгкий fade/slide */
+.tabpane{
+  display:none;
+  opacity:0;
+  transform: translateY(8px);
+  transition: opacity .18s ease, transform .18s ease;
+}
+.tabpane.active{
+  display:grid;
+  opacity:1;
+  transform: translateY(0);
+}
+
+/* Кнопки: “glass” + подсветка */
+.btn{
+  position:relative;
+  isolation:isolate;
+}
+.btn::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  border-radius:16px;
+  pointer-events:none;
+  opacity:.0;
+  background: radial-gradient(220px 120px at 30% 20%, rgba(199,165,91,.22), transparent 60%),
+              radial-gradient(240px 140px at 80% 30%, rgba(107,92,255,.18), transparent 62%);
+  transition: opacity .18s ease;
+}
+.btn:active::after{opacity:1}
+
+/* Seg кнопки: чуть больше “тела” */
+.seg{
+  background: rgba(255,255,255,.035);
+  box-shadow: 0 12px 36px rgba(0,0,0,.22) inset;
+}
+.seg-btn{
+  background: rgba(255,255,255,.045);
+}
+.seg-btn.active{
+  box-shadow: 0 0 0 1px rgba(199,165,91,.18) inset,
+              0 14px 40px rgba(0,0,0,.30);
+}
+
+/* === Bottom bar: делаем iOS-native премиум === */
+:root{ --bar-h: 78px; } /* чуть выше, чтобы “дышало” */
+
+.bottombar{
+  padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(7,7,11,.18), rgba(7,7,11,.94));
+}
+
+/* Плитки навигации крупнее, с “капсулой” */
+.nav-btn{
+  border-radius: 20px;
+  min-height: 52px;
+  position:relative;
+  overflow:hidden;
+}
+.nav-btn::before{
+  content:"";
+  position:absolute;
+  inset:-30%;
+  background:
+    radial-gradient(140px 80px at 30% 20%, rgba(199,165,91,.18), transparent 60%),
+    radial-gradient(160px 90px at 80% 30%, rgba(107,92,255,.16), transparent 62%);
+  opacity:0;
+  transition: opacity .18s ease;
+}
+.nav-btn.active::before{opacity:1}
+
+.nav-ico{
+  font-size:18px; /* было мелко */
+  transform: translateY(1px);
+}
+
+/* На телефоне НЕ прячем подписи полностью — делаем мини */
+.nav-txt{
+  display:block;
+  font-size:10px;
+  font-weight:900;
+  opacity:.78;
+  letter-spacing:.12px;
+}
+@media (max-width: 860px){
+  .nav-txt{display:block}
+}
+
+/* Active-индикатор “точка” снизу (дорого!) */
+.nav-btn.active::after{
+  content:"";
+  position:absolute;
+  left:50%;
+  bottom:8px;
+  width:26px;
+  height:3px;
+  transform:translateX(-50%);
+  border-radius:999px;
+  background: linear-gradient(90deg, rgba(199,165,91,.85), rgba(107,92,255,.75));
+  box-shadow: 0 0 16px rgba(199,165,91,.25);
+  opacity:.95;
 }
