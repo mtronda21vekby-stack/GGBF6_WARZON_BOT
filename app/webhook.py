@@ -49,7 +49,18 @@ def create_app() -> FastAPI:
     # =========================================================
     try:
         from app.webapp.webapp_router import router as webapp_router
+        from app.webapp.webapp_router import bind_runtime as webapp_bind_runtime
+
         app.include_router(webapp_router)
+
+        # ✅ КЛЮЧЕВОЕ: пробрасываем runtime в webapp_router,
+        # чтобы /webapp/api/ask видел brain/profiles/store/settings
+        try:
+            webapp_bind_runtime(brain=brain, profiles=profiles, store=store, settings=settings)
+            log.info("Mini App runtime bind: OK")
+        except Exception as e:
+            log.exception("Mini App runtime bind FAILED: %s", e)
+
         log.info("Mini App router loaded")
     except Exception as e:
         log.exception("Mini App router NOT loaded: %s", e)
@@ -94,10 +105,7 @@ def create_app() -> FastAPI:
 
         # =========================================================
         # MINI APP -> BOT (web_app_data)
-        # Если Mini App делает tg.sendData(...),
-        # Telegram присылает message.web_app_data.data
-        # Мы перехватываем и отдаём управление Router-у,
-        # но НЕ ЛОМАЕМ обычные апдейты.
+        # Telegram присылает message.web_app_data.data после tg.sendData(...)
         # =========================================================
         try:
             msg = getattr(upd, "message", None)
@@ -105,7 +113,6 @@ def create_app() -> FastAPI:
 
             data_raw = None
             if web_app_data:
-                # поддержка и dict, и pydantic-like объекта
                 if isinstance(web_app_data, dict):
                     data_raw = web_app_data.get("data")
                 else:
@@ -121,7 +128,6 @@ def create_app() -> FastAPI:
                         log.exception("handle_webapp_data crashed: %s", e)
                         # падаем обратно в обычный пайплайн (не ломаем)
                 else:
-                    # Router ещё не умеет web_app_data — просто лог
                     log.warning("Router has no handle_webapp_data() yet (web_app_data received)")
         except Exception as e:
             log.exception("web_app_data pre-handler crashed: %s", e)
