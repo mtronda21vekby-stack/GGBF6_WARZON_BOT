@@ -1,8 +1,7 @@
-/* app/webapp/static/app.js */
 (() => {
   const tg = window.Telegram?.WebApp;
 
-  const VERSION = "1.0.0";
+  const VERSION = "1.0.1";
   const STORAGE_KEY = "bco_state_v1";
 
   const defaults = {
@@ -41,7 +40,7 @@
     if (!t) return;
     t.textContent = text;
     t.classList.add("show");
-    setTimeout(() => t.classList.remove("show"), 1800);
+    setTimeout(() => t.classList.remove("show"), 1700);
   }
 
   // ---------- Theme sync (Telegram -> CSS vars) ----------
@@ -82,9 +81,7 @@
   async function cloudSet(key, value) {
     if (!tg?.CloudStorage?.setItem) return false;
     return new Promise((resolve) => {
-      tg.CloudStorage.setItem(key, value, (err) => {
-        resolve(!err);
-      });
+      tg.CloudStorage.setItem(key, value, (err) => resolve(!err));
     });
   }
 
@@ -115,16 +112,22 @@
 
   // ---------- UI helpers ----------
   function setChipText() {
+    const vv = state.voice === "COACH" ? "📚 Коуч" : "🤝 Тиммейт";
     const chipVoice = qs("#chipVoice");
-    const chipMode = qs("#chipMode");
-    const chipPlatform = qs("#chipPlatform");
-    const pillRole = qs("#pillRole");
-    const pillBf6 = qs("#pillBf6");
+    if (chipVoice) chipVoice.textContent = vv;
 
-    if (chipVoice) chipVoice.textContent = (state.voice === "COACH" ? "📚 Коуч" : "🤝 Тиммейт");
-    if (chipMode) chipMode.textContent = (state.mode === "Demon" ? "😈 Demon" : (state.mode === "Pro" ? "🔥 Pro" : "🧠 Normal"));
-    if (chipPlatform) chipPlatform.textContent = (state.platform === "PlayStation" ? "🎮 PlayStation" : (state.platform === "Xbox" ? "🎮 Xbox" : "🖥 PC"));
+    const mm = state.mode === "Demon" ? "😈 Demon" : (state.mode === "Pro" ? "🔥 Pro" : "🧠 Normal");
+    const chipMode = qs("#chipMode");
+    if (chipMode) chipMode.textContent = mm;
+
+    const pp = state.platform === "PlayStation" ? "🎮 PlayStation" : (state.platform === "Xbox" ? "🎮 Xbox" : "🖥 PC");
+    const chipPlatform = qs("#chipPlatform");
+    if (chipPlatform) chipPlatform.textContent = pp;
+
+    const pillRole = qs("#pillRole");
     if (pillRole) pillRole.textContent = `🎭 Role: ${state.role}`;
+
+    const pillBf6 = qs("#pillBf6");
     if (pillBf6) pillBf6.textContent = `🟩 Class: ${state.bf6_class}`;
   }
 
@@ -133,17 +136,29 @@
     if (!root) return;
     root.querySelectorAll(".seg-btn").forEach(b => {
       b.classList.toggle("active", b.dataset.value === value);
+      b.setAttribute("aria-pressed", b.dataset.value === value ? "true" : "false");
+    });
+  }
+
+  function setActiveNav(tab) {
+    qsa(".nav-btn").forEach(b => {
+      const on = b.dataset.tab === tab;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
     });
   }
 
   function selectTab(tab) {
-    qsa(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
     qsa(".tabpane").forEach(p => p.classList.toggle("active", p.id === `tab-${tab}`));
+    setActiveNav(tab);
     updateTelegramButtons(tab);
+
+    // лёгкий “premium” эффект: при смене вкладки чуть подскроллить вверх
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
   }
 
-  function setTabs() {
-    qsa(".tab").forEach(btn => {
+  function wireNav() {
+    qsa(".nav-btn").forEach(btn => {
       btn.addEventListener("click", () => {
         haptic("impact", "light");
         selectTab(btn.dataset.tab);
@@ -159,13 +174,12 @@
       const btn = e.target.closest(".seg-btn");
       if (!btn) return;
       haptic("impact", "light");
-
       onPick(btn.dataset.value);
-      root.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("active", b === btn));
 
+      root.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("active", b === btn));
       setChipText();
       await saveState();
-      toast("Сохранено");
+      toast("Сохранено ✅");
     });
   }
 
@@ -188,10 +202,11 @@
       const pack = enrichPayload(payload);
       const data = JSON.stringify(pack);
       tg?.sendData(data);
+
       haptic("notif", "success");
       const statSession = qs("#statSession");
       if (statSession) statSession.textContent = "SENT";
-      toast("Отправлено в бота");
+      toast("Отправлено в бота 🚀");
     } catch {
       haptic("notif", "error");
       alert("Не могу отправить данные в бот. Открой мини-апп из Telegram.");
@@ -203,40 +218,6 @@
   }
 
   // ---------- Telegram native buttons ----------
-  // ✅ фикс: НЕ вешаем onClick при каждом tab switch (иначе копится)
-  function setMainButtonHandlerOnce() {
-    if (!tg?.MainButton) return;
-    if (tg.MainButton.__bcoBound) return;
-    tg.MainButton.__bcoBound = true;
-
-    tg.MainButton.onClick(() => {
-      haptic("impact", "medium");
-      const activeTab = document.querySelector(".tab.active")?.dataset?.tab || "home";
-
-      if (activeTab === "settings") {
-        sendToBot({ type: "set_profile", profile: state });
-        return;
-      }
-      if (activeTab === "coach") {
-        sendToBot({ type: "training_plan", focus: state.focus, profile: state });
-        return;
-      }
-      if (activeTab === "vod") {
-        const t1 = (qs("#vod1")?.value || "").trim();
-        const t2 = (qs("#vod2")?.value || "").trim();
-        const t3 = (qs("#vod3")?.value || "").trim();
-        const note = (qs("#vodNote")?.value || "").trim();
-        sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
-        return;
-      }
-      if (activeTab === "zombies") {
-        sendToBot({ type: "zombies_open", map: state.zombies_map });
-        return;
-      }
-      openBotMenuHint("premium");
-    });
-  }
-
   function updateTelegramButtons(activeTab) {
     if (!tg) return;
 
@@ -257,7 +238,34 @@
           activeTab === "zombies" ? "🧟 Открыть Zombies" :
           "💎 Premium"
       });
-      setMainButtonHandlerOnce();
+
+      tg.MainButton.offClick?.(); // если поддерживается
+      tg.MainButton.onClick(() => {
+        haptic("impact", "medium");
+
+        if (activeTab === "settings") {
+          sendToBot({ type: "set_profile", profile: state });
+          return;
+        }
+        if (activeTab === "coach") {
+          sendToBot({ type: "training_plan", focus: state.focus, profile: state });
+          return;
+        }
+        if (activeTab === "vod") {
+          const t1 = (qs("#vod1")?.value || "").trim();
+          const t2 = (qs("#vod2")?.value || "").trim();
+          const t3 = (qs("#vod3")?.value || "").trim();
+          const note = (qs("#vodNote")?.value || "").trim();
+          sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
+          return;
+        }
+        if (activeTab === "zombies") {
+          sendToBot({ type: "zombies_open", map: state.zombies_map });
+          return;
+        }
+
+        openBotMenuHint("premium");
+      });
     } catch {}
   }
 
@@ -265,10 +273,44 @@
   function tryShare(text) {
     try {
       navigator.clipboard?.writeText?.(text);
-      toast("Текст скопирован");
+      toast("Скопировано ✅");
     } catch {
       alert(text);
     }
+  }
+
+  // ---------- Header chip quick toggles (premium UX) ----------
+  async function wireHeaderChips() {
+    const chipVoice = qs("#chipVoice");
+    const chipMode = qs("#chipMode");
+    const chipPlatform = qs("#chipPlatform");
+
+    chipVoice?.addEventListener("click", async () => {
+      haptic("impact", "light");
+      state.voice = (state.voice === "COACH") ? "TEAMMATE" : "COACH";
+      setChipText();
+      setActiveSeg("#segVoice", state.voice);
+      await saveState();
+      toast(state.voice === "COACH" ? "Коуч включён 📚" : "Тиммейт 🤝");
+    });
+
+    chipMode?.addEventListener("click", async () => {
+      haptic("impact", "light");
+      state.mode = (state.mode === "Normal") ? "Pro" : (state.mode === "Pro" ? "Demon" : "Normal");
+      setChipText();
+      setActiveSeg("#segMode", state.mode);
+      await saveState();
+      toast(`Режим: ${state.mode}`);
+    });
+
+    chipPlatform?.addEventListener("click", async () => {
+      haptic("impact", "light");
+      state.platform = (state.platform === "PC") ? "PlayStation" : (state.platform === "PlayStation" ? "Xbox" : "PC");
+      setChipText();
+      setActiveSeg("#segPlatform", state.platform);
+      await saveState();
+      toast(`Platform: ${state.platform}`);
+    });
   }
 
   // ---------- Wire buttons ----------
@@ -306,7 +348,7 @@
       sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
     });
 
-    // ✅ FIX: было "clicks" — из-за этого кнопка не работала
+    // ✅ ВОТ ТУТ БЫЛ ТВОЙ БАГ: "clicks" -> "click"
     qs("#btnOpenSettings")?.addEventListener("click", () => openBotMenuHint("settings"));
 
     qs("#btnApplyProfile")?.addEventListener("click", () => {
@@ -321,7 +363,7 @@
     qs("#btnZRound")?.addEventListener("click", () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map }));
     qs("#btnZTips")?.addEventListener("click", () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map }));
 
-    // Premium “buy”
+    // Premium “buy” (пока просто команда в бот)
     qs("#btnBuyMonth")?.addEventListener("click", () => sendToBot({ type: "pay", plan: "premium_month" }));
     qs("#btnBuyLife")?.addEventListener("click", () => sendToBot({ type: "pay", plan: "premium_lifetime" }));
 
@@ -337,13 +379,10 @@
 
   // ---------- Init Telegram ----------
   function initTelegram() {
-    const statOnline = qs("#statOnline");
-    const dbgInit = qs("#dbgInit");
-    const dbgUser = qs("#dbgUser");
-    const dbgChat = qs("#dbgChat");
-
     if (!tg) {
+      const statOnline = qs("#statOnline");
       if (statOnline) statOnline.textContent = "BROWSER";
+      const dbgInit = qs("#dbgInit");
       if (dbgInit) dbgInit.textContent = "no tg";
       return;
     }
@@ -351,15 +390,23 @@
     tg.ready();
     tg.expand();
 
+    // Theme sync
     applyTelegramTheme();
     try { tg.onEvent("themeChanged", applyTelegramTheme); } catch {}
 
+    // Back button behavior
     try {
       tg.BackButton.onClick(() => {
         haptic("impact", "light");
         selectTab("home");
       });
     } catch {}
+
+    // Debug
+    const dbgUser = qs("#dbgUser");
+    const dbgChat = qs("#dbgChat");
+    const dbgInit = qs("#dbgInit");
+    const statOnline = qs("#statOnline");
 
     if (dbgUser) dbgUser.textContent = tg.initDataUnsafe?.user?.id ?? "—";
     if (dbgChat) dbgChat.textContent = tg.initDataUnsafe?.chat?.id ?? "—";
@@ -374,8 +421,9 @@
     const statSession = qs("#statSession");
     if (statSession) statSession.textContent = src.toUpperCase();
 
-    setTabs();
+    wireNav();
 
+    // Segments
     wireSeg("#segGame", (v) => { state.game = v; });
     wireSeg("#segFocus", (v) => { state.focus = v; });
     wireSeg("#segMode", (v) => { state.mode = v; });
@@ -385,6 +433,7 @@
     wireSeg("#segZMap", (v) => { state.zombies_map = v; });
 
     setChipText();
+
     setActiveSeg("#segPlatform", state.platform);
     setActiveSeg("#segInput", state.input);
     setActiveSeg("#segVoice", state.voice);
@@ -393,6 +442,7 @@
     setActiveSeg("#segGame", state.game);
     setActiveSeg("#segFocus", state.focus);
 
+    await wireHeaderChips();
     wireButtons();
 
     selectTab("home");
