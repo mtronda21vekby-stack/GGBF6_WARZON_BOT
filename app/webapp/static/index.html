@@ -10,7 +10,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="./style.css?v=101" />
+  <!-- ✅ ВАЖНО: новое имя файла -->
+  <link rel="stylesheet" href="./style.v102.css" />
 </head>
 
 <body>
@@ -232,37 +233,35 @@
 
     <footer class="foot">
       <div class="foot-left">— BCO 😈</div>
-      <div class="foot-right" id="buildTag">build —</div>
+      <!-- ✅ build пишем статически -->
+      <div class="foot-right" id="buildTag">build v1.0.2</div>
     </footer>
   </main>
 
-  <!-- ✅ Нижняя iOS-tabbar (premium) -->
+  <!-- ✅ Нижняя iOS-tabbar -->
   <nav class="bottombar" aria-label="Навигация">
     <button class="nav-btn active" data-tab="home" type="button" aria-selected="true">
       <span class="nav-ico">⭐</span>
-      <span class="nav-txt">Главная</span>
     </button>
     <button class="nav-btn" data-tab="coach" type="button" aria-selected="false">
       <span class="nav-ico">🎯</span>
-      <span class="nav-txt">Тренировка</span>
     </button>
     <button class="nav-btn" data-tab="vod" type="button" aria-selected="false">
       <span class="nav-ico">🎬</span>
-      <span class="nav-txt">VOD</span>
     </button>
     <button class="nav-btn" data-tab="settings" type="button" aria-selected="false">
       <span class="nav-ico">⚙️</span>
-      <span class="nav-txt">Настройки</span>
     </button>
     <button class="nav-btn" data-tab="zombies" type="button" aria-selected="false">
       <span class="nav-ico">🧟</span>
-      <span class="nav-txt">Zombies</span>
     </button>
   </nav>
 
   <div class="toast" id="toast">OK</div>
 
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="./app.js?v=101"></script>
+
+  <!-- ✅ ВАЖНО: новое имя файла -->
+  <script src="./app.v102.js"></script>
 </body>
 </html>
