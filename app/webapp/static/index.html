@@ -1,10 +1,239 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <title>GGBF6 Mini App</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light">
+  <title>BLACK CROWN OPS — Mini App</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css" />
 </head>
+
 <body>
-  <h1>GGBF6 Mini App работает</h1>
+  <div class="bg">
+    <div class="stars"></div>
+    <div class="glow g1"></div>
+    <div class="glow g2"></div>
+    <div class="glow g3"></div>
+  </div>
+
+  <header class="top">
+    <div class="brand">
+      <div class="logo">👑</div>
+      <div class="brand-text">
+        <div class="title">BLACK CROWN OPS</div>
+        <div class="sub">cosmic premium • FPS coach</div>
+      </div>
+    </div>
+
+    <div class="chip-row">
+      <button class="chip" id="chipVoice" type="button">🤝 Тиммейт</button>
+      <button class="chip" id="chipMode" type="button">🧠 Normal</button>
+      <button class="chip" id="chipPlatform" type="button">🖥 PC</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero card">
+      <div class="hero-left">
+        <div class="hero-kicker">Твой штаб управления</div>
+        <div class="hero-title">Доминируй. Учись. Выигрывай.</div>
+        <div class="hero-desc">
+          Быстрый доступ к тренировкам, настройкам, VOD-разбору и Zombies-гайдам.
+          Всё синхронизируется с профилем в боте.
+        </div>
+      </div>
+
+      <div class="hero-right">
+        <div class="stat">
+          <div class="stat-label">Статус</div>
+          <div class="stat-value" id="statOnline">ONLINE</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Сессия</div>
+          <div class="stat-value" id="statSession">SYNC</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tabs">
+      <button class="tab active" data-tab="home">⭐ Главная</button>
+      <button class="tab" data-tab="coach">🎯 Тренировка</button>
+      <button class="tab" data-tab="vod">🎬 VOD</button>
+      <button class="tab" data-tab="settings">⚙️ Настройки</button>
+      <button class="tab" data-tab="zombies">🧟 Zombies</button>
+    </section>
+
+    <!-- HOME -->
+    <section class="grid tabpane active" id="tab-home">
+      <div class="card">
+        <div class="card-title">🚀 Быстрые действия</div>
+        <div class="actions">
+          <button class="btn primary" id="btnOpenBot">Открыть меню бота</button>
+          <button class="btn" id="btnSync">Синхронизировать профиль</button>
+          <button class="btn" id="btnPremium">Premium Hub</button>
+        </div>
+        <div class="hint">
+          Совет: в Mini App ты выбираешь режим — бот применяет и выдаёт готовые блоки.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🎮 Игра</div>
+        <div class="seg" id="segGame">
+          <button class="seg-btn active" data-value="Warzone">🔥 Warzone</button>
+          <button class="seg-btn" data-value="BO7">💣 BO7</button>
+          <button class="seg-btn" data-value="BF6">🪖 BF6</button>
+        </div>
+        <div class="mini-row">
+          <div class="pill" id="pillRole">🎭 Role: Flex</div>
+          <div class="pill" id="pillBf6">🟩 Class: Assault</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🧠 Быстрый запрос (1 строка)</div>
+        <textarea id="inputOneLine" class="input" rows="3"
+          placeholder="Игра | input | где умираешь | цель"></textarea>
+        <div class="actions">
+          <button class="btn primary" id="btnSendOneLine">Отправить в бота</button>
+          <button class="btn ghost" id="btnClearOneLine">Очистить</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- COACH -->
+    <section class="grid tabpane" id="tab-coach">
+      <div class="card">
+        <div class="card-title">🎯 План тренировки (20 минут)</div>
+        <div class="list">
+          <div class="li"><span class="dot"></span>5 мин — контроль (разминка)</div>
+          <div class="li"><span class="dot"></span>10 мин — слабое место (аим/мувмент/позиционка)</div>
+          <div class="li"><span class="dot"></span>5 мин — закрепление в бою</div>
+        </div>
+
+        <div class="card-sub">Выбери фокус</div>
+        <div class="seg" id="segFocus">
+          <button class="seg-btn active" data-value="aim">🎯 Aim</button>
+          <button class="seg-btn" data-value="movement">🧠 Мувмент</button>
+          <button class="seg-btn" data-value="position">🗺 Позиционка</button>
+        </div>
+
+        <div class="actions">
+          <button class="btn primary" id="btnSendPlan">Сгенерировать план в боте</button>
+          <button class="btn" id="btnOpenTraining">Открыть “🎯 Тренировка”</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">😈 Режим мышления</div>
+        <div class="seg" id="segMode">
+          <button class="seg-btn active" data-value="Normal">🧠 Normal</button>
+          <button class="seg-btn" data-value="Pro">🔥 Pro</button>
+          <button class="seg-btn" data-value="Demon">😈 Demon</button>
+        </div>
+        <div class="hint">Меняет стиль рекомендаций (TEAMMATE остаётся дефолтом, COACH — элита).</div>
+      </div>
+    </section>
+
+    <!-- VOD -->
+    <section class="grid tabpane" id="tab-vod">
+      <div class="card">
+        <div class="card-title">🎬 VOD: разбор без видео</div>
+        <div class="hint">Кинь 3 таймкода и что хотел сделать — бот разберёт решения.</div>
+        <div class="grid2">
+          <input class="input" id="vod1" placeholder="00:12" />
+          <input class="input" id="vod2" placeholder="01:40" />
+          <input class="input" id="vod3" placeholder="03:05" />
+        </div>
+        <textarea class="input" id="vodNote" rows="3"
+          placeholder="Что ты хотел сделать / какой был план"></textarea>
+        <div class="actions">
+          <button class="btn primary" id="btnSendVod">Отправить в бота</button>
+          <button class="btn" id="btnOpenVod">Открыть “🎬 VOD”</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="grid tabpane" id="tab-settings">
+      <div class="card">
+        <div class="card-title">⚙️ Профиль</div>
+
+        <div class="grid2">
+          <div class="field">
+            <div class="label">Platform</div>
+            <div class="seg" id="segPlatform">
+              <button class="seg-btn active" data-value="PC">🖥 PC</button>
+              <button class="seg-btn" data-value="PlayStation">🎮 PS</button>
+              <button class="seg-btn" data-value="Xbox">🎮 Xbox</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="label">Input</div>
+            <div class="seg" id="segInput">
+              <button class="seg-btn" data-value="KBM">⌨️ KBM</button>
+              <button class="seg-btn active" data-value="Controller">🎮 Controller</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="label">Voice</div>
+          <div class="seg" id="segVoice">
+            <button class="seg-btn active" data-value="TEAMMATE">🤝 Тиммейт</button>
+            <button class="seg-btn" data-value="COACH">📚 Коуч</button>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn primary" id="btnApplyProfile">Применить и сохранить</button>
+          <button class="btn" id="btnOpenSettings">Открыть “⚙️ Настройки”</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🧠 Диагностика</div>
+        <div class="list mono">
+          <div class="li">user_id: <span id="dbgUser">—</span></div>
+          <div class="li">chat: <span id="dbgChat">—</span></div>
+          <div class="li">theme: <span id="dbgTheme">—</span></div>
+          <div class="li">initData: <span id="dbgInit">—</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ZOMBIES -->
+    <section class="grid tabpane" id="tab-zombies">
+      <div class="card">
+        <div class="card-title">🧟 Zombies: штаб</div>
+        <div class="seg" id="segZMap">
+          <button class="seg-btn active" data-value="Ashes">🧟 Ashes</button>
+          <button class="seg-btn" data-value="Astra">🧟 Astra</button>
+        </div>
+        <div class="actions">
+          <button class="btn primary" id="btnOpenZombies">Открыть Zombies в боте</button>
+          <button class="btn" id="btnZPerks">Перки</button>
+          <button class="btn" id="btnZLoadout">Оружие</button>
+          <button class="btn" id="btnZEggs">Пасхалки</button>
+          <button class="btn" id="btnZRound">Стратегия</button>
+          <button class="btn" id="btnZTips">Советы</button>
+        </div>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <div class="foot-left">— BCO 😈</div>
+      <div class="foot-right">
+        <button class="btn tiny ghost" id="btnClose">Закрыть</button>
+      </div>
+    </footer>
+  </main>
+
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
