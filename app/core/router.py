@@ -1,4 +1,4 @@
-# app/services/router.py
+# app/core/router.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
@@ -104,6 +104,46 @@ else:
 log = logging.getLogger("router")
 if not log.handlers:
     logging.basicConfig(level=logging.INFO)
+
+
+# =========================
+# UPDATE NORMALIZER (MAX SAFE)
+# Принимаем И dict, И pydantic-объект Update (который приходит из app.adapters.telegram.types.Update)
+# =========================
+def _to_update_dict(update: Any) -> Dict[str, Any]:
+    if isinstance(update, dict):
+        return update
+
+    # pydantic v2
+    if hasattr(update, "model_dump") and callable(getattr(update, "model_dump")):
+        try:
+            d = update.model_dump()
+            if isinstance(d, dict):
+                return d
+        except Exception:
+            pass
+
+    # pydantic v1
+    if hasattr(update, "dict") and callable(getattr(update, "dict")):
+        try:
+            d = update.dict()
+            if isinstance(d, dict):
+                return d
+        except Exception:
+            pass
+
+    # fallback: если есть raw/original
+    for attr in ("raw", "_raw", "data", "_data"):
+        if hasattr(update, attr):
+            try:
+                d = getattr(update, attr)
+                if isinstance(d, dict):
+                    return d
+            except Exception:
+                pass
+
+    # крайний вариант
+    return {}
 
 
 def _safe_get(d: dict, path: list, default=None):
@@ -261,7 +301,22 @@ class Router:
     store: Any = None
     settings: Any = None
 
-    async def handle_update(self, update: Dict[str, Any]) -> None:
+    # =========================================================
+    # PUBLIC: Mini App data entrypoint (для webhook.py pre-handler)
+    # Не ломает ничего: просто вызывает внутренний обработчик.
+    # =========================================================
+    async def handle_webapp_data(self, update: Any, data_raw: str) -> None:
+        upd = _to_update_dict(update)
+        msg = upd.get("message") or upd.get("edited_message")
+        chat_id = _safe_get(msg, ["chat", "id"]) if msg else None
+        if not chat_id:
+            # если вдруг прилетело без message (редко), просто игнор
+            return
+        await self._on_webapp_data(int(chat_id), str(data_raw or ""))
+
+    async def handle_update(self, update: Any) -> None:
+        update = _to_update_dict(update)
+
         msg = update.get("message") or update.get("edited_message")
         cbq = update.get("callback_query")
 
@@ -757,7 +812,6 @@ class Router:
     async def _on_webapp_data(self, chat_id: int, data: str) -> None:
         prof = self._get_profile(chat_id)
 
-        payload = None
         raw = (data or "").strip()
         if not raw:
             await self._send_main(chat_id, _wrap_premium("🛰 MINI APP прислал пустые данные.", profile=prof))
