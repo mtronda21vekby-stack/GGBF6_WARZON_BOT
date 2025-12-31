@@ -220,7 +220,7 @@ def kb_game_settings_menu(game: str) -> dict:
 
     return {
         "keyboard": [
-            [{"text": "🎭 Warzone (Роль)"}] if False else [{"text": "🎭 Warzone: Роль"}],
+            [{"text": "🎭 Warzone: Роль"}],
             [{"text": "🎯 Warzone: Aim/Sens"}],
             [{"text": "🎮 Warzone: Controller"}, {"text": "⌨️ Warzone: KBM"}],
             [{"text": "🧠 Warzone: Мувмент/Позиционка"}, {"text": "🎧 Warzone: Аудио/Видео"}],
