@@ -2,61 +2,44 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
-from fastapi import APIRouter
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import FileResponse, Response
 
 router = APIRouter()
 
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
+BASE_DIR = Path(__file__).resolve().parents[2]  # .../app
+WEBAPP_DIR = BASE_DIR / "webapp"                # .../app/webapp  (если у тебя иначе — поправь)
+STATIC_DIR = BASE_DIR / "static"                # .../app/static
 
+def _no_cache_headers() -> dict:
+    return {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
 
-def _file_response(path: Path, *, cache: str) -> FileResponse:
-    # cache examples:
-    # - "no-store, no-cache, must-revalidate, max-age=0"
-    # - "public, max-age=31536000, immutable"
-    return FileResponse(
-        path,
-        headers={
-            "Cache-Control": cache,
-            "Pragma": "no-cache" if "no-store" in cache else "",
-        },
-    )
+def _safe_join(root: Path, rel: str) -> Path:
+    rel = (rel or "").lstrip("/")
+    p = (root / rel).resolve()
+    if root.resolve() not in p.parents and p != root.resolve():
+        return root / "index.html"
+    return p
 
+@router.get("/webapp")
+@router.get("/webapp/{path:path}")
+async def webapp_spa(request: Request, path: str = "") -> Response:
+    # сначала статик (css/js/img), потом SPA fallback -> index.html
+    p = _safe_join(WEBAPP_DIR, path)
 
-def _index() -> FileResponse:
-    # index.html всегда no-store — иначе Telegram/WebView будет показывать старое
-    return _file_response(
-        STATIC_DIR / "index.html",
-        cache="no-store, no-cache, must-revalidate, max-age=0",
-    )
+    if p.is_file():
+        media_type, _ = mimetypes.guess_type(str(p))
+        return FileResponse(
+            str(p),
+            media_type=media_type or "application/octet-stream",
+            headers=_no_cache_headers(),
+        )
 
-
-@router.get("/webapp", include_in_schema=False)
-@router.get("/webapp/", include_in_schema=False)
-def webapp_index():
-    return _index()
-
-
-@router.get("/webapp/{path:path}", include_in_schema=False)
-def webapp_static(path: str):
-    if not path:
-        return _index()
-
-    file_path = (STATIC_DIR / path).resolve()
-
-    # защита от ../
-    if not str(file_path).startswith(str(STATIC_DIR.resolve())):
-        return _index()
-
-    if file_path.exists() and file_path.is_file():
-        # HTML тоже лучше не кешировать
-        if file_path.suffix.lower() in {".html"}:
-            return _file_response(file_path, cache="no-store, no-cache, must-revalidate, max-age=0")
-
-        # css/js/img можно кешировать “долго”, потому что мы добавим ?v=...
-        return _file_response(file_path, cache="public, max-age=31536000, immutable")
-
-    # SPA fallback
-    return _index()
+    index = WEBAPP_DIR / "index.html"
+    return FileResponse(str(index), media_type="text/html", headers=_no_cache_headers())
