@@ -16,6 +16,13 @@
   --tg-text: var(--text);
   --tg-hint: var(--muted);
   --tg-secondary-bg: rgba(255,255,255,.04);
+
+  /* ✅ Premium depth */
+  --shadow-lg: 0 22px 90px rgba(0,0,0,.55);
+  --shadow-md: 0 14px 46px rgba(0,0,0,.35);
+  --shadow-sm: 0 10px 30px rgba(0,0,0,.25);
+  --ring: 0 0 0 1px rgba(255,255,255,.10) inset;
+  --ringGold: 0 0 0 1px rgba(199,165,91,.22) inset;
 }
 
 *{box-sizing:border-box}
@@ -30,6 +37,14 @@ body{
   text-rendering: geometricPrecision;
 }
 
+/* ✅ iOS safe areas */
+body{
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.top{
+  padding-top: calc(16px + env(safe-area-inset-top));
+}
+
 .bg{
   position:fixed; inset:0; z-index:-1;
   background:
@@ -39,6 +54,7 @@ body{
     linear-gradient(180deg, #07070b, #050510);
 }
 
+/* ✅ Добавь gridfx в HTML: <div class="gridfx"></div>  (не обязательно) */
 .stars{
   position:absolute; inset:-20%;
   background-image:
@@ -82,12 +98,21 @@ body{
   50%{transform:scale(1.03)}
 }
 
+/* ✅ Sticky header = “дороже” */
 .top{
+  position:sticky;
+  top:0;
+  z-index:50;
+
   padding:16px 14px 10px;
   display:flex; align-items:center; justify-content:space-between;
   gap:12px;
   max-width:1040px;
   margin:0 auto;
+
+  backdrop-filter: blur(18px);
+  background: linear-gradient(180deg, rgba(7,7,11,.82), rgba(7,7,11,.55));
+  border-bottom: 1px solid rgba(255,255,255,.06);
 }
 
 .brand{display:flex; gap:10px; align-items:center}
@@ -97,7 +122,7 @@ body{
   border-radius:14px;
   border:1px solid var(--stroke);
   background:linear-gradient(135deg, rgba(199,165,91,.22), rgba(107,92,255,.18));
-  box-shadow:0 14px 46px rgba(0,0,0,.35);
+  box-shadow: var(--shadow-md);
 }
 .brand-text .title{font-weight:900; letter-spacing:.5px}
 .brand-text .sub{font-size:12px; color:var(--muted); margin-top:2px}
@@ -111,6 +136,7 @@ body{
   padding:10px 12px;
   font-weight:750;
   backdrop-filter: blur(12px);
+  box-shadow: 0 10px 26px rgba(0,0,0,.18);
 }
 .chip:active{transform:translateY(1px)}
 
@@ -125,9 +151,18 @@ body{
   border:1px solid rgba(255,255,255,.12);
   background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
   backdrop-filter: blur(16px);
-  box-shadow:0 20px 80px rgba(0,0,0,.45);
+  box-shadow: var(--shadow-lg);
   overflow:hidden;
   padding:14px;
+  position:relative;
+}
+
+/* ✅ subtle top highlight (дороже) */
+.card::before{
+  content:"";
+  position:absolute; left:0; right:0; top:0; height:1px;
+  background: linear-gradient(90deg, transparent, rgba(199,165,91,.35), rgba(107,92,255,.35), transparent);
+  opacity:.45;
 }
 
 .cardlite{
@@ -178,6 +213,7 @@ body{
   border:1px solid rgba(255,255,255,.12);
   background:rgba(0,0,0,.18);
   padding:12px;
+  box-shadow: 0 12px 34px rgba(0,0,0,.25);
 }
 .stat-label{font-size:12px; color:var(--muted)}
 .stat-value{margin-top:6px; font-weight:900; letter-spacing:.3px}
@@ -200,12 +236,14 @@ body{
   padding:10px 12px;
   font-weight:850;
   backdrop-filter: blur(12px);
+  box-shadow: 0 10px 26px rgba(0,0,0,.18);
+  transition: transform .12s ease, box-shadow .12s ease;
 }
 .tab.active{
   color:var(--text);
   background:linear-gradient(135deg, rgba(199,165,91,.20), rgba(107,92,255,.18));
   border-color: rgba(199,165,91,.25);
-  box-shadow:0 10px 30px rgba(0,0,0,.25);
+  box-shadow: var(--shadow-sm);
 }
 .tab:active{transform:translateY(1px)}
 
@@ -245,12 +283,13 @@ body{
   border-radius:14px;
   padding:10px 10px;
   font-weight:850;
+  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
 }
 .seg-btn.active{
   color:var(--text);
   background:linear-gradient(135deg, rgba(199,165,91,.20), rgba(107,92,255,.18));
   border-color: rgba(199,165,91,.25);
-  box-shadow:0 10px 30px rgba(0,0,0,.25);
+  box-shadow: var(--shadow-sm);
 }
 .seg-btn:active{transform:translateY(1px)}
 
@@ -267,7 +306,7 @@ body{
   border:1px solid var(--stroke);
   background:rgba(255,255,255,.05);
   backdrop-filter: blur(14px);
-  box-shadow:0 12px 40px rgba(0,0,0,.28);
+  box-shadow: var(--shadow-md);
   font-size:12px;
   color:var(--muted);
 }
@@ -282,6 +321,7 @@ body{
   outline:none;
   resize:vertical;
   min-height:46px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.18);
 }
 textarea.input{min-height:90px}
 .input::placeholder{color:rgba(255,255,255,.35)}
@@ -299,11 +339,13 @@ textarea.input{min-height:90px}
   font-weight:900;
   color:var(--text);
   background:linear-gradient(135deg, rgba(199,165,91,.24), rgba(107,92,255,.20));
-  box-shadow:0 14px 46px rgba(0,0,0,.35);
+  box-shadow: var(--shadow-md);
+  transition: transform .12s ease, filter .12s ease;
 }
 .btn.primary{
   border-color: rgba(199,165,91,.28);
   background:linear-gradient(135deg, rgba(199,165,91,.28), rgba(107,92,255,.22));
+  box-shadow: var(--shadow-lg);
 }
 .btn.ghost{
   background:rgba(255,255,255,.05);
@@ -311,6 +353,7 @@ textarea.input{min-height:90px}
   box-shadow:none;
 }
 .btn:active{transform:translateY(1px)}
+.btn:hover{filter:brightness(1.04)}
 
 .hint{margin-top:10px; font-size:12px; color:var(--soft); line-height:1.4}
 
@@ -353,4 +396,10 @@ textarea.input{min-height:90px}
 @media (max-width: 860px){
   .hero{grid-template-columns:1fr}
   .grid2{grid-template-columns:1fr}
+}
+
+/* ✅ Premium: reduced motion respect */
+@media (prefers-reduced-motion: reduce){
+  .stars,.nebula{animation:none}
+  .tab,.seg-btn,.btn{transition:none}
 }
