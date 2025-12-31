@@ -8,10 +8,10 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import parse_qsl
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
@@ -71,21 +71,21 @@ def _verify_init_data(init_data: str) -> tuple[bool, dict]:
     ok = hmac.compare_digest(calc_hash, their_hash)
 
     # пробуем достать user id / chat id (в initDataUnsafe это есть, но тут мы парсим строку)
-    # user обычно лежит в "user" как JSON-строка
     user_id = None
     chat_id = None
     try:
         if "user" in pairs:
             import json as _json
+
             u = _json.loads(pairs["user"])
             user_id = u.get("id")
     except Exception:
         pass
 
-    # chat для WebApp бывает не всегда (зависит от контекста)
     try:
         if "chat" in pairs:
             import json as _json
+
             c = _json.loads(pairs["chat"])
             chat_id = c.get("id")
     except Exception:
@@ -227,22 +227,14 @@ def webapp_files(req_path: str):
 # API: "бот отвечает в мини-аппе"
 # =========================
 class AskBody(BaseModel):
+    # ✅ поддержка и body.initData (если кто-то шлёт так), и header X-Telegram-Init-Data (как у тебя в app.js)
     initData: str = ""
     text: str = ""
     profile: dict = {}
     history: list = []
 
 
-def _get_app_state(obj: Any, key: str, default=None):
-    """
-    FastAPI app.state доступен через request.app.state, но тут роутер без request.
-    Поэтому будем поднимать зависимости через env/глобально НЕ надо.
-    Решение: в webhook.py мы положим ссылки в module-level атрибуты ниже.
-    """
-    return getattr(obj, key, default)
-
-
-# Эти переменные заполняются из webhook.py (см. патч ниже)
+# Эти переменные заполняются из webhook.py
 APP_BRAIN = None
 APP_PROFILES = None
 APP_STORE = None
@@ -255,28 +247,58 @@ def bind_runtime(*, brain=None, profiles=None, store=None, settings=None):
     APP_PROFILES = profiles
     APP_STORE = store
     APP_SETTINGS = settings
+    try:
+        log.info(
+            "bind_runtime ok: brain=%s profiles=%s store=%s settings=%s",
+            bool(brain),
+            bool(profiles),
+            bool(store),
+            bool(settings),
+        )
+    except Exception:
+        pass
 
 
 def _safe_profile(p: dict) -> dict:
     return dict(p) if isinstance(p, dict) else {}
 
 
+def _safe_history(h: Any) -> list:
+    if isinstance(h, list):
+        out = []
+        for x in h[-50:]:
+            if isinstance(x, dict):
+                out.append(x)
+            else:
+                out.append({"role": "user", "content": str(x)})
+        return out
+    return []
+
+
 @router.post("/webapp/api/ask")
-async def webapp_api_ask(body: AskBody):
+async def webapp_api_ask(
+    body: AskBody,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    x_bco_version: str | None = Header(default=None, alias="X-BCO-Version"),
+):
     text = (body.text or "").strip()
     if not text:
-        return {"ok": False, "error": "empty_text"}
+        return {"ok": False, "error": "empty_text", "build": _build_id()}
 
-    ok, meta = _verify_init_data(body.initData)
+    # ✅ initData берём приоритетно из заголовка (как у тебя в JS),
+    # а если его нет — из body.initData
+    init_data = (x_telegram_init_data or body.initData or "").strip()
+
+    ok, meta = _verify_init_data(init_data)
     if not ok:
         # не валим UX: просто помечаем как untrusted
         meta = meta or {}
         meta["untrusted"] = True
 
     profile = _safe_profile(body.profile)
-    history = body.history if isinstance(body.history, list) else []
+    history = _safe_history(body.history)
 
-    # Пытаемся ответить через brain.reply (как бот)
+    # Ответ через brain.reply (как бот)
     reply_text = None
 
     try:
@@ -296,6 +318,15 @@ async def webapp_api_ask(body: AskBody):
             else:
                 out = fn(text=text, profile=profile, history=history)
                 reply_text = await out if _inspect.isawaitable(out) else out
+        else:
+            # честная инфа в мету (но UX не ломаем)
+            meta = meta or {}
+            meta["ai"] = {
+                "enabled": bool(ai_enabled),
+                "has_key": bool(ai_key),
+                "has_brain": bool(brain),
+                "reason": "ai_off",
+            }
     except Exception as e:
         reply_text = f"🧠 AI ERROR: {type(e).__name__}: {e}"
 
@@ -314,6 +345,10 @@ async def webapp_api_ask(body: AskBody):
     return {
         "ok": True,
         "reply": str(reply_text),
-        "meta": meta,
+        "meta": {
+            **(meta or {}),
+            "bco_version": x_bco_version or "",
+            "webapp_build": _build_id(),
+        },
         "build": _build_id(),
     }
