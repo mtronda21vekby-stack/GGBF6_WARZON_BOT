@@ -1,7 +1,8 @@
+// static/app.js
 (() => {
   const tg = window.Telegram?.WebApp;
 
-  const VERSION = "1.0.2";
+  const VERSION = "1.0.3";
   const STORAGE_KEY = "bco_state_v1";
 
   const defaults = {
@@ -18,6 +19,9 @@
 
   const state = { ...defaults };
 
+  // current UI tab (single source of truth)
+  let currentTab = "home";
+
   const qs = (s) => document.querySelector(s);
   const qsa = (s) => Array.from(document.querySelectorAll(s));
 
@@ -31,7 +35,7 @@
     try {
       if (!tg?.HapticFeedback) return;
       if (type === "impact") tg.HapticFeedback.impactOccurred(style);
-      if (type === "notif") tg.HapticFeedback.notificationOccurred(style);
+      if (type === "notif") tg.HapticFeedback.notificationOccurred(style); // success|warning|error
     } catch {}
   }
 
@@ -41,6 +45,28 @@
     t.textContent = text;
     t.classList.add("show");
     setTimeout(() => t.classList.remove("show"), 1700);
+  }
+
+  // ---------- FAST TAP (iOS WebView friendly) ----------
+  // Telegram iOS иногда “глотает” click. Делаем единый быстрый хендлер:
+  function onTap(el, handler, opts = {}) {
+    if (!el) return;
+    const passive = opts.passive ?? true;
+    let locked = false;
+
+    const fire = (e) => {
+      // защита от двойного срабатывания (pointerup+click)
+      if (locked) return;
+      locked = true;
+      setTimeout(() => (locked = false), 350);
+
+      try { handler(e); } catch {}
+    };
+
+    // pointer is best; then touch; then click as fallback
+    el.addEventListener("pointerup", fire, { passive });
+    el.addEventListener("touchend", fire, { passive });
+    el.addEventListener("click", fire, { passive });
   }
 
   // ---------- Theme sync (Telegram -> CSS vars) ----------
@@ -65,6 +91,10 @@
 
     const dbgTheme = qs("#dbgTheme");
     if (dbgTheme) dbgTheme.textContent = tg.colorScheme ?? "—";
+
+    // Telegram native colors (если доступно)
+    try { tg.setBackgroundColor?.(p.bg_color || "#07070b"); } catch {}
+    try { tg.setHeaderColor?.(p.secondary_bg_color || p.bg_color || "#07070b"); } catch {}
   }
 
   // ---------- Storage ----------
@@ -120,7 +150,9 @@
     const chipMode = qs("#chipMode");
     if (chipMode) chipMode.textContent = mm;
 
-    const pp = state.platform === "PlayStation" ? "🎮 PlayStation" : (state.platform === "Xbox" ? "🎮 Xbox" : "🖥 PC");
+    const pp =
+      state.platform === "PlayStation" ? "🎮 PlayStation" :
+      state.platform === "Xbox" ? "🎮 Xbox" : "🖥 PC";
     const chipPlatform = qs("#chipPlatform");
     if (chipPlatform) chipPlatform.textContent = pp;
 
@@ -134,7 +166,7 @@
   function setActiveSeg(rootId, value) {
     const root = qs(rootId);
     if (!root) return;
-    root.querySelectorAll(".seg-btn").forEach(b => {
+    root.querySelectorAll(".seg-btn").forEach((b) => {
       const on = b.dataset.value === value;
       b.classList.toggle("active", on);
       b.setAttribute("aria-pressed", on ? "true" : "false");
@@ -142,50 +174,32 @@
   }
 
   function setActiveNav(tab) {
-    qsa(".nav-btn").forEach(b => {
+    qsa(".nav-btn").forEach((b) => {
       const on = b.dataset.tab === tab;
       b.classList.toggle("active", on);
       b.setAttribute("aria-selected", on ? "true" : "false");
     });
   }
 
-  function selectTab(tab) {
-    qsa(".tabpane").forEach(p => p.classList.toggle("active", p.id === `tab-${tab}`));
-    setActiveNav(tab);
-    updateTelegramButtons(tab);
+  function setActiveTopTabs(tab) {
+    // если вдруг у тебя включены верхние tabs (в другом варианте HTML)
+    qsa(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  }
 
-    // premium-feel
+  function selectTab(tab) {
+    currentTab = tab;
+
+    qsa(".tabpane").forEach((p) => p.classList.toggle("active", p.id === `tab-${tab}`));
+    setActiveNav(tab);
+    setActiveTopTabs(tab);
+
+    updateTelegramButtons();
+
+    // premium-feel (мягко возвращаем наверх)
     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
   }
 
-  function wireNav() {
-    qsa(".nav-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        haptic("impact", "light");
-        selectTab(btn.dataset.tab);
-      });
-    });
-  }
-
-  function wireSeg(rootId, onPick) {
-    const root = qs(rootId);
-    if (!root) return;
-
-    root.addEventListener("click", async (e) => {
-      const btn = e.target.closest(".seg-btn");
-      if (!btn) return;
-
-      haptic("impact", "light");
-      onPick(btn.dataset.value);
-
-      root.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("active", b === btn));
-      setChipText();
-
-      await saveState();
-      toast("Сохранено ✅");
-    });
-  }
-
+  // ---------- Payload / sendData ----------
   function enrichPayload(payload) {
     const initUnsafe = tg?.initDataUnsafe || {};
     return {
@@ -204,7 +218,14 @@
     try {
       const pack = enrichPayload(payload);
       const data = JSON.stringify(pack);
-      tg?.sendData(data);
+
+      if (!tg?.sendData) {
+        haptic("notif", "error");
+        toast("Открой Mini App внутри Telegram");
+        return;
+      }
+
+      tg.sendData(data);
 
       haptic("notif", "success");
       const statSession = qs("#statSession");
@@ -220,39 +241,49 @@
     sendToBot({ type: "nav", target });
   }
 
-  // ---------- Telegram native buttons ----------
-  function updateTelegramButtons(activeTab) {
+  // ---------- Telegram native buttons (NO double handlers) ----------
+  let tgButtonsWired = false;
+
+  function updateTelegramButtons() {
     if (!tg) return;
 
+    // BackButton
     try {
-      if (activeTab !== "home") tg.BackButton.show();
+      if (currentTab !== "home") tg.BackButton.show();
       else tg.BackButton.hide();
     } catch {}
 
+    // MainButton text
     try {
       tg.MainButton.setParams({
         is_visible: true,
         text:
-          activeTab === "settings" ? "✅ Применить профиль" :
-          activeTab === "coach" ? "🎯 План тренировки" :
-          activeTab === "vod" ? "🎬 Отправить VOD" :
-          activeTab === "zombies" ? "🧟 Открыть Zombies" :
+          currentTab === "settings" ? "✅ Применить профиль" :
+          currentTab === "coach" ? "🎯 План тренировки" :
+          currentTab === "vod" ? "🎬 Отправить VOD" :
+          currentTab === "zombies" ? "🧟 Открыть Zombies" :
           "💎 Premium"
       });
+    } catch {}
 
+    if (tgButtonsWired) return;
+    tgButtonsWired = true;
+
+    // MainButton click (one handler, uses currentTab)
+    try {
       tg.MainButton.offClick?.();
       tg.MainButton.onClick(() => {
         haptic("impact", "medium");
 
-        if (activeTab === "settings") {
+        if (currentTab === "settings") {
           sendToBot({ type: "set_profile", profile: state });
           return;
         }
-        if (activeTab === "coach") {
+        if (currentTab === "coach") {
           sendToBot({ type: "training_plan", focus: state.focus, profile: state });
           return;
         }
-        if (activeTab === "vod") {
+        if (currentTab === "vod") {
           const t1 = (qs("#vod1")?.value || "").trim();
           const t2 = (qs("#vod2")?.value || "").trim();
           const t3 = (qs("#vod3")?.value || "").trim();
@@ -260,12 +291,21 @@
           sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
           return;
         }
-        if (activeTab === "zombies") {
+        if (currentTab === "zombies") {
           sendToBot({ type: "zombies_open", map: state.zombies_map });
           return;
         }
 
         openBotMenuHint("premium");
+      });
+    } catch {}
+
+    // BackButton click (one handler)
+    try {
+      // у BackButton нет нормального offClick во всех версиях, поэтому делаем один раз
+      tg.BackButton.onClick(() => {
+        haptic("impact", "light");
+        selectTab("home");
       });
     } catch {}
   }
@@ -280,13 +320,53 @@
     }
   }
 
-  // ---------- Header chip quick toggles (premium UX) ----------
-  async function wireHeaderChips() {
+  // ---------- Segments wiring ----------
+  function wireSeg(rootId, onPick) {
+    const root = qs(rootId);
+    if (!root) return;
+
+    root.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".seg-btn");
+      if (!btn) return;
+
+      haptic("impact", "light");
+      onPick(btn.dataset.value);
+
+      // корректно подсвечиваем по value (не по “эта кнопка”)
+      setActiveSeg(rootId, btn.dataset.value);
+
+      setChipText();
+      await saveState();
+      toast("Сохранено ✅");
+    }, { passive: true });
+  }
+
+  // ---------- Nav wiring (bottom + top) ----------
+  function wireNav() {
+    // bottom bar
+    qsa(".nav-btn").forEach((btn) => {
+      onTap(btn, () => {
+        haptic("impact", "light");
+        selectTab(btn.dataset.tab);
+      });
+    });
+
+    // top tabs (если есть в другом HTML)
+    qsa(".tab").forEach((btn) => {
+      onTap(btn, () => {
+        haptic("impact", "light");
+        selectTab(btn.dataset.tab);
+      });
+    });
+  }
+
+  // ---------- Header chips (premium quick toggles) ----------
+  function wireHeaderChips() {
     const chipVoice = qs("#chipVoice");
     const chipMode = qs("#chipMode");
     const chipPlatform = qs("#chipPlatform");
 
-    chipVoice?.addEventListener("click", async () => {
+    onTap(chipVoice, async () => {
       haptic("impact", "light");
       state.voice = (state.voice === "COACH") ? "TEAMMATE" : "COACH";
       setChipText();
@@ -295,7 +375,7 @@
       toast(state.voice === "COACH" ? "Коуч включён 📚" : "Тиммейт 🤝");
     });
 
-    chipMode?.addEventListener("click", async () => {
+    onTap(chipMode, async () => {
       haptic("impact", "light");
       state.mode = (state.mode === "Normal") ? "Pro" : (state.mode === "Pro" ? "Demon" : "Normal");
       setChipText();
@@ -304,7 +384,7 @@
       toast(`Режим: ${state.mode}`);
     });
 
-    chipPlatform?.addEventListener("click", async () => {
+    onTap(chipPlatform, async () => {
       haptic("impact", "light");
       state.platform = (state.platform === "PC") ? "PlayStation" : (state.platform === "PlayStation" ? "Xbox" : "PC");
       setChipText();
@@ -316,34 +396,32 @@
 
   // ---------- Wire buttons ----------
   function wireButtons() {
-    qs("#btnClose")?.addEventListener("click", () => {
+    onTap(qs("#btnClose"), () => {
       haptic("impact", "medium");
       tg?.close?.();
     });
 
-    qs("#btnClearOneLine")?.addEventListener("click", () => {
+    onTap(qs("#btnClearOneLine"), () => {
       haptic("impact", "light");
       const el = qs("#inputOneLine");
       if (el) el.value = "";
     });
 
-    qs("#btnSendOneLine")?.addEventListener("click", () => {
+    onTap(qs("#btnSendOneLine"), () => {
       const v = (qs("#inputOneLine")?.value || "").trim();
       if (!v) { haptic("notif", "warning"); toast("Заполни строку"); return; }
       sendToBot({ type: "one_line", text: v, profile: state });
     });
 
-    qs("#btnOpenBot")?.addEventListener("click", () => openBotMenuHint("main"));
-    qs("#btnPremium")?.addEventListener("click", () => openBotMenuHint("premium"));
-    qs("#btnSync")?.addEventListener("click", () => sendToBot({ type: "sync_request" }));
+    onTap(qs("#btnOpenBot"), () => openBotMenuHint("main"));
+    onTap(qs("#btnPremium"), () => openBotMenuHint("premium"));
+    onTap(qs("#btnSync"), () => sendToBot({ type: "sync_request" }));
 
-    qs("#btnOpenTraining")?.addEventListener("click", () => openBotMenuHint("training"));
-    qs("#btnSendPlan")?.addEventListener("click", () =>
-      sendToBot({ type: "training_plan", focus: state.focus, profile: state })
-    );
+    onTap(qs("#btnOpenTraining"), () => openBotMenuHint("training"));
+    onTap(qs("#btnSendPlan"), () => sendToBot({ type: "training_plan", focus: state.focus, profile: state }));
 
-    qs("#btnOpenVod")?.addEventListener("click", () => openBotMenuHint("vod"));
-    qs("#btnSendVod")?.addEventListener("click", () => {
+    onTap(qs("#btnOpenVod"), () => openBotMenuHint("vod"));
+    onTap(qs("#btnSendVod"), () => {
       const t1 = (qs("#vod1")?.value || "").trim();
       const t2 = (qs("#vod2")?.value || "").trim();
       const t3 = (qs("#vod3")?.value || "").trim();
@@ -351,45 +429,56 @@
       sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
     });
 
-    // ✅ фикс: было "clicks"
-    qs("#btnOpenSettings")?.addEventListener("click", () => openBotMenuHint("settings"));
+    // ✅ был баг "clicks" — у тебя уже исправлено, но тут оставляем правильно
+    onTap(qs("#btnOpenSettings"), () => openBotMenuHint("settings"));
 
-    qs("#btnApplyProfile")?.addEventListener("click", () => {
+    onTap(qs("#btnApplyProfile"), () => {
       sendToBot({ type: "set_profile", profile: state });
     });
 
     // Zombies shortcuts
-    qs("#btnOpenZombies")?.addEventListener("click", () =>
-      sendToBot({ type: "zombies_open", map: state.zombies_map })
-    );
-    qs("#btnZPerks")?.addEventListener("click", () =>
-      sendToBot({ type: "zombies", action: "perks", map: state.zombies_map })
-    );
-    qs("#btnZLoadout")?.addEventListener("click", () =>
-      sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map })
-    );
-    qs("#btnZEggs")?.addEventListener("click", () =>
-      sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map })
-    );
-    qs("#btnZRound")?.addEventListener("click", () =>
-      sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map })
-    );
-    qs("#btnZTips")?.addEventListener("click", () =>
-      sendToBot({ type: "zombies", action: "tips", map: state.zombies_map })
-    );
+    onTap(qs("#btnOpenZombies"), () => sendToBot({ type: "zombies_open", map: state.zombies_map }));
+    onTap(qs("#btnZPerks"), () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map }));
+    onTap(qs("#btnZLoadout"), () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map }));
+    onTap(qs("#btnZEggs"), () => sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map }));
+    onTap(qs("#btnZRound"), () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map }));
+    onTap(qs("#btnZTips"), () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map }));
 
-    // Premium “buy”
-    qs("#btnBuyMonth")?.addEventListener("click", () => sendToBot({ type: "pay", plan: "premium_month" }));
-    qs("#btnBuyLife")?.addEventListener("click", () => sendToBot({ type: "pay", plan: "premium_lifetime" }));
+    // Premium buy
+    onTap(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month" }));
+    onTap(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime" }));
 
     // Share
-    qs("#btnShare")?.addEventListener("click", () => {
+    onTap(qs("#btnShare"), () => {
       const text =
         "BLACK CROWN OPS 😈\n" +
         "Тренировки, VOD, настройки, Zombies — всё в одном месте.\n" +
         "Открой мини-апп внутри Telegram и стань сильнее.";
       tryShare(text);
     });
+  }
+
+  // ---------- Build tag (to kill cache confusion) ----------
+  function ensureBuildTag() {
+    // 1) если есть #buildTag — обновим
+    const buildTag = qs("#buildTag");
+    if (buildTag) {
+      buildTag.textContent = `build v${VERSION}`;
+      return;
+    }
+
+    // 2) если нет — аккуратно добавим внизу (в foot-left)
+    const footLeft = qs(".foot-left");
+    if (footLeft) {
+      const span = document.createElement("span");
+      span.id = "buildTag";
+      span.style.display = "block";
+      span.style.marginTop = "8px";
+      span.style.opacity = "0.65";
+      span.style.fontSize = "12px";
+      span.textContent = `build v${VERSION}`;
+      footLeft.appendChild(span);
+    }
   }
 
   // ---------- Init Telegram ----------
@@ -402,18 +491,11 @@
       return;
     }
 
-    tg.ready();
-    tg.expand();
+    try { tg.ready(); } catch {}
+    try { tg.expand(); } catch {}
 
     applyTelegramTheme();
     try { tg.onEvent("themeChanged", applyTelegramTheme); } catch {}
-
-    try {
-      tg.BackButton.onClick(() => {
-        haptic("impact", "light");
-        selectTab("home");
-      });
-    } catch {}
 
     const dbgUser = qs("#dbgUser");
     const dbgChat = qs("#dbgChat");
@@ -424,14 +506,19 @@
     if (dbgChat) dbgChat.textContent = tg.initDataUnsafe?.chat?.id ?? "—";
     if (dbgInit) dbgInit.textContent = (tg.initData ? "ok" : "empty");
     if (statOnline) statOnline.textContent = "ONLINE";
+
+    // Поднимаем “дороговизну” ощущений: чтобы нативные кнопки точно были активны
+    updateTelegramButtons();
   }
 
   async function boot() {
-    initTelegram();
+    // ждём DOM (iOS WebView иногда грузит JS до элементов)
+    if (document.readyState !== "complete" && document.readyState !== "interactive") {
+      await new Promise((r) => document.addEventListener("DOMContentLoaded", r, { once: true }));
+    }
 
-    // build tag (чтобы видеть, что кэш пробит)
-    const buildTag = qs("#buildTag");
-    if (buildTag) buildTag.textContent = `build v${VERSION}`;
+    initTelegram();
+    ensureBuildTag();
 
     const src = await loadState();
     const statSession = qs("#statSession");
@@ -458,9 +545,10 @@
     setActiveSeg("#segGame", state.game);
     setActiveSeg("#segFocus", state.focus);
 
-    await wireHeaderChips();
+    wireHeaderChips();
     wireButtons();
 
+    // стартуем с home
     selectTab("home");
   }
 
