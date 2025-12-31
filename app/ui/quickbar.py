@@ -14,14 +14,29 @@ def _webapp_url() -> str:
       WEBAPP_URL=https://<host>/webapp
     Если не задан — пробуем собрать из PUBLIC_BASE_URL:
       PUBLIC_BASE_URL=https://<host>  -> /webapp
+
+    ВАЖНО (Telegram iOS cache):
+      добавляем авто cache-bust параметр v=BUILD
+      BUILD берём из:
+        - WEBAPP_BUILD_ID (если задашь руками)
+        - RENDER_GIT_COMMIT (Render обычно даёт на деплой)
+      иначе ничего не добавляем (чтобы не ломать).
     """
     url = (os.getenv("WEBAPP_URL") or "").strip()
-    if url:
-        return url
-    base = (os.getenv("PUBLIC_BASE_URL") or "").strip().rstrip("/")
-    if base:
-        return base + "/webapp"
-    return ""
+    if not url:
+        base = (os.getenv("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+        url = (base + "/webapp") if base else ""
+
+    if not url:
+        return ""
+
+    build = (os.getenv("WEBAPP_BUILD_ID") or os.getenv("RENDER_GIT_COMMIT") or "").strip()
+    if build:
+        b = build[:12]
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}v={b}"
+
+    return url
 
 
 def _miniapp_button() -> dict:
@@ -235,10 +250,7 @@ def kb_game_settings_menu(game: str) -> dict:
 
 # =========================================================
 # ZOMBIES (BACKWARD COMPAT)
-# ВАЖНО: эти функции НУЖНЫ, потому что у тебя где-то
-# всё ещё есть импорт kb_zombies_home из app.ui.quickbar
 # =========================================================
-
 def kb_zombies_home() -> dict:
     return {
         "keyboard": [
