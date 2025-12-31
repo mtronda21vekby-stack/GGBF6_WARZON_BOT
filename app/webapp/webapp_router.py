@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -17,9 +19,13 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = (BASE_DIR / "static").resolve()
 INDEX_FILE = (STATIC_DIR / "index.html").resolve()
 
+# Небольшой кэш build-id (чтобы не сканировать файлы на каждый запрос)
+_BUILD_CACHE_VALUE: str | None = None
+_BUILD_CACHE_AT: float = 0.0
+_BUILD_CACHE_TTL_SEC = 2.0
+
 
 def _is_safe_rel_path(p: str) -> bool:
-    # запрет: абсолютные пути, backslash, нулевой байт, path traversal
     if not p:
         return True
     if "\x00" in p:
@@ -34,33 +40,11 @@ def _is_safe_rel_path(p: str) -> bool:
     return True
 
 
-def _build_id() -> str:
-    """
-    Build-id для cache-bust.
-    Приоритет:
-      1) WEBAPP_BUILD_ID (если выставишь руками)
-      2) RENDER_GIT_COMMIT (обычно есть на Render)
-      3) mtime index.html (последняя линия обороны)
-    """
-    bid = (os.getenv("WEBAPP_BUILD_ID") or "").strip()
-    if bid:
-        return bid
-
-    bid = (os.getenv("RENDER_GIT_COMMIT") or "").strip()
-    if bid:
-        return bid[:12]
-
-    try:
-        return str(int(INDEX_FILE.stat().st_mtime))
-    except Exception:
-        return "dev"
-
-
 def _cache_headers(kind: str) -> dict:
     """
     kind:
-      - "html": no-store (Telegram iOS кэширует жёстко)
-      - "asset": можно кэшировать, т.к. у нас cache-bust через ?v=BUILD
+      - "html": отключаем кэш (Telegram iOS кэширует жёстко)
+      - "asset": короткий кэш, но с revalidate
     """
     if kind == "html":
         return {
@@ -68,11 +52,9 @@ def _cache_headers(kind: str) -> dict:
             "Pragma": "no-cache",
             "Expires": "0",
         }
-
-    # assets
     return {
-        # можно жёстко кэшировать, потому что URL меняется (?v=BUILD)
-        "Cache-Control": "public, max-age=31536000, immutable",
+        # Telegram iOS может игнорировать, но это хотя бы заставляет ре-валидировать
+        "Cache-Control": "public, max-age=0, must-revalidate",
     }
 
 
@@ -83,51 +65,103 @@ def _file_response(path: Path, *, kind: str) -> FileResponse:
     )
 
 
+def _scan_static_mtime() -> int:
+    """
+    Возвращает max mtime (секунды) по всем файлам в STATIC_DIR.
+    Меняется при любом обновлении любого файла.
+    """
+    if not STATIC_DIR.exists():
+        return int(time.time())
+
+    newest = 0
+    try:
+        for p in STATIC_DIR.rglob("*"):
+            if p.is_file():
+                try:
+                    mt = int(p.stat().st_mtime)
+                    if mt > newest:
+                        newest = mt
+                except Exception:
+                    continue
+    except Exception:
+        return int(time.time())
+
+    return newest or int(time.time())
+
+
+def _build_id() -> str:
+    """
+    Порядок приоритетов:
+      1) WEBAPP_BUILD_ID (если руками задан)
+      2) RENDER_GIT_COMMIT (Render обычно даёт сам)
+      3) max mtime по static/*
+    """
+    global _BUILD_CACHE_VALUE, _BUILD_CACHE_AT
+
+    now = time.time()
+    if _BUILD_CACHE_VALUE and (now - _BUILD_CACHE_AT) < _BUILD_CACHE_TTL_SEC:
+        return _BUILD_CACHE_VALUE
+
+    v = (os.getenv("WEBAPP_BUILD_ID") or "").strip()
+    if not v:
+        v = (os.getenv("RENDER_GIT_COMMIT") or "").strip()
+
+    if not v:
+        v = str(_scan_static_mtime())
+
+    # короткий и стабильный
+    v = v[:12] if len(v) > 12 else v
+
+    _BUILD_CACHE_VALUE = v
+    _BUILD_CACHE_AT = now
+    return v
+
+
 def _render_index_html() -> HTMLResponse:
     if not INDEX_FILE.exists():
         log.error("index.html not found at %s", INDEX_FILE)
         raise HTTPException(status_code=500, detail="webapp index missing")
 
     try:
-        html = INDEX_FILE.read_text(encoding="utf-8")
+        html = INDEX_FILE.read_text(encoding="utf-8", errors="ignore")
     except Exception as e:
-        log.exception("Failed to read index.html: %s", e)
+        log.exception("index read failed: %s", e)
         raise HTTPException(status_code=500, detail="webapp index read failed")
 
-    bid = _build_id()
+    b = _build_id()
 
-    # ВАЖНО:
-    # index.html должен содержать ?v=__BUILD__
-    # Мы заменяем __BUILD__ на актуальный build-id.
-    html = html.replace("__BUILD__", bid)
+    # Поддержка любого варианта плейсхолдера
+    html = html.replace("__BUILD__", b).replace("%BUILD%", b)
 
-    return HTMLResponse(content=html, headers=_cache_headers("html"))
+    return HTMLResponse(
+        content=html,
+        headers=_cache_headers("html"),
+    )
 
 
 @router.get("/webapp")
 def webapp_root():
-    # Главная Mini App (HTML с динамическим build-id)
+    # Главная Mini App (HTML всегда без кэша + динамический build)
     return _render_index_html()
 
 
 @router.get("/webapp/{req_path:path}")
 def webapp_files(req_path: str):
     """
-    Раздаём:
-      /webapp/style.css
-      /webapp/app.js
-      /webapp/assets/...
-    SPA fallback:
-      /webapp/settings -> index.html
-
+    Раздаём статику и SPA fallback.
     ВАЖНО:
-      - если путь имеет расширение и файла нет -> 404 (а не index.html),
-        иначе браузер получает HTML вместо CSS/JS и “дизайн пропадает”.
+      - если путь имеет расширение и файла нет -> 404 (иначе браузер получит HTML вместо CSS/JS)
+      - для SPA (без расширения) -> index.html
     """
     req_path = (req_path or "").strip()
 
     if not _is_safe_rel_path(req_path):
         raise HTTPException(status_code=400, detail="bad path")
+
+    # SPA fallback: только для путей без расширения (settings, vod, etc.)
+    has_ext = "." in Path(req_path).name
+    if not has_ext:
+        return _render_index_html()
 
     target = (STATIC_DIR / req_path).resolve()
 
@@ -137,18 +171,8 @@ def webapp_files(req_path: str):
     except Exception:
         raise HTTPException(status_code=400, detail="bad path")
 
-    # файл существует -> отдаём как asset (кэшируем сильно, URL у нас меняется через ?v=BUILD)
     if target.exists() and target.is_file():
-        name = target.name.lower()
-        if name == "index.html":
-            # index всегда через render (no-store + build-id)
-            return _render_index_html()
+        # assets
         return _file_response(target, kind="asset")
 
-    # SPA fallback: только для путей БЕЗ расширения
-    has_ext = "." in Path(req_path).name
-    if not has_ext:
-        return _render_index_html()
-
-    # если расширение есть, но файла нет -> 404
     return Response(status_code=404, content="Not Found")
