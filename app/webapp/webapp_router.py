@@ -6,10 +6,9 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 log = logging.getLogger("webapp")
 router = APIRouter()
@@ -44,7 +43,7 @@ def _cache_headers(kind: str) -> dict:
     """
     kind:
       - "html": отключаем кэш (Telegram iOS кэширует жёстко)
-      - "asset": короткий кэш, но с revalidate
+      - "asset": revalidate (пусть даже tg иногда игнорит)
     """
     if kind == "html":
         return {
@@ -53,7 +52,6 @@ def _cache_headers(kind: str) -> dict:
             "Expires": "0",
         }
     return {
-        # Telegram iOS может игнорировать, но это хотя бы заставляет ре-валидировать
         "Cache-Control": "public, max-age=0, must-revalidate",
     }
 
@@ -105,11 +103,9 @@ def _build_id() -> str:
     v = (os.getenv("WEBAPP_BUILD_ID") or "").strip()
     if not v:
         v = (os.getenv("RENDER_GIT_COMMIT") or "").strip()
-
     if not v:
         v = str(_scan_static_mtime())
 
-    # короткий и стабильный
     v = v[:12] if len(v) > 12 else v
 
     _BUILD_CACHE_VALUE = v
@@ -129,8 +125,6 @@ def _render_index_html() -> HTMLResponse:
         raise HTTPException(status_code=500, detail="webapp index read failed")
 
     b = _build_id()
-
-    # Поддержка любого варианта плейсхолдера
     html = html.replace("__BUILD__", b).replace("%BUILD%", b)
 
     return HTMLResponse(
@@ -139,18 +133,30 @@ def _render_index_html() -> HTMLResponse:
     )
 
 
-@router.get("/webapp")
+# =========================================================
+# ✅ КРИТИЧНО: /webapp -> /webapp/ (слэш фиксит резолв ./style.css в Telegram iOS)
+# =========================================================
+@router.get("/webapp", include_in_schema=False)
+def webapp_redirect():
+    return RedirectResponse(url="/webapp/", status_code=307)
+
+
+# =========================================================
+# ✅ Главная Mini App — всегда со слэшем
+# =========================================================
+@router.get("/webapp/", include_in_schema=False)
 def webapp_root():
-    # Главная Mini App (HTML всегда без кэша + динамический build)
     return _render_index_html()
 
 
-@router.get("/webapp/{req_path:path}")
+@router.get("/webapp/{req_path:path}", include_in_schema=False)
 def webapp_files(req_path: str):
     """
     Раздаём статику и SPA fallback.
+
     ВАЖНО:
-      - если путь имеет расширение и файла нет -> 404 (иначе браузер получит HTML вместо CSS/JS)
+      - если путь имеет расширение и файла нет -> 404
+        (иначе браузер получит HTML вместо CSS/JS и “дизайн пропадает”)
       - для SPA (без расширения) -> index.html
     """
     req_path = (req_path or "").strip()
@@ -172,7 +178,6 @@ def webapp_files(req_path: str):
         raise HTTPException(status_code=400, detail="bad path")
 
     if target.exists() and target.is_file():
-        # assets
         return _file_response(target, kind="asset")
 
     return Response(status_code=404, content="Not Found")
