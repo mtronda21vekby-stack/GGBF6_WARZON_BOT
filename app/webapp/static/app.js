@@ -18,37 +18,27 @@
     voice: "TEAMMATE",
     role: "Flex",
     bf6_class: "Assault",
-    zombies_map: "Ashes",
+    zombies_map: "Ashes"
   };
 
   const state = { ...defaults };
 
+  // ✅ chat state (kept separate to avoid breaking old storage)
+  const chat = {
+    history: [], // [{role:'user'|'assistant', text:'...', ts:number}]
+    lastAskAt: 0
+  };
+
   // current UI tab (single source of truth)
   let currentTab = "home";
-
-  // mini chat state
-  const chat = {
-    messages: [], // { id, role: "user"|"assistant"|"system", text, ts }
-    typing: false,
-  };
 
   const qs = (s) => document.querySelector(s);
   const qsa = (s) => Array.from(document.querySelectorAll(s));
 
-  function now() {
-    return Date.now();
-  }
-
-  function uid() {
-    return `${Date.now().toString(36)}_${Math.random().toString(16).slice(2)}`;
-  }
+  function now() { return Date.now(); }
 
   function safeJsonParse(s) {
-    try {
-      return JSON.parse(s);
-    } catch {
-      return null;
-    }
+    try { return JSON.parse(s); } catch { return null; }
   }
 
   function haptic(type = "impact", style = "medium") {
@@ -69,8 +59,6 @@
 
   // =========================================================
   // ✅ FAST TAP (iOS WebView SAFE)
-  // Причина "по кругу": pointerup + touchend + click = triple fire
-  // Делает 1 событие максимум, с блокировкой 350ms.
   // =========================================================
   function onTap(el, handler) {
     if (!el) return;
@@ -84,18 +72,13 @@
     const fire = (e) => {
       if (locked) return;
       lock();
-      try {
-        handler(e);
-      } catch {}
+      try { handler(e); } catch {}
     };
 
-    // prefer Pointer Events
     if (window.PointerEvent) {
       el.addEventListener("pointerup", fire, { passive: true });
       return;
     }
-
-    // fallback
     el.addEventListener("touchend", fire, { passive: true });
     el.addEventListener("click", fire, { passive: true });
   }
@@ -113,7 +96,7 @@
       "--tg-link": p.link_color,
       "--tg-btn": p.button_color,
       "--tg-btn-text": p.button_text_color,
-      "--tg-secondary-bg": p.secondary_bg_color,
+      "--tg-secondary-bg": p.secondary_bg_color
     };
 
     Object.entries(map).forEach(([k, v]) => {
@@ -123,12 +106,8 @@
     const dbgTheme = qs("#dbgTheme");
     if (dbgTheme) dbgTheme.textContent = tg.colorScheme ?? "—";
 
-    try {
-      tg.setBackgroundColor?.(p.bg_color || "#07070b");
-    } catch {}
-    try {
-      tg.setHeaderColor?.(p.secondary_bg_color || p.bg_color || "#07070b");
-    } catch {}
+    try { tg.setBackgroundColor?.(p.bg_color || "#07070b"); } catch {}
+    try { tg.setHeaderColor?.(p.secondary_bg_color || p.bg_color || "#07070b"); } catch {}
   }
 
   // ---------- Storage ----------
@@ -174,18 +153,29 @@
     await cloudSet(STORAGE_KEY, payload);
   }
 
-  function loadChat() {
-    const raw = localStorage.getItem(CHAT_KEY);
-    const parsed = raw ? safeJsonParse(raw) : null;
-    if (parsed && Array.isArray(parsed.messages)) {
-      chat.messages = parsed.messages.slice(-60);
-    } else {
-      chat.messages = [];
+  async function loadChat() {
+    const fromCloud = await cloudGet(CHAT_KEY);
+    const parsedCloud = fromCloud ? safeJsonParse(fromCloud) : null;
+    if (parsedCloud && typeof parsedCloud === "object" && Array.isArray(parsedCloud.history)) {
+      chat.history = parsedCloud.history.slice(-80);
+      return "cloud";
     }
+
+    const fromLocal = localStorage.getItem(CHAT_KEY);
+    const parsedLocal = fromLocal ? safeJsonParse(fromLocal) : null;
+    if (parsedLocal && typeof parsedLocal === "object" && Array.isArray(parsedLocal.history)) {
+      chat.history = parsedLocal.history.slice(-80);
+      return "local";
+    }
+
+    chat.history = [];
+    return "default";
   }
 
-  function saveChat() {
-    localStorage.setItem(CHAT_KEY, JSON.stringify({ messages: chat.messages.slice(-80) }));
+  async function saveChat() {
+    const payload = JSON.stringify({ history: chat.history.slice(-120) });
+    localStorage.setItem(CHAT_KEY, payload);
+    await cloudSet(CHAT_KEY, payload);
   }
 
   // ---------- UI helpers ----------
@@ -194,16 +184,13 @@
     const chipVoice = qs("#chipVoice");
     if (chipVoice) chipVoice.textContent = vv;
 
-    const mm = state.mode === "Demon" ? "😈 Demon" : state.mode === "Pro" ? "🔥 Pro" : "🧠 Normal";
+    const mm = state.mode === "Demon" ? "😈 Demon" : (state.mode === "Pro" ? "🔥 Pro" : "🧠 Normal");
     const chipMode = qs("#chipMode");
     if (chipMode) chipMode.textContent = mm;
 
     const pp =
-      state.platform === "PlayStation"
-        ? "🎮 PlayStation"
-        : state.platform === "Xbox"
-        ? "🎮 Xbox"
-        : "🖥 PC";
+      state.platform === "PlayStation" ? "🎮 PlayStation" :
+      state.platform === "Xbox" ? "🎮 Xbox" : "🖥 PC";
     const chipPlatform = qs("#chipPlatform");
     if (chipPlatform) chipPlatform.textContent = pp;
 
@@ -212,6 +199,9 @@
 
     const pillBf6 = qs("#pillBf6");
     if (pillBf6) pillBf6.textContent = `🟩 Class: ${state.bf6_class}`;
+
+    const chatSub = qs("#chatSub");
+    if (chatSub) chatSub.textContent = `${state.voice} • ${state.mode} • ${state.platform}`;
   }
 
   function setActiveSeg(rootId, value) {
@@ -245,24 +235,21 @@
 
     updateTelegramButtons();
 
-    try {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } catch {}
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
   }
 
-  // ---------- Payload ----------
+  // ---------- Payload / sendData ----------
   function toRouterProfile() {
-    // router ждёт difficulty, UI держит mode → маппим
     return {
       game: state.game,
       platform: state.platform,
       input: state.input,
-      difficulty: state.mode, // ✅ FIX
+      difficulty: state.mode, // ✅ router expects difficulty
       voice: state.voice,
       role: state.role,
       bf6_class: state.bf6_class,
       zombies_map: state.zombies_map,
-      mode: state.mode,
+      mode: state.mode
     };
   }
 
@@ -275,9 +262,9 @@
         user_id: initUnsafe?.user?.id ?? null,
         chat_id: initUnsafe?.chat?.id ?? null,
         platform: tg?.platform ?? null,
-        build: window.__BCO_BUILD__ || null,
+        build: (window.__BCO_BUILD__ || null)
       },
-      ...payload,
+      ...payload
     };
   }
 
@@ -285,7 +272,6 @@
     try {
       const fixed = { ...payload };
 
-      // если profile есть → конвертим в router-profile
       if (fixed.profile && typeof fixed.profile === "object") {
         fixed.profile = toRouterProfile();
       }
@@ -293,7 +279,6 @@
       const pack = enrichPayload(fixed);
       let data = JSON.stringify(pack);
 
-      // защита от слишком больших payload
       const MAX = 15000;
       if (data.length > MAX) {
         if (typeof pack.text === "string") pack.text = pack.text.slice(0, 4000);
@@ -304,136 +289,23 @@
       if (!tg?.sendData) {
         haptic("notif", "error");
         toast("Открой Mini App внутри Telegram");
-        return false;
+        return;
       }
 
       tg.sendData(data);
-
       haptic("notif", "success");
+
       const statSession = qs("#statSession");
       if (statSession) statSession.textContent = "SENT";
       toast("Отправлено в бота 🚀");
-      return true;
     } catch {
       haptic("notif", "error");
       alert("Не могу отправить данные в бот. Открой мини-апп из Telegram.");
-      return false;
     }
   }
 
   function openBotMenuHint(target) {
-    // router у тебя не обрабатывает type=open — поэтому делаем nav
-    sendToBot({ type: "nav", target, profile: state });
-  }
-
-  // =========================================================
-  // ✅ MINI APP CHAT (ответы прямо в приложении)
-  // POST /webapp/api/ask
-  // Заголовок: X-Telegram-Init-Data = tg.initData
-  // Body: { text, profile }
-  // Response: { reply: "..." } (или { text: "..." })
-  // =========================================================
-  function chatPush(role, text) {
-    chat.messages.push({ id: uid(), role, text: String(text || ""), ts: now() });
-    chat.messages = chat.messages.slice(-80);
-    saveChat();
-    renderChat();
-  }
-
-  function setTyping(on) {
-    chat.typing = !!on;
-    renderChat();
-  }
-
-  function renderChat() {
-    const box = qs("#chatBox");
-    if (!box) return;
-
-    const typing = qs("#chatTyping");
-    if (typing) typing.style.display = chat.typing ? "flex" : "none";
-
-    box.innerHTML = "";
-
-    if (!chat.messages.length) {
-      const empty = document.createElement("div");
-      empty.className = "chat-empty";
-      empty.textContent = "Напиши в чат — и я отвечу прямо здесь 😈";
-      box.appendChild(empty);
-    } else {
-      chat.messages.forEach((m) => {
-        const row = document.createElement("div");
-        row.className = `chat-row ${m.role}`;
-
-        const bubble = document.createElement("div");
-        bubble.className = "chat-bubble";
-        bubble.textContent = m.text;
-
-        row.appendChild(bubble);
-        box.appendChild(row);
-      });
-    }
-
-    // автоскролл вниз
-    try {
-      box.scrollTop = box.scrollHeight + 9999;
-    } catch {}
-  }
-
-  async function askInMiniApp(text) {
-    const msg = String(text || "").trim();
-    if (!msg) return;
-
-    chatPush("user", msg);
-    setTyping(true);
-
-    const initData = tg?.initData || "";
-    const body = {
-      text: msg,
-      profile: toRouterProfile(),
-    };
-
-    // если не из Telegram — покажем честно, но всё равно попробуем
-    const isTg = !!tg;
-
-    try {
-      const res = await fetch("/webapp/api/ask", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Telegram-Init-Data": initData,
-          "X-BCO-Version": VERSION,
-        },
-        body: JSON.stringify(body),
-      });
-
-      const ct = (res.headers.get("content-type") || "").toLowerCase();
-      const data = ct.includes("application/json") ? await res.json() : { reply: await res.text() };
-
-      const reply = (data && (data.reply || data.text || data.message)) || "";
-      if (!res.ok) {
-        setTyping(false);
-
-        // fallback: если API недоступен — отправим в бота
-        if (isTg) {
-          sendToBot({ type: "one_line", text: msg, profile: state });
-          chatPush("system", "⚠️ API недоступен — отправил в бота (fallback).");
-        } else {
-          chatPush("system", "⚠️ API недоступен и Telegram initData пустой. Открой Mini App из Telegram.");
-        }
-        return;
-      }
-
-      setTyping(false);
-      chatPush("assistant", reply || "…");
-    } catch (e) {
-      setTyping(false);
-      if (isTg) {
-        sendToBot({ type: "one_line", text: msg, profile: state });
-        chatPush("system", "⚠️ Ошибка сети — отправил в бота (fallback).");
-      } else {
-        chatPush("system", "⚠️ Ошибка сети. Открой Mini App из Telegram.");
-      }
-    }
+    sendToBot({ type: "open", target, profile: state });
   }
 
   // ---------- Telegram native buttons ----------
@@ -453,15 +325,11 @@
       tg.MainButton.setParams({
         is_visible: true,
         text:
-          currentTab === "settings"
-            ? "✅ Применить профиль"
-            : currentTab === "coach"
-            ? "🎯 План тренировки"
-            : currentTab === "vod"
-            ? "🎬 Отправить VOD"
-            : currentTab === "zombies"
-            ? "🧟 Открыть Zombies"
-            : "💎 Premium",
+          currentTab === "settings" ? "✅ Применить профиль" :
+          currentTab === "coach" ? "🎯 План тренировки" :
+          currentTab === "vod" ? "🎬 Отправить VOD" :
+          currentTab === "zombies" ? "🧟 Открыть Zombies" :
+          "💎 Premium"
       });
     } catch {}
 
@@ -504,18 +372,14 @@
       tg.MainButton.offClick?.(tgMainHandler);
       tg.MainButton.onClick(tgMainHandler);
     } catch {
-      try {
-        tg.MainButton.onClick(tgMainHandler);
-      } catch {}
+      try { tg.MainButton.onClick(tgMainHandler); } catch {}
     }
 
     try {
       tg.BackButton.offClick?.(tgBackHandler);
       tg.BackButton.onClick(tgBackHandler);
     } catch {
-      try {
-        tg.BackButton.onClick(tgBackHandler);
-      } catch {}
+      try { tg.BackButton.onClick(tgBackHandler); } catch {}
     }
   }
 
@@ -527,6 +391,178 @@
     } catch {
       alert(text);
     }
+  }
+
+  // =========================================================
+  // ✅ MINI APP CHAT (BOT REPLIES IN APP)
+  // endpoint: POST /webapp/api/ask
+  // =========================================================
+  function chatLogEl() { return qs("#chatLog"); }
+
+  function esc(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function fmtTime(ts) {
+    try {
+      const d = new Date(ts);
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      return `${hh}:${mm}`;
+    } catch { return ""; }
+  }
+
+  function renderChat() {
+    const root = chatLogEl();
+    if (!root) return;
+
+    const items = chat.history.slice(-80);
+    let html = "";
+
+    for (const m of items) {
+      const who = (m.role === "assistant") ? "bot" : "me";
+      const label = (m.role === "assistant") ? "BCO" : "Ты";
+      html += `
+        <div class="chat-row ${who}">
+          <div>
+            <div class="bubble">${esc(m.text)}</div>
+            <div class="chat-meta">${label} • ${esc(fmtTime(m.ts || now()))}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    root.innerHTML = html || `
+      <div class="chat-row bot">
+        <div>
+          <div class="bubble">🤝 Готов. Пиши как есть: где умираешь и что хочешь получить — отвечу тут же. 😈</div>
+          <div class="chat-meta">BCO • ${esc(fmtTime(now()))}</div>
+        </div>
+      </div>
+    `;
+
+    try { root.scrollTop = root.scrollHeight; } catch {}
+  }
+
+  function pushChat(role, text) {
+    const t = String(text ?? "").trim();
+    if (!t) return;
+    chat.history.push({ role, text: t, ts: now() });
+    chat.history = chat.history.slice(-160);
+  }
+
+  function setTyping(on) {
+    const root = chatLogEl();
+    if (!root) return;
+
+    const id = "bco-typing-row";
+    const existing = qs(`#${id}`);
+    if (on) {
+      if (existing) return;
+      const row = document.createElement("div");
+      row.className = "chat-row bot";
+      row.id = id;
+      row.innerHTML = `
+        <div>
+          <div class="bubble">
+            <span class="typing">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </span>
+          </div>
+          <div class="chat-meta">BCO • печатает…</div>
+        </div>
+      `;
+      root.appendChild(row);
+      try { root.scrollTop = root.scrollHeight; } catch {}
+      return;
+    }
+
+    if (existing) existing.remove();
+  }
+
+  async function askBrain(text) {
+    const t = String(text ?? "").trim();
+    if (!t) return null;
+
+    // анти-спам кликов
+    const delta = now() - (chat.lastAskAt || 0);
+    if (delta < 450) return null;
+    chat.lastAskAt = now();
+
+    if (!tg) {
+      // Browser mode: still try fetch
+    }
+
+    setTyping(true);
+
+    const body = {
+      initData: tg?.initData || "",
+      text: t,
+      profile: toRouterProfile(),
+      history: chat.history.slice(-20)
+        .map(m => ({ role: m.role, content: m.text })) // not required, but nice
+    };
+
+    try {
+      const res = await fetch("/webapp/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+
+      const data = await res.json().catch(() => null);
+      setTyping(false);
+
+      if (!data || data.ok !== true) {
+        const err = (data && (data.error || data.detail)) ? String(data.error || data.detail) : "api_error";
+        return `🧠 Mini App: API error (${err}).`;
+      }
+
+      return String(data.reply ?? "");
+    } catch (e) {
+      setTyping(false);
+      return `🧠 Mini App: network error (${String(e?.message || e)}).`;
+    }
+  }
+
+  async function sendChatFromUI() {
+    const input = qs("#chatInput");
+    const text = (input?.value || "").trim();
+    if (!text) { haptic("notif", "warning"); toast("Напиши текст"); return; }
+
+    haptic("impact", "light");
+    pushChat("user", text);
+    if (input) input.value = "";
+    renderChat();
+    await saveChat();
+
+    // ask server brain
+    const reply = await askBrain(text);
+
+    if (reply) {
+      pushChat("assistant", reply);
+      renderChat();
+      await saveChat();
+      haptic("notif", "success");
+      return;
+    }
+
+    // fallback: if no reply — offer sendData route
+    haptic("notif", "warning");
+    toast("Нет ответа. Можно отправить в бота.");
+  }
+
+  function exportChatText() {
+    const lines = chat.history.slice(-80).map(m => {
+      const who = (m.role === "assistant") ? "BCO" : "YOU";
+      return `[${fmtTime(m.ts)}] ${who}: ${m.text}`;
+    });
+    return lines.join("\n");
   }
 
   // ---------- Segments wiring ----------
@@ -546,25 +582,17 @@
     };
 
     if (window.PointerEvent) {
-      root.addEventListener(
-        "pointerup",
-        (e) => {
-          const btn = e.target.closest(".seg-btn");
-          if (!btn) return;
-          handler(btn);
-        },
-        { passive: true }
-      );
+      root.addEventListener("pointerup", (e) => {
+        const btn = e.target.closest(".seg-btn");
+        if (!btn) return;
+        handler(btn);
+      }, { passive: true });
     } else {
-      root.addEventListener(
-        "click",
-        (e) => {
-          const btn = e.target.closest(".seg-btn");
-          if (!btn) return;
-          handler(btn);
-        },
-        { passive: true }
-      );
+      root.addEventListener("click", (e) => {
+        const btn = e.target.closest(".seg-btn");
+        if (!btn) return;
+        handler(btn);
+      }, { passive: true });
     }
   }
 
@@ -593,7 +621,7 @@
 
     onTap(chipVoice, async () => {
       haptic("impact", "light");
-      state.voice = state.voice === "COACH" ? "TEAMMATE" : "COACH";
+      state.voice = (state.voice === "COACH") ? "TEAMMATE" : "COACH";
       setChipText();
       setActiveSeg("#segVoice", state.voice);
       await saveState();
@@ -602,7 +630,7 @@
 
     onTap(chipMode, async () => {
       haptic("impact", "light");
-      state.mode = state.mode === "Normal" ? "Pro" : state.mode === "Pro" ? "Demon" : "Normal";
+      state.mode = (state.mode === "Normal") ? "Pro" : (state.mode === "Pro" ? "Demon" : "Normal");
       setChipText();
       setActiveSeg("#segMode", state.mode);
       await saveState();
@@ -611,7 +639,7 @@
 
     onTap(chipPlatform, async () => {
       haptic("impact", "light");
-      state.platform = state.platform === "PC" ? "PlayStation" : state.platform === "PlayStation" ? "Xbox" : "PC";
+      state.platform = (state.platform === "PC") ? "PlayStation" : (state.platform === "PlayStation" ? "Xbox" : "PC");
       setChipText();
       setActiveSeg("#segPlatform", state.platform);
       await saveState();
@@ -625,47 +653,6 @@
       haptic("impact", "medium");
       tg?.close?.();
     });
-
-    onTap(qs("#btnClearOneLine"), () => {
-      haptic("impact", "light");
-      const el = qs("#inputOneLine");
-      if (el) el.value = "";
-    });
-
-    // ✅ 1-строка в чат Mini App (API), fallback — в бот
-    onTap(qs("#btnSendOneLine"), () => {
-      const v = (qs("#inputOneLine")?.value || "").trim();
-      if (!v) {
-        haptic("notif", "warning");
-        toast("Заполни строку");
-        return;
-      }
-      askInMiniApp(v);
-    });
-
-    // ✅ чат-кнопка
-    onTap(qs("#btnChatSend"), () => {
-      const v = (qs("#chatInput")?.value || "").trim();
-      if (!v) {
-        haptic("notif", "warning");
-        toast("Напиши текст");
-        return;
-      }
-      const input = qs("#chatInput");
-      if (input) input.value = "";
-      askInMiniApp(v);
-    });
-
-    // enter to send (mobile safe)
-    const chatInput = qs("#chatInput");
-    if (chatInput) {
-      chatInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          qs("#btnChatSend")?.click?.();
-        }
-      });
-    }
 
     onTap(qs("#btnOpenBot"), () => openBotMenuHint("main"));
     onTap(qs("#btnPremium"), () => openBotMenuHint("premium"));
@@ -686,7 +673,6 @@
     onTap(qs("#btnOpenSettings"), () => openBotMenuHint("settings"));
     onTap(qs("#btnApplyProfile"), () => sendToBot({ type: "set_profile", profile: state }));
 
-    // Zombies shortcuts
     onTap(qs("#btnOpenZombies"), () => sendToBot({ type: "zombies_open", map: state.zombies_map, profile: state }));
     onTap(qs("#btnZPerks"), () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map, profile: state }));
     onTap(qs("#btnZLoadout"), () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map, profile: state }));
@@ -694,24 +680,52 @@
     onTap(qs("#btnZRound"), () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map, profile: state }));
     onTap(qs("#btnZTips"), () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map, profile: state }));
 
-    // Premium buy
     onTap(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month", profile: state }));
     onTap(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime", profile: state }));
 
-    // Share
     onTap(qs("#btnShare"), () => {
       const text =
         "BLACK CROWN OPS 😈\n" +
         "Тренировки, VOD, настройки, Zombies — всё в одном месте.\n" +
-        "Открой мини-апп внутри Telegram и стань сильнее.";
+        "Теперь ещё и чат внутри Mini App.";
       tryShare(text);
     });
+
+    // ✅ chat buttons
+    onTap(qs("#btnChatSend"), () => sendChatFromUI());
+    onTap(qs("#btnChatClear"), async () => {
+      haptic("impact", "light");
+      chat.history = [];
+      await saveChat();
+      renderChat();
+      toast("Чат очищен ✅");
+    });
+    onTap(qs("#btnChatExport"), () => {
+      haptic("impact", "light");
+      tryShare(exportChatText() || "— пусто —");
+    });
+
+    // Enter-to-send (iOS friendly): Enter = send, Shift+Enter = newline
+    const chatInput = qs("#chatInput");
+    if (chatInput) {
+      chatInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendChatFromUI();
+        }
+      });
+    }
   }
 
   // ---------- Build tag ----------
   function ensureBuildTag() {
-    const buildFromIndex = window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__" ? window.__BCO_BUILD__ : null;
-    const txt = buildFromIndex ? `build ${buildFromIndex} • v${VERSION}` : `v${VERSION}`;
+    const buildFromIndex = (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__")
+      ? window.__BCO_BUILD__
+      : null;
+
+    const txt = buildFromIndex
+      ? `build ${buildFromIndex} • v${VERSION}`
+      : `v${VERSION}`;
 
     const buildTag = qs("#buildTag");
     if (buildTag) {
@@ -742,17 +756,11 @@
       return;
     }
 
-    try {
-      tg.ready();
-    } catch {}
-    try {
-      tg.expand();
-    } catch {}
+    try { tg.ready(); } catch {}
+    try { tg.expand(); } catch {}
 
     applyTelegramTheme();
-    try {
-      tg.onEvent("themeChanged", applyTelegramTheme);
-    } catch {}
+    try { tg.onEvent("themeChanged", applyTelegramTheme); } catch {}
 
     const dbgUser = qs("#dbgUser");
     const dbgChat = qs("#dbgChat");
@@ -761,7 +769,7 @@
 
     if (dbgUser) dbgUser.textContent = tg.initDataUnsafe?.user?.id ?? "—";
     if (dbgChat) dbgChat.textContent = tg.initDataUnsafe?.chat?.id ?? "—";
-    if (dbgInit) dbgInit.textContent = tg.initData ? "ok" : "empty";
+    if (dbgInit) dbgInit.textContent = (tg.initData ? "ok" : "empty");
     if (statOnline) statOnline.textContent = "ONLINE";
 
     updateTelegramButtons();
@@ -779,33 +787,18 @@
     const statSession = qs("#statSession");
     if (statSession) statSession.textContent = src.toUpperCase();
 
-    loadChat();
-    renderChat();
+    await loadChat();
 
     wireNav();
 
     // Segments
-    wireSeg("#segGame", (v) => {
-      state.game = v;
-    });
-    wireSeg("#segFocus", (v) => {
-      state.focus = v;
-    });
-    wireSeg("#segMode", (v) => {
-      state.mode = v;
-    });
-    wireSeg("#segPlatform", (v) => {
-      state.platform = v;
-    });
-    wireSeg("#segInput", (v) => {
-      state.input = v;
-    });
-    wireSeg("#segVoice", (v) => {
-      state.voice = v;
-    });
-    wireSeg("#segZMap", (v) => {
-      state.zombies_map = v;
-    });
+    wireSeg("#segGame", (v) => { state.game = v; });
+    wireSeg("#segFocus", (v) => { state.focus = v; });
+    wireSeg("#segMode", (v) => { state.mode = v; });
+    wireSeg("#segPlatform", (v) => { state.platform = v; });
+    wireSeg("#segInput", (v) => { state.input = v; });
+    wireSeg("#segVoice", (v) => { state.voice = v; });
+    wireSeg("#segZMap", (v) => { state.zombies_map = v; });
 
     setChipText();
 
@@ -820,12 +813,10 @@
     wireHeaderChips();
     wireButtons();
 
-    selectTab("home");
+    // ✅ render chat from storage
+    renderChat();
 
-    // subtle greeting in mini chat (only if empty)
-    if (!chat.messages.length) {
-      chatPush("assistant", "🖤 Я здесь. Пиши — отвечу прямо в Mini App. 😈");
-    }
+    selectTab("home");
   }
 
   boot();
