@@ -1,7 +1,7 @@
 (() => {
   const tg = window.Telegram?.WebApp;
 
-  const VERSION = "1.0.1";
+  const VERSION = "1.0.2";
   const STORAGE_KEY = "bco_state_v1";
 
   const defaults = {
