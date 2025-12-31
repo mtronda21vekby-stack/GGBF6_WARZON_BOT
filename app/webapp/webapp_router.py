@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 from fastapi import APIRouter
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 
 router = APIRouter()
 
@@ -13,24 +12,28 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
 
-def _index() -> FileResponse:
-    # HTML лучше отдавать без кэша, чтобы Telegram не залипал на старом UI
+def _file_response(path: Path, *, cache: str) -> FileResponse:
+    # cache examples:
+    # - "no-store, no-cache, must-revalidate, max-age=0"
+    # - "public, max-age=31536000, immutable"
     return FileResponse(
-        STATIC_DIR / "index.html",
+        path,
         headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0",
+            "Cache-Control": cache,
+            "Pragma": "no-cache" if "no-store" in cache else "",
         },
     )
 
 
+def _index() -> FileResponse:
+    # index.html всегда no-store — иначе Telegram/WebView будет показывать старое
+    return _file_response(
+        STATIC_DIR / "index.html",
+        cache="no-store, no-cache, must-revalidate, max-age=0",
+    )
+
+
 @router.get("/webapp", include_in_schema=False)
-def webapp_index_redirect():
-    # КЛЮЧЕВО: слэш в конце → правильная загрузка относительных ресурсов
-    return RedirectResponse(url="/webapp/", status_code=307)
-
-
 @router.get("/webapp/", include_in_schema=False)
 def webapp_index():
     return _index()
@@ -48,11 +51,12 @@ def webapp_static(path: str):
         return _index()
 
     if file_path.exists() and file_path.is_file():
-        # Статику можно кэшировать чуть-чуть, а HTML мы уже не кэшируем
-        return FileResponse(
-            file_path,
-            headers={"Cache-Control": "public, max-age=300"},
-        )
+        # HTML тоже лучше не кешировать
+        if file_path.suffix.lower() in {".html"}:
+            return _file_response(file_path, cache="no-store, no-cache, must-revalidate, max-age=0")
+
+        # css/js/img можно кешировать “долго”, потому что мы добавим ?v=...
+        return _file_response(file_path, cache="public, max-age=31536000, immutable")
 
     # SPA fallback
     return _index()
