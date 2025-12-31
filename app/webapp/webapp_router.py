@@ -3,137 +3,111 @@
 from __future__ import annotations
 
 import logging
-import mimetypes
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, Response
 
 log = logging.getLogger("webapp")
-if not log.handlers:
-    logging.basicConfig(level=logging.INFO)
-
 router = APIRouter()
 
-# папка рядом с этим файлом: app/webapp/static/*
+# Папка со статикой: app/webapp/static/*
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = (BASE_DIR / "static").resolve()
 INDEX_FILE = (STATIC_DIR / "index.html").resolve()
 
-# дефолтные mime (на всякий)
-mimetypes.add_type("text/css", ".css")
-mimetypes.add_type("application/javascript", ".js")
-mimetypes.add_type("application/json", ".json")
-mimetypes.add_type("image/svg+xml", ".svg")
-mimetypes.add_type("font/woff2", ".woff2")
-mimetypes.add_type("font/woff", ".woff")
-mimetypes.add_type("application/octet-stream", ".bin")
 
-SEC_HEADERS = {
-    # Telegram WebApp живёт внутри webview — держим безопасно, но без “жёсткого CSP”, чтобы не сломать web-app js
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
-    "X-Frame-Options": "SAMEORIGIN",
-    "Cross-Origin-Opener-Policy": "same-origin",
-    "Cross-Origin-Resource-Policy": "same-origin",
-}
-
-
-def _is_inside(base: Path, target: Path) -> bool:
-    try:
-        target.relative_to(base)
+def _is_safe_rel_path(p: str) -> bool:
+    # запрет: абсолютные пути, backslash, нулевой байт, path traversal
+    if not p:
         return True
-    except Exception:
+    if "\x00" in p:
         return False
+    if p.startswith(("/", "\\")):
+        return False
+    if "\\" in p:
+        return False
+    # простая защита от ../ и ./../
+    parts = [x for x in p.split("/") if x]
+    if any(x in ("..",) for x in parts):
+        return False
+    return True
 
 
-def _cache_headers_for(path: Path) -> dict:
+def _cache_headers(kind: str) -> dict:
     """
-    SPA:
-      - index.html: всегда no-cache (чтобы обновления сразу прилетали)
-      - ассеты: можно кешировать (но у тебя есть ?v=... — идеально)
+    kind:
+      - "html": отключаем кэш (Telegram iOS реально кэширует жёстко)
+      - "asset": можно кэшировать, но безопасно коротко
     """
-    name = path.name.lower()
-    if name == "index.html":
-        return {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
-    # ассеты: кешируем, обновление — через ?v=...
-    return {"Cache-Control": "public, max-age=86400"}  # 1 день
+    if kind == "html":
+        return {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        }
+    # assets
+    return {
+        "Cache-Control": "public, max-age=300",  # 5 минут, без боли
+    }
 
 
-def _file_response(file_path: Path) -> FileResponse:
-    guessed_type, _ = mimetypes.guess_type(str(file_path))
-    headers = {}
-    headers.update(SEC_HEADERS)
-    headers.update(_cache_headers_for(file_path))
-
+def _file_response(path: Path, *, kind: str) -> FileResponse:
     return FileResponse(
-        path=str(file_path),
-        media_type=guessed_type or "application/octet-stream",
-        headers=headers,
+        path=str(path),
+        headers=_cache_headers(kind),
     )
 
 
-def _index_response() -> Response:
+@router.get("/webapp")
+def webapp_root():
+    # Главная Mini App
     if not INDEX_FILE.exists():
-        # вместо 500 — понятная ошибка
-        raise HTTPException(
-            status_code=404,
-            detail=f"index.html not found at {INDEX_FILE}. Put files into {STATIC_DIR}",
-        )
-    return _file_response(INDEX_FILE)
+        log.error("index.html not found at %s", INDEX_FILE)
+        raise HTTPException(status_code=500, detail="webapp index missing")
+    return _file_response(INDEX_FILE, kind="html")
 
 
-@router.get("/webapp/health", include_in_schema=False)
-async def webapp_health() -> Response:
-    ok = STATIC_DIR.exists() and INDEX_FILE.exists()
-    txt = "OK" if ok else "MISSING_FILES"
-    headers = {}
-    headers.update(SEC_HEADERS)
-    headers["Cache-Control"] = "no-store"
-    return PlainTextResponse(txt, status_code=200 if ok else 503, headers=headers)
-
-
-@router.get("/webapp", include_in_schema=False)
-async def webapp_root() -> Response:
-    # SPA entry
-    return _index_response()
-
-
-@router.get("/webapp/{req_path:path}", include_in_schema=False)
-async def webapp_any(req_path: str, request: Request) -> Response:
+@router.get("/webapp/{req_path:path}")
+def webapp_files(req_path: str):
     """
+    Раздаём:
+      /webapp/style.css
+      /webapp/app.js
+      /webapp/assets/...
     SPA fallback:
-      - если файл существует в static — отдаём файл
-      - иначе отдаём index.html
-    Защита от ../ и любого обхода путей.
+      /webapp (handled above)
+      /webapp/settings -> index.html
+    ВАЖНО:
+      - если путь имеет расширение (.css/.js/.png) и файла нет -> 404 (а не index.html),
+        иначе браузер будет получать HTML вместо CSS/JS и “дизайн пропадает”.
     """
-    # нормализуем
-    raw = (req_path or "").strip().lstrip("/")
-    if not raw:
-        return _index_response()
+    req_path = (req_path or "").strip()
 
-    # режем query — FastAPI сюда его не передаёт, но на всякий
-    raw = raw.split("?", 1)[0].split("#", 1)[0]
+    if not _is_safe_rel_path(req_path):
+        raise HTTPException(status_code=400, detail="bad path")
 
-    # candidate
-    candidate = (STATIC_DIR / raw).resolve()
+    target = (STATIC_DIR / req_path).resolve()
 
-    # защита от ../
-    if not _is_inside(STATIC_DIR, candidate):
-        log.warning("Blocked path traversal: %s", raw)
-        raise HTTPException(status_code=403, detail="Forbidden")
+    # блокируем выход из STATIC_DIR
+    try:
+        target.relative_to(STATIC_DIR)
+    except Exception:
+        raise HTTPException(status_code=400, detail="bad path")
 
-    # если папка — пробуем index.html внутри
-    if candidate.exists() and candidate.is_dir():
-        idx = (candidate / "index.html").resolve()
-        if idx.exists() and _is_inside(STATIC_DIR, idx):
-            return _file_response(idx)
-        return _index_response()
+    # файл существует -> отдаём как asset
+    if target.exists() and target.is_file():
+        # html тоже можем отдавать, но лучше считать это asset, кроме index
+        kind = "html" if target.name.lower() == "index.html" else "asset"
+        return _file_response(target, kind=kind)
 
-    # если файл существует — отдать
-    if candidate.exists() and candidate.is_file():
-        return _file_response(candidate)
+    # SPA fallback: только для путей БЕЗ расширения
+    has_ext = "." in Path(req_path).name
+    if not has_ext:
+        if not INDEX_FILE.exists():
+            log.error("index.html not found at %s", INDEX_FILE)
+            raise HTTPException(status_code=500, detail="webapp index missing")
+        return _file_response(INDEX_FILE, kind="html")
 
-    # SPA fallback
-    return _index_response()
+    # если расширение есть, но файла нет -> 404 (иначе ломаем css/js)
+    return Response(status_code=404, content="Not Found")
