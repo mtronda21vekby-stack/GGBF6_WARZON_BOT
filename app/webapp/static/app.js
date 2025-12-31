@@ -8,7 +8,7 @@
   const defaults = {
     game: "Warzone",
     focus: "aim",
-    mode: "Normal",
+    mode: "Normal",          // UI key (оставляем для сегментов/чипов)
     platform: "PC",
     input: "Controller",
     voice: "TEAMMATE",
@@ -48,14 +48,12 @@
   }
 
   // ---------- FAST TAP (iOS WebView friendly) ----------
-  // Telegram iOS иногда “глотает” click. Делаем единый быстрый хендлер:
   function onTap(el, handler, opts = {}) {
     if (!el) return;
     const passive = opts.passive ?? true;
     let locked = false;
 
     const fire = (e) => {
-      // защита от двойного срабатывания (pointerup+click)
       if (locked) return;
       locked = true;
       setTimeout(() => (locked = false), 350);
@@ -63,7 +61,6 @@
       try { handler(e); } catch {}
     };
 
-    // pointer is best; then touch; then click as fallback
     el.addEventListener("pointerup", fire, { passive });
     el.addEventListener("touchend", fire, { passive });
     el.addEventListener("click", fire, { passive });
@@ -92,7 +89,6 @@
     const dbgTheme = qs("#dbgTheme");
     if (dbgTheme) dbgTheme.textContent = tg.colorScheme ?? "—";
 
-    // Telegram native colors (если доступно)
     try { tg.setBackgroundColor?.(p.bg_color || "#07070b"); } catch {}
     try { tg.setHeaderColor?.(p.secondary_bg_color || p.bg_color || "#07070b"); } catch {}
   }
@@ -182,7 +178,6 @@
   }
 
   function setActiveTopTabs(tab) {
-    // если вдруг у тебя включены верхние tabs (в другом варианте HTML)
     qsa(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   }
 
@@ -195,11 +190,28 @@
 
     updateTelegramButtons();
 
-    // premium-feel (мягко возвращаем наверх)
     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
   }
 
   // ---------- Payload / sendData ----------
+  function toRouterProfile() {
+    // 🔥 КЛЮЧЕВО: router.py ждёт "difficulty", а UI держит "mode".
+    // Делаем совместимость на 100%: отправляем difficulty=mode, и оставляем mode как доп поле.
+    return {
+      game: state.game,
+      platform: state.platform,
+      input: state.input,
+      difficulty: state.mode,   // ✅ FIX
+      voice: state.voice,
+      role: state.role,
+      bf6_class: state.bf6_class,
+      zombies_map: state.zombies_map,
+
+      // дополнительное поле (не мешает, но помогает будущим версиям)
+      mode: state.mode
+    };
+  }
+
   function enrichPayload(payload) {
     const initUnsafe = tg?.initDataUnsafe || {};
     return {
@@ -216,8 +228,23 @@
 
   function sendToBot(payload) {
     try {
-      const pack = enrichPayload(payload);
-      const data = JSON.stringify(pack);
+      // мягко нормализуем: если payload.profile — заменяем на router profile
+      const fixed = { ...payload };
+      if (fixed.profile && typeof fixed.profile === "object") {
+        fixed.profile = toRouterProfile();
+      }
+
+      const pack = enrichPayload(fixed);
+      let data = JSON.stringify(pack);
+
+      // защита от слишком больших payload (чтобы iOS/Telegram не "проглатывал")
+      const MAX = 15000;
+      if (data.length > MAX) {
+        // режем самые жирные поля
+        if (typeof pack.text === "string") pack.text = pack.text.slice(0, 4000);
+        if (typeof pack.note === "string") pack.note = pack.note.slice(0, 4000);
+        data = JSON.stringify(pack).slice(0, MAX);
+      }
 
       if (!tg?.sendData) {
         haptic("notif", "error");
@@ -247,13 +274,11 @@
   function updateTelegramButtons() {
     if (!tg) return;
 
-    // BackButton
     try {
       if (currentTab !== "home") tg.BackButton.show();
       else tg.BackButton.hide();
     } catch {}
 
-    // MainButton text
     try {
       tg.MainButton.setParams({
         is_visible: true,
@@ -269,14 +294,13 @@
     if (tgButtonsWired) return;
     tgButtonsWired = true;
 
-    // MainButton click (one handler, uses currentTab)
     try {
       tg.MainButton.offClick?.();
       tg.MainButton.onClick(() => {
         haptic("impact", "medium");
 
         if (currentTab === "settings") {
-          sendToBot({ type: "set_profile", profile: state });
+          sendToBot({ type: "set_profile", profile: state }); // profile → будет нормализован в sendToBot()
           return;
         }
         if (currentTab === "coach") {
@@ -300,9 +324,7 @@
       });
     } catch {}
 
-    // BackButton click (one handler)
     try {
-      // у BackButton нет нормального offClick во всех версиях, поэтому делаем один раз
       tg.BackButton.onClick(() => {
         haptic("impact", "light");
         selectTab("home");
@@ -332,7 +354,6 @@
       haptic("impact", "light");
       onPick(btn.dataset.value);
 
-      // корректно подсвечиваем по value (не по “эта кнопка”)
       setActiveSeg(rootId, btn.dataset.value);
 
       setChipText();
@@ -343,7 +364,6 @@
 
   // ---------- Nav wiring (bottom + top) ----------
   function wireNav() {
-    // bottom bar
     qsa(".nav-btn").forEach((btn) => {
       onTap(btn, () => {
         haptic("impact", "light");
@@ -351,7 +371,6 @@
       });
     });
 
-    // top tabs (если есть в другом HTML)
     qsa(".tab").forEach((btn) => {
       onTap(btn, () => {
         haptic("impact", "light");
@@ -429,7 +448,6 @@
       sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
     });
 
-    // ✅ был баг "clicks" — у тебя уже исправлено, но тут оставляем правильно
     onTap(qs("#btnOpenSettings"), () => openBotMenuHint("settings"));
 
     onTap(qs("#btnApplyProfile"), () => {
@@ -460,14 +478,12 @@
 
   // ---------- Build tag (to kill cache confusion) ----------
   function ensureBuildTag() {
-    // 1) если есть #buildTag — обновим
     const buildTag = qs("#buildTag");
     if (buildTag) {
       buildTag.textContent = `build v${VERSION}`;
       return;
     }
 
-    // 2) если нет — аккуратно добавим внизу (в foot-left)
     const footLeft = qs(".foot-left");
     if (footLeft) {
       const span = document.createElement("span");
@@ -507,12 +523,10 @@
     if (dbgInit) dbgInit.textContent = (tg.initData ? "ok" : "empty");
     if (statOnline) statOnline.textContent = "ONLINE";
 
-    // Поднимаем “дороговизну” ощущений: чтобы нативные кнопки точно были активны
     updateTelegramButtons();
   }
 
   async function boot() {
-    // ждём DOM (iOS WebView иногда грузит JS до элементов)
     if (document.readyState !== "complete" && document.readyState !== "interactive") {
       await new Promise((r) => document.addEventListener("DOMContentLoaded", r, { once: true }));
     }
@@ -548,7 +562,6 @@
     wireHeaderChips();
     wireButtons();
 
-    // стартуем с home
     selectTab("home");
   }
 
