@@ -3,51 +3,42 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="color-scheme" content="dark light" />
-  <meta name="theme-color" content="#07070b" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="format-detection" content="telephone=no" />
-
+  <meta name="color-scheme" content="dark light">
   <title>BLACK CROWN OPS — Mini App</title>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-  <!-- ✅ cache-bust MUST match app.js VERSION mindset -->
-  <link rel="stylesheet" href="./style.css?v=1.0.3" />
+  <!-- cache-bust -->
+  <link rel="stylesheet" href="./style.css?v=1.0.9" />
 </head>
 
 <body>
-  <!-- BACKGROUND FX -->
-  <div class="bg" aria-hidden="true">
+  <div class="bg">
     <div class="stars"></div>
     <div class="nebula"></div>
     <div class="gridfx"></div>
   </div>
 
-  <!-- TOP -->
   <header class="top">
-    <div class="brand" role="banner" aria-label="BLACK CROWN OPS">
-      <div class="logo" aria-hidden="true">👑</div>
+    <div class="brand">
+      <div class="logo">👑</div>
       <div class="brand-text">
         <div class="title">BLACK CROWN OPS</div>
-        <!-- ✅ removed "cosmic" -->
         <div class="sub">premium • FPS coach</div>
       </div>
     </div>
 
-    <div class="chip-row" role="group" aria-label="Быстрые переключатели">
-      <button class="chip" id="chipVoice" type="button" aria-label="Голос">🤝 Тиммейт</button>
-      <button class="chip" id="chipMode" type="button" aria-label="Режим мышления">🧠 Normal</button>
-      <button class="chip" id="chipPlatform" type="button" aria-label="Платформа">🖥 PC</button>
+    <div class="chip-row">
+      <button class="chip" id="chipVoice" type="button">🤝 Тиммейт</button>
+      <button class="chip" id="chipMode" type="button">🧠 Normal</button>
+      <button class="chip" id="chipPlatform" type="button">🖥 PC</button>
     </div>
   </header>
 
-  <main class="wrap" role="main">
-    <!-- HERO -->
-    <section class="hero card" aria-label="Штаб управления">
+  <main class="wrap">
+    <section class="hero card">
       <div class="hero-left">
         <div class="hero-kicker">Твой штаб управления</div>
         <div class="hero-title">Доминируй. Учись. Выигрывай.</div>
@@ -55,31 +46,26 @@
           Быстрый доступ к тренировкам, настройкам, VOD-разбору и Zombies-гайдам.
           Всё синхронизируется с профилем в боте.
         </div>
-        <div class="hero-actions" role="group" aria-label="Действия">
+        <div class="hero-actions">
           <button class="btn ghost" id="btnShare" type="button">📤 Share</button>
           <button class="btn ghost" id="btnClose" type="button">✖ Close</button>
-        </div>
-
-        <!-- ✅ Telegram-only hint (shows even before JS) -->
-        <div class="hint" style="margin-top:10px;">
-          Подсказка: Mini App должен быть открыт <b>внутри Telegram</b>. Иначе часть функций будет недоступна.
         </div>
       </div>
 
       <div class="hero-right">
-        <div class="stat" aria-label="Статус">
+        <div class="stat">
           <div class="stat-label">Статус</div>
           <div class="stat-value" id="statOnline">ONLINE</div>
         </div>
-        <div class="stat" aria-label="Сессия">
+        <div class="stat">
           <div class="stat-label">Сессия</div>
           <div class="stat-value" id="statSession">SYNC</div>
         </div>
 
-        <div class="premium cardlite" aria-label="Premium">
+        <div class="premium cardlite">
           <div class="premium-title">💎 Premium</div>
-          <div class="premium-desc">Оплата через бота (Invoice/Stars). Mini App отправит команду.</div>
-          <div class="actions" role="group" aria-label="Покупка">
+          <div class="premium-desc">Оплата через бота (Invoice). Mini App отправит команду.</div>
+          <div class="actions">
             <button class="btn primary" id="btnBuyMonth" type="button">Купить • Month</button>
             <button class="btn" id="btnBuyLife" type="button">Купить • Lifetime</button>
           </div>
@@ -88,10 +74,10 @@
     </section>
 
     <!-- HOME -->
-    <section class="grid tabpane active" id="tab-home" aria-label="Главная">
+    <section class="grid tabpane active" id="tab-home">
       <div class="card">
         <div class="card-title">🚀 Быстрые действия</div>
-        <div class="actions" role="group" aria-label="Действия">
+        <div class="actions">
           <button class="btn primary" id="btnOpenBot" type="button">Открыть меню бота</button>
           <button class="btn" id="btnSync" type="button">Синхронизировать профиль</button>
           <button class="btn" id="btnPremium" type="button">Premium Hub</button>
@@ -103,7 +89,7 @@
 
       <div class="card">
         <div class="card-title">🎮 Игра</div>
-        <div class="seg" id="segGame" role="group" aria-label="Выбор игры">
+        <div class="seg" id="segGame">
           <button class="seg-btn active" data-value="Warzone" type="button">🔥 Warzone</button>
           <button class="seg-btn" data-value="BO7" type="button">💣 BO7</button>
           <button class="seg-btn" data-value="BF6" type="button">🪖 BF6</button>
@@ -117,7 +103,7 @@
       <div class="card">
         <div class="card-title">🧠 Быстрый запрос (1 строка)</div>
         <textarea id="inputOneLine" class="input" rows="3" placeholder="Игра | input | где умираешь | цель"></textarea>
-        <div class="actions" role="group" aria-label="Отправка">
+        <div class="actions">
           <button class="btn primary" id="btnSendOneLine" type="button">Отправить в бота</button>
           <button class="btn ghost" id="btnClearOneLine" type="button">Очистить</button>
         </div>
@@ -125,23 +111,23 @@
     </section>
 
     <!-- COACH -->
-    <section class="grid tabpane" id="tab-coach" aria-label="Тренировка">
+    <section class="grid tabpane" id="tab-coach">
       <div class="card">
         <div class="card-title">🎯 План тренировки (20 минут)</div>
         <div class="list">
-          <div class="li"><span class="dot" aria-hidden="true"></span>5 мин — контроль (разминка)</div>
-          <div class="li"><span class="dot" aria-hidden="true"></span>10 мин — слабое место (аим/мувмент/позиционка)</div>
-          <div class="li"><span class="dot" aria-hidden="true"></span>5 мин — закрепление в бою</div>
+          <div class="li"><span class="dot"></span>5 мин — контроль (разминка)</div>
+          <div class="li"><span class="dot"></span>10 мин — слабое место (аим/мувмент/позиционка)</div>
+          <div class="li"><span class="dot"></span>5 мин — закрепление в бою</div>
         </div>
 
         <div class="card-sub">Выбери фокус</div>
-        <div class="seg" id="segFocus" role="group" aria-label="Фокус тренировки">
+        <div class="seg" id="segFocus">
           <button class="seg-btn active" data-value="aim" type="button">🎯 Aim</button>
           <button class="seg-btn" data-value="movement" type="button">🧠 Мувмент</button>
           <button class="seg-btn" data-value="position" type="button">🗺 Позиционка</button>
         </div>
 
-        <div class="actions" role="group" aria-label="Тренировка">
+        <div class="actions">
           <button class="btn primary" id="btnSendPlan" type="button">Сгенерировать план в боте</button>
           <button class="btn" id="btnOpenTraining" type="button">Открыть “🎯 Тренировка”</button>
         </div>
@@ -149,7 +135,7 @@
 
       <div class="card">
         <div class="card-title">😈 Режим мышления</div>
-        <div class="seg" id="segMode" role="group" aria-label="Режим мышления">
+        <div class="seg" id="segMode">
           <button class="seg-btn active" data-value="Normal" type="button">🧠 Normal</button>
           <button class="seg-btn" data-value="Pro" type="button">🔥 Pro</button>
           <button class="seg-btn" data-value="Demon" type="button">😈 Demon</button>
@@ -159,17 +145,17 @@
     </section>
 
     <!-- VOD -->
-    <section class="grid tabpane" id="tab-vod" aria-label="VOD">
+    <section class="grid tabpane" id="tab-vod">
       <div class="card">
         <div class="card-title">🎬 VOD: разбор без видео</div>
         <div class="hint">Кинь 3 таймкода и что хотел сделать — бот разберёт решения.</div>
         <div class="grid2">
-          <input class="input" id="vod1" placeholder="00:12" inputmode="numeric" />
-          <input class="input" id="vod2" placeholder="01:40" inputmode="numeric" />
-          <input class="input" id="vod3" placeholder="03:05" inputmode="numeric" />
+          <input class="input" id="vod1" placeholder="00:12" />
+          <input class="input" id="vod2" placeholder="01:40" />
+          <input class="input" id="vod3" placeholder="03:05" />
         </div>
         <textarea class="input" id="vodNote" rows="3" placeholder="Что ты хотел сделать / какой был план"></textarea>
-        <div class="actions" role="group" aria-label="VOD действия">
+        <div class="actions">
           <button class="btn primary" id="btnSendVod" type="button">Отправить в бота</button>
           <button class="btn" id="btnOpenVod" type="button">Открыть “🎬 VOD”</button>
         </div>
@@ -177,14 +163,14 @@
     </section>
 
     <!-- SETTINGS -->
-    <section class="grid tabpane" id="tab-settings" aria-label="Настройки">
+    <section class="grid tabpane" id="tab-settings">
       <div class="card">
         <div class="card-title">⚙️ Профиль</div>
 
         <div class="grid2">
           <div class="field">
             <div class="label">Platform</div>
-            <div class="seg" id="segPlatform" role="group" aria-label="Платформа">
+            <div class="seg" id="segPlatform">
               <button class="seg-btn active" data-value="PC" type="button">🖥 PC</button>
               <button class="seg-btn" data-value="PlayStation" type="button">🎮 PS</button>
               <button class="seg-btn" data-value="Xbox" type="button">🎮 Xbox</button>
@@ -193,7 +179,7 @@
 
           <div class="field">
             <div class="label">Input</div>
-            <div class="seg" id="segInput" role="group" aria-label="Input">
+            <div class="seg" id="segInput">
               <button class="seg-btn" data-value="KBM" type="button">⌨️ KBM</button>
               <button class="seg-btn active" data-value="Controller" type="button">🎮 Controller</button>
             </div>
@@ -202,13 +188,13 @@
 
         <div class="field">
           <div class="label">Voice</div>
-          <div class="seg" id="segVoice" role="group" aria-label="Голос">
+          <div class="seg" id="segVoice">
             <button class="seg-btn active" data-value="TEAMMATE" type="button">🤝 Тиммейт</button>
             <button class="seg-btn" data-value="COACH" type="button">📚 Коуч</button>
           </div>
         </div>
 
-        <div class="actions" role="group" aria-label="Сохранение">
+        <div class="actions">
           <button class="btn primary" id="btnApplyProfile" type="button">Применить и сохранить</button>
           <button class="btn" id="btnOpenSettings" type="button">Открыть “⚙️ Настройки”</button>
         </div>
@@ -216,31 +202,26 @@
 
       <div class="card">
         <div class="card-title">🧠 Диагностика</div>
-        <div class="list mono" aria-label="Диагностика">
+        <div class="list mono">
           <div class="li">user_id: <span id="dbgUser">—</span></div>
           <div class="li">chat: <span id="dbgChat">—</span></div>
           <div class="li">theme: <span id="dbgTheme">—</span></div>
           <div class="li">initData: <span id="dbgInit">—</span></div>
         </div>
-
-        <!-- ✅ stronger fallback note -->
-        <div class="hint">
-          Если initData = empty — ты открыл не из Telegram. Открой из бота кнопкой 🛰 MINI APP.
-        </div>
-
+        <div class="hint">Если initData = empty — ты открыл не из Telegram.</div>
         <div class="hint" id="buildTag" style="margin-top:8px; opacity:.85;">build —</div>
       </div>
     </section>
 
     <!-- ZOMBIES -->
-    <section class="grid tabpane" id="tab-zombies" aria-label="Zombies">
+    <section class="grid tabpane" id="tab-zombies">
       <div class="card">
         <div class="card-title">🧟 Zombies: штаб</div>
-        <div class="seg" id="segZMap" role="group" aria-label="Карта Zombies">
+        <div class="seg" id="segZMap">
           <button class="seg-btn active" data-value="Ashes" type="button">🧟 Ashes</button>
           <button class="seg-btn" data-value="Astra" type="button">🧟 Astra</button>
         </div>
-        <div class="actions" role="group" aria-label="Zombies действия">
+        <div class="actions">
           <button class="btn primary" id="btnOpenZombies" type="button">Открыть Zombies в боте</button>
           <button class="btn" id="btnZPerks" type="button">Перки</button>
           <button class="btn" id="btnZLoadout" type="button">Оружие</button>
@@ -251,42 +232,33 @@
       </div>
     </section>
 
-    <footer class="foot" role="contentinfo">
+    <footer class="foot">
       <div class="foot-left">— BCO 😈</div>
       <div class="foot-right"></div>
     </footer>
   </main>
 
-  <!-- ✅ iOS bottom tabbar (premium) -->
   <nav class="bottombar" aria-label="Навигация">
     <button class="nav-btn active" data-tab="home" type="button" aria-selected="true">
-      <span class="nav-ico" aria-hidden="true">⭐</span><span class="nav-txt">Главная</span>
+      <span class="nav-ico">⭐</span><span class="nav-txt">Главная</span>
     </button>
     <button class="nav-btn" data-tab="coach" type="button" aria-selected="false">
-      <span class="nav-ico" aria-hidden="true">🎯</span><span class="nav-txt">Тренировка</span>
+      <span class="nav-ico">🎯</span><span class="nav-txt">Тренировка</span>
     </button>
     <button class="nav-btn" data-tab="vod" type="button" aria-selected="false">
-      <span class="nav-ico" aria-hidden="true">🎬</span><span class="nav-txt">VOD</span>
+      <span class="nav-ico">🎬</span><span class="nav-txt">VOD</span>
     </button>
     <button class="nav-btn" data-tab="settings" type="button" aria-selected="false">
-      <span class="nav-ico" aria-hidden="true">⚙️</span><span class="nav-txt">Настройки</span>
+      <span class="nav-ico">⚙️</span><span class="nav-txt">Настройки</span>
     </button>
     <button class="nav-btn" data-tab="zombies" type="button" aria-selected="false">
-      <span class="nav-ico" aria-hidden="true">🧟</span><span class="nav-txt">Zombies</span>
+      <span class="nav-ico">🧟</span><span class="nav-txt">Zombies</span>
     </button>
   </nav>
 
-  <div class="toast" id="toast" role="status" aria-live="polite">OK</div>
-
-  <noscript>
-    <div style="padding:16px; font-family:Inter,system-ui; color:#fff;">
-      Нужно включить JavaScript, иначе Mini App не работает.
-    </div>
-  </noscript>
+  <div class="toast" id="toast">OK</div>
 
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
-  <!-- ✅ cache-bust -->
-  <script src="./app.js?v=1.0.3"></script>
+  <script src="./app.js?v=1.0.9"></script>
 </body>
 </html>
