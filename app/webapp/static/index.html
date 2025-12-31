@@ -10,10 +10,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-  <!-- cache-bust -->
-    <link rel="stylesheet" href="./style.css?v=__BUILD__" />
-...
-  <script src="./app.js?v=__BUILD__"></script>
+  <!-- ✅ cache-bust (SERVER заменит __BUILD__) -->
+  <link rel="stylesheet" href="./style.css?v=__BUILD__" />
 </head>
 
 <body>
@@ -211,7 +209,9 @@
           <div class="li">initData: <span id="dbgInit">—</span></div>
         </div>
         <div class="hint">Если initData = empty — ты открыл не из Telegram.</div>
-        <div class="hint" id="buildTag" style="margin-top:8px; opacity:.85;">build —</div>
+
+        <!-- ✅ build tag -->
+        <div class="hint" id="buildTag" style="margin-top:8px; opacity:.85;">build __BUILD__</div>
       </div>
     </section>
 
@@ -260,7 +260,9 @@
 
   <div class="toast" id="toast">OK</div>
 
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="./app.js?v=1.0.9"></script>
+  <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+
+  <!-- ✅ cache-bust (SERVER заменит __BUILD__) -->
+  <script src="./app.js?v=__BUILD__" defer></script>
 </body>
 </html>
