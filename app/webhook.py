@@ -78,6 +78,7 @@ def create_app() -> FastAPI:
 
     # =========================================================
     # TELEGRAM WEBHOOK (НЕ ТРОГАЕМ)
+    # + ДОБАВЛЯЕМ MINI APP -> BOT (web_app_data) ПЕРЕХВАТ (SAFE)
     # =========================================================
     @app.post("/tg/webhook", include_in_schema=False)
     async def telegram_webhook(
@@ -91,6 +92,41 @@ def create_app() -> FastAPI:
         raw = await request.json()
         upd = Update.parse(raw)
 
+        # =========================================================
+        # MINI APP -> BOT (web_app_data)
+        # Если Mini App делает tg.sendData(...),
+        # Telegram присылает message.web_app_data.data
+        # Мы перехватываем и отдаём управление Router-у,
+        # но НЕ ЛОМАЕМ обычные апдейты.
+        # =========================================================
+        try:
+            msg = getattr(upd, "message", None)
+            web_app_data = getattr(msg, "web_app_data", None) if msg else None
+
+            data_raw = None
+            if web_app_data:
+                # поддержка и dict, и pydantic-like объекта
+                if isinstance(web_app_data, dict):
+                    data_raw = web_app_data.get("data")
+                else:
+                    data_raw = getattr(web_app_data, "data", None)
+
+            if data_raw:
+                handler = getattr(router, "handle_webapp_data", None)
+                if callable(handler):
+                    try:
+                        await handler(upd, data_raw)
+                        return JSONResponse({"ok": True})
+                    except Exception as e:
+                        log.exception("handle_webapp_data crashed: %s", e)
+                        # падаем обратно в обычный пайплайн (не ломаем)
+                else:
+                    # Router ещё не умеет web_app_data — просто лог
+                    log.warning("Router has no handle_webapp_data() yet (web_app_data received)")
+        except Exception as e:
+            log.exception("web_app_data pre-handler crashed: %s", e)
+
+        # обычный пайплайн
         try:
             await router.handle_update(upd)
         except Exception as e:
