@@ -135,8 +135,9 @@
     const root = qs(rootId);
     if (!root) return;
     root.querySelectorAll(".seg-btn").forEach(b => {
-      b.classList.toggle("active", b.dataset.value === value);
-      b.setAttribute("aria-pressed", b.dataset.value === value ? "true" : "false");
+      const on = b.dataset.value === value;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
     });
   }
 
@@ -153,7 +154,7 @@
     setActiveNav(tab);
     updateTelegramButtons(tab);
 
-    // лёгкий “premium” эффект: при смене вкладки чуть подскроллить вверх
+    // premium-feel
     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
   }
 
@@ -173,11 +174,13 @@
     root.addEventListener("click", async (e) => {
       const btn = e.target.closest(".seg-btn");
       if (!btn) return;
+
       haptic("impact", "light");
       onPick(btn.dataset.value);
 
       root.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("active", b === btn));
       setChipText();
+
       await saveState();
       toast("Сохранено ✅");
     });
@@ -221,13 +224,11 @@
   function updateTelegramButtons(activeTab) {
     if (!tg) return;
 
-    // BackButton
     try {
       if (activeTab !== "home") tg.BackButton.show();
       else tg.BackButton.hide();
     } catch {}
 
-    // MainButton
     try {
       tg.MainButton.setParams({
         is_visible: true,
@@ -239,7 +240,7 @@
           "💎 Premium"
       });
 
-      tg.MainButton.offClick?.(); // если поддерживается
+      tg.MainButton.offClick?.();
       tg.MainButton.onClick(() => {
         haptic("impact", "medium");
 
@@ -337,7 +338,9 @@
     qs("#btnSync")?.addEventListener("click", () => sendToBot({ type: "sync_request" }));
 
     qs("#btnOpenTraining")?.addEventListener("click", () => openBotMenuHint("training"));
-    qs("#btnSendPlan")?.addEventListener("click", () => sendToBot({ type: "training_plan", focus: state.focus, profile: state }));
+    qs("#btnSendPlan")?.addEventListener("click", () =>
+      sendToBot({ type: "training_plan", focus: state.focus, profile: state })
+    );
 
     qs("#btnOpenVod")?.addEventListener("click", () => openBotMenuHint("vod"));
     qs("#btnSendVod")?.addEventListener("click", () => {
@@ -348,7 +351,7 @@
       sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
     });
 
-    // ✅ ВОТ ТУТ БЫЛ ТВОЙ БАГ: "clicks" -> "click"
+    // ✅ фикс: было "clicks"
     qs("#btnOpenSettings")?.addEventListener("click", () => openBotMenuHint("settings"));
 
     qs("#btnApplyProfile")?.addEventListener("click", () => {
@@ -356,14 +359,26 @@
     });
 
     // Zombies shortcuts
-    qs("#btnOpenZombies")?.addEventListener("click", () => sendToBot({ type: "zombies_open", map: state.zombies_map }));
-    qs("#btnZPerks")?.addEventListener("click", () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map }));
-    qs("#btnZLoadout")?.addEventListener("click", () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map }));
-    qs("#btnZEggs")?.addEventListener("click", () => sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map }));
-    qs("#btnZRound")?.addEventListener("click", () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map }));
-    qs("#btnZTips")?.addEventListener("click", () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map }));
+    qs("#btnOpenZombies")?.addEventListener("click", () =>
+      sendToBot({ type: "zombies_open", map: state.zombies_map })
+    );
+    qs("#btnZPerks")?.addEventListener("click", () =>
+      sendToBot({ type: "zombies", action: "perks", map: state.zombies_map })
+    );
+    qs("#btnZLoadout")?.addEventListener("click", () =>
+      sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map })
+    );
+    qs("#btnZEggs")?.addEventListener("click", () =>
+      sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map })
+    );
+    qs("#btnZRound")?.addEventListener("click", () =>
+      sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map })
+    );
+    qs("#btnZTips")?.addEventListener("click", () =>
+      sendToBot({ type: "zombies", action: "tips", map: state.zombies_map })
+    );
 
-    // Premium “buy” (пока просто команда в бот)
+    // Premium “buy”
     qs("#btnBuyMonth")?.addEventListener("click", () => sendToBot({ type: "pay", plan: "premium_month" }));
     qs("#btnBuyLife")?.addEventListener("click", () => sendToBot({ type: "pay", plan: "premium_lifetime" }));
 
@@ -390,11 +405,9 @@
     tg.ready();
     tg.expand();
 
-    // Theme sync
     applyTelegramTheme();
     try { tg.onEvent("themeChanged", applyTelegramTheme); } catch {}
 
-    // Back button behavior
     try {
       tg.BackButton.onClick(() => {
         haptic("impact", "light");
@@ -402,7 +415,6 @@
       });
     } catch {}
 
-    // Debug
     const dbgUser = qs("#dbgUser");
     const dbgChat = qs("#dbgChat");
     const dbgInit = qs("#dbgInit");
@@ -416,6 +428,10 @@
 
   async function boot() {
     initTelegram();
+
+    // build tag (чтобы видеть, что кэш пробит)
+    const buildTag = qs("#buildTag");
+    if (buildTag) buildTag.textContent = `build v${VERSION}`;
 
     const src = await loadState();
     const statSession = qs("#statSession");
