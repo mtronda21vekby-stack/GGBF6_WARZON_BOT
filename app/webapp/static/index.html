@@ -6,12 +6,15 @@
   <meta name="color-scheme" content="dark light">
   <title>BLACK CROWN OPS — Mini App</title>
 
+  <!-- ✅ критично для Telegram iOS: фиксируем базу -->
+  <base href="/webapp/">
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-  <!-- ✅ cache-bust (SERVER заменит __BUILD__) -->
-  <link rel="stylesheet" href="./style.css?v=__BUILD__" />
+  <!-- ✅ cache-bust + абсолютный путь -->
+  <link rel="stylesheet" href="/webapp/style.css?v=__BUILD__" />
 </head>
 
 <body>
@@ -209,9 +212,7 @@
           <div class="li">initData: <span id="dbgInit">—</span></div>
         </div>
         <div class="hint">Если initData = empty — ты открыл не из Telegram.</div>
-
-        <!-- ✅ build tag -->
-        <div class="hint" id="buildTag" style="margin-top:8px; opacity:.85;">build __BUILD__</div>
+        <div class="hint" id="buildTag" style="margin-top:8px; opacity:.85;">build: __BUILD__</div>
       </div>
     </section>
 
@@ -260,9 +261,9 @@
 
   <div class="toast" id="toast">OK</div>
 
-  <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-  <!-- ✅ cache-bust (SERVER заменит __BUILD__) -->
-  <script src="./app.js?v=__BUILD__" defer></script>
+  <!-- ✅ cache-bust + абсолютный путь -->
+  <script src="/webapp/app.js?v=__BUILD__"></script>
 </body>
 </html>
