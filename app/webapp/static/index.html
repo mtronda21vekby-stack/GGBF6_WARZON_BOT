@@ -6,15 +6,12 @@
   <meta name="color-scheme" content="dark light">
   <title>BLACK CROWN OPS — Mini App</title>
 
-  <!-- ✅ фикс путей: чтобы /webapp и /webapp/ работали одинаково -->
-  <base href="/webapp/">
-
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
   <!-- ✅ cache-bust -->
-  <link rel="stylesheet" href="/webapp/style.css?v=1.0.2" />
+  <link rel="stylesheet" href="./style.css?v=1.0.2" />
 </head>
 
 <body>
@@ -212,6 +209,9 @@
           <div class="li">initData: <span id="dbgInit">—</span></div>
         </div>
         <div class="hint">Если initData = empty — ты открыл не из Telegram.</div>
+
+        <!-- ✅ build tag -->
+        <div class="hint" id="buildTag" style="margin-top:8px; opacity:.85;">build —</div>
       </div>
     </section>
 
@@ -236,38 +236,34 @@
 
     <footer class="foot">
       <div class="foot-left">— BCO 😈</div>
-      <div class="foot-right" id="buildTag">build —</div>
+      <div class="foot-right"></div>
     </footer>
   </main>
 
   <!-- ✅ Нижняя iOS-tabbar (premium) -->
   <nav class="bottombar" aria-label="Навигация">
     <button class="nav-btn active" data-tab="home" type="button" aria-selected="true">
-      <span class="nav-ico">⭐</span>
-      <span class="nav-txt">Главная</span>
+      <span class="nav-ico">⭐</span><span class="nav-txt">Главная</span>
     </button>
     <button class="nav-btn" data-tab="coach" type="button" aria-selected="false">
-      <span class="nav-ico">🎯</span>
-      <span class="nav-txt">Тренировка</span>
+      <span class="nav-ico">🎯</span><span class="nav-txt">Тренировка</span>
     </button>
     <button class="nav-btn" data-tab="vod" type="button" aria-selected="false">
-      <span class="nav-ico">🎬</span>
-      <span class="nav-txt">VOD</span>
+      <span class="nav-ico">🎬</span><span class="nav-txt">VOD</span>
     </button>
     <button class="nav-btn" data-tab="settings" type="button" aria-selected="false">
-      <span class="nav-ico">⚙️</span>
-      <span class="nav-txt">Настройки</span>
+      <span class="nav-ico">⚙️</span><span class="nav-txt">Настройки</span>
     </button>
     <button class="nav-btn" data-tab="zombies" type="button" aria-selected="false">
-      <span class="nav-ico">🧟</span>
-      <span class="nav-txt">Zombies</span>
+      <span class="nav-ico">🧟</span><span class="nav-txt">Zombies</span>
     </button>
   </nav>
 
   <div class="toast" id="toast">OK</div>
 
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
   <!-- ✅ cache-bust -->
-  <script src="/webapp/app.js?v=1.0.2"></script>
+  <script src="./app.js?v=1.0.2"></script>
 </body>
 </html>
