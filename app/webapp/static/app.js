@@ -1,5 +1,8 @@
-// static/app.js
+// app/webapp/static/app.js
 (() => {
+  // ✅ health indicator for index.html
+  window.__BCO_JS_OK__ = true;
+
   const tg = window.Telegram?.WebApp;
 
   const VERSION = "1.0.4";
@@ -7,8 +10,8 @@
 
   const defaults = {
     game: "Warzone",
-    focus: "aim", 
-    mode: "Normal",          // UI key (оставляем для сегментов/чипов)
+    focus: "aim",
+    mode: "Normal", // UI key
     platform: "PC",
     input: "Controller",
     voice: "TEAMMATE",
@@ -47,23 +50,35 @@
     setTimeout(() => t.classList.remove("show"), 1700);
   }
 
-  // ---------- FAST TAP (iOS WebView friendly) ----------
-  function onTap(el, handler, opts = {}) {
+  // =========================================================
+  // ✅ FAST TAP (iOS WebView SAFE)
+  // Причина твоего "по кругу": pointerup + touchend + click = triple fire
+  // Делает 1 событие максимум, с блокировкой 350ms.
+  // =========================================================
+  function onTap(el, handler) {
     if (!el) return;
-    const passive = opts.passive ?? true;
+
     let locked = false;
+    const lock = () => {
+      locked = true;
+      setTimeout(() => (locked = false), 350);
+    };
 
     const fire = (e) => {
       if (locked) return;
-      locked = true;
-      setTimeout(() => (locked = false), 350);
-
+      lock();
       try { handler(e); } catch {}
     };
 
-    el.addEventListener("pointerup", fire, { passive });
-    el.addEventListener("touchend", fire, { passive });
-    el.addEventListener("click", fire, { passive });
+    // prefer Pointer Events
+    if (window.PointerEvent) {
+      el.addEventListener("pointerup", fire, { passive: true });
+      return;
+    }
+
+    // fallback
+    el.addEventListener("touchend", fire, { passive: true });
+    el.addEventListener("click", fire, { passive: true });
   }
 
   // ---------- Theme sync (Telegram -> CSS vars) ----------
@@ -195,19 +210,16 @@
 
   // ---------- Payload / sendData ----------
   function toRouterProfile() {
-    // 🔥 КЛЮЧЕВО: router.py ждёт "difficulty", а UI держит "mode".
-    // Делаем совместимость на 100%: отправляем difficulty=mode, и оставляем mode как доп поле.
+    // router ждёт difficulty, UI держит mode → маппим
     return {
       game: state.game,
       platform: state.platform,
       input: state.input,
-      difficulty: state.mode,   // ✅ FIX
+      difficulty: state.mode, // ✅ FIX
       voice: state.voice,
       role: state.role,
       bf6_class: state.bf6_class,
       zombies_map: state.zombies_map,
-
-      // дополнительное поле (не мешает, но помогает будущим версиям)
       mode: state.mode
     };
   }
@@ -220,7 +232,8 @@
       meta: {
         user_id: initUnsafe?.user?.id ?? null,
         chat_id: initUnsafe?.chat?.id ?? null,
-        platform: tg?.platform ?? null
+        platform: tg?.platform ?? null,
+        build: (window.__BCO_BUILD__ || null)
       },
       ...payload
     };
@@ -228,8 +241,9 @@
 
   function sendToBot(payload) {
     try {
-      // мягко нормализуем: если payload.profile — заменяем на router profile
       const fixed = { ...payload };
+
+      // если profile есть → конвертим в router-profile
       if (fixed.profile && typeof fixed.profile === "object") {
         fixed.profile = toRouterProfile();
       }
@@ -237,10 +251,9 @@
       const pack = enrichPayload(fixed);
       let data = JSON.stringify(pack);
 
-      // защита от слишком больших payload (чтобы iOS/Telegram не "проглатывал")
+      // защита от слишком больших payload
       const MAX = 15000;
       if (data.length > MAX) {
-        // режем самые жирные поля
         if (typeof pack.text === "string") pack.text = pack.text.slice(0, 4000);
         if (typeof pack.note === "string") pack.note = pack.note.slice(0, 4000);
         data = JSON.stringify(pack).slice(0, MAX);
@@ -264,12 +277,15 @@
     }
   }
 
+  // ✅ не шлём левую структуру, всегда profile: state (sendToBot нормализует)
   function openBotMenuHint(target) {
-    sendToBot({ type: "set_profile", profile: { ...state, difficulty: state.mode } });
+    sendToBot({ type: "open", target, profile: state });
   }
 
   // ---------- Telegram native buttons (NO double handlers) ----------
   let tgButtonsWired = false;
+  let tgMainHandler = null;
+  let tgBackHandler = null;
 
   function updateTelegramButtons() {
     if (!tg) return;
@@ -294,42 +310,54 @@
     if (tgButtonsWired) return;
     tgButtonsWired = true;
 
+    // main
+    tgMainHandler = () => {
+      haptic("impact", "medium");
+
+      if (currentTab === "settings") {
+        sendToBot({ type: "set_profile", profile: state });
+        return;
+      }
+      if (currentTab === "coach") {
+        sendToBot({ type: "training_plan", focus: state.focus, profile: state });
+        return;
+      }
+      if (currentTab === "vod") {
+        const t1 = (qs("#vod1")?.value || "").trim();
+        const t2 = (qs("#vod2")?.value || "").trim();
+        const t3 = (qs("#vod3")?.value || "").trim();
+        const note = (qs("#vodNote")?.value || "").trim();
+        sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
+        return;
+      }
+      if (currentTab === "zombies") {
+        sendToBot({ type: "zombies_open", map: state.zombies_map, profile: state });
+        return;
+      }
+
+      openBotMenuHint("premium");
+    };
+
+    // back
+    tgBackHandler = () => {
+      haptic("impact", "light");
+      selectTab("home");
+    };
+
     try {
-      tg.MainButton.offClick?.();
-      tg.MainButton.onClick(() => {
-        haptic("impact", "medium");
-
-        if (currentTab === "settings") {
-          sendToBot({ type: "set_profile", profile: state }); // profile → будет нормализован в sendToBot()
-          return;
-        }
-        if (currentTab === "coach") {
-          sendToBot({ type: "training_plan", focus: state.focus, profile: state });
-          return;
-        }
-        if (currentTab === "vod") {
-          const t1 = (qs("#vod1")?.value || "").trim();
-          const t2 = (qs("#vod2")?.value || "").trim();
-          const t3 = (qs("#vod3")?.value || "").trim();
-          const note = (qs("#vodNote")?.value || "").trim();
-          sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
-          return;
-        }
-        if (currentTab === "zombies") {
-          sendToBot({ type: "zombies_open", map: state.zombies_map });
-          return;
-        }
-
-        openBotMenuHint("premium");
-      });
-    } catch {}
+      // telegram sdk может не поддерживать offClick стабильно → делаем безопасно
+      tg.MainButton.offClick?.(tgMainHandler);
+      tg.MainButton.onClick(tgMainHandler);
+    } catch {
+      try { tg.MainButton.onClick(tgMainHandler); } catch {}
+    }
 
     try {
-      tg.BackButton.onClick(() => {
-        haptic("impact", "light");
-        selectTab("home");
-      });
-    } catch {}
+      tg.BackButton.offClick?.(tgBackHandler);
+      tg.BackButton.onClick(tgBackHandler);
+    } catch {
+      try { tg.BackButton.onClick(tgBackHandler); } catch {}
+    }
   }
 
   // ---------- Share ----------
@@ -342,24 +370,36 @@
     }
   }
 
-  // ---------- Segments wiring ----------
+  // ---------- Segments wiring (pointer-safe) ----------
   function wireSeg(rootId, onPick) {
     const root = qs(rootId);
     if (!root) return;
 
-    root.addEventListener("click", async (e) => {
-      const btn = e.target.closest(".seg-btn");
-      if (!btn) return;
-
+    const handler = async (btn) => {
       haptic("impact", "light");
       onPick(btn.dataset.value);
 
       setActiveSeg(rootId, btn.dataset.value);
-
       setChipText();
+
       await saveState();
       toast("Сохранено ✅");
-    }, { passive: true });
+    };
+
+    // use pointerup / click safely
+    if (window.PointerEvent) {
+      root.addEventListener("pointerup", (e) => {
+        const btn = e.target.closest(".seg-btn");
+        if (!btn) return;
+        handler(btn);
+      }, { passive: true });
+    } else {
+      root.addEventListener("click", (e) => {
+        const btn = e.target.closest(".seg-btn");
+        if (!btn) return;
+        handler(btn);
+      }, { passive: true });
+    }
   }
 
   // ---------- Nav wiring (bottom + top) ----------
@@ -434,7 +474,7 @@
 
     onTap(qs("#btnOpenBot"), () => openBotMenuHint("main"));
     onTap(qs("#btnPremium"), () => openBotMenuHint("premium"));
-    onTap(qs("#btnSync"), () => sendToBot({ type: "sync_request" }));
+    onTap(qs("#btnSync"), () => sendToBot({ type: "sync_request", profile: state }));
 
     onTap(qs("#btnOpenTraining"), () => openBotMenuHint("training"));
     onTap(qs("#btnSendPlan"), () => sendToBot({ type: "training_plan", focus: state.focus, profile: state }));
@@ -449,22 +489,19 @@
     });
 
     onTap(qs("#btnOpenSettings"), () => openBotMenuHint("settings"));
-
-    onTap(qs("#btnApplyProfile"), () => {
-      sendToBot({ type: "set_profile", profile: state });
-    });
+    onTap(qs("#btnApplyProfile"), () => sendToBot({ type: "set_profile", profile: state }));
 
     // Zombies shortcuts
-    onTap(qs("#btnOpenZombies"), () => sendToBot({ type: "zombies_open", map: state.zombies_map }));
-    onTap(qs("#btnZPerks"), () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map }));
-    onTap(qs("#btnZLoadout"), () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map }));
-    onTap(qs("#btnZEggs"), () => sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map }));
-    onTap(qs("#btnZRound"), () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map }));
-    onTap(qs("#btnZTips"), () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map }));
+    onTap(qs("#btnOpenZombies"), () => sendToBot({ type: "zombies_open", map: state.zombies_map, profile: state }));
+    onTap(qs("#btnZPerks"), () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map, profile: state }));
+    onTap(qs("#btnZLoadout"), () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map, profile: state }));
+    onTap(qs("#btnZEggs"), () => sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map, profile: state }));
+    onTap(qs("#btnZRound"), () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map, profile: state }));
+    onTap(qs("#btnZTips"), () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map, profile: state }));
 
     // Premium buy
-    onTap(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month" }));
-    onTap(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime" }));
+    onTap(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month", profile: state }));
+    onTap(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime", profile: state }));
 
     // Share
     onTap(qs("#btnShare"), () => {
@@ -476,11 +513,19 @@
     });
   }
 
-  // ---------- Build tag (to kill cache confusion) ----------
+  // ---------- Build tag (anti-cache truth) ----------
   function ensureBuildTag() {
+    const buildFromIndex = (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__")
+      ? window.__BCO_BUILD__
+      : null;
+
+    const txt = buildFromIndex
+      ? `build ${buildFromIndex} • v${VERSION}`
+      : `v${VERSION}`;
+
     const buildTag = qs("#buildTag");
     if (buildTag) {
-      buildTag.textContent = `build v${VERSION}`;
+      buildTag.textContent = txt;
       return;
     }
 
@@ -492,7 +537,7 @@
       span.style.marginTop = "8px";
       span.style.opacity = "0.65";
       span.style.fontSize = "12px";
-      span.textContent = `build v${VERSION}`;
+      span.textContent = txt;
       footLeft.appendChild(span);
     }
   }
