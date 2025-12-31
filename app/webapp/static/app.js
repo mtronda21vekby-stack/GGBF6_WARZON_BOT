@@ -2,12 +2,12 @@
 (() => {
   const tg = window.Telegram?.WebApp;
 
-  const VERSION = "1.0.3";
+  const VERSION = "1.0.4";
   const STORAGE_KEY = "bco_state_v1";
 
   const defaults = {
     game: "Warzone",
-    focus: "aim",
+    focus: "aim", 
     mode: "Normal",          // UI key (оставляем для сегментов/чипов)
     platform: "PC",
     input: "Controller",
@@ -265,7 +265,7 @@
   }
 
   function openBotMenuHint(target) {
-    sendToBot({ type: "nav", target });
+    sendToBot({ type: "set_profile", profile: { ...state, difficulty: state.mode } });
   }
 
   // ---------- Telegram native buttons (NO double handlers) ----------
