@@ -3,11 +3,80 @@
 from __future__ import annotations
 
 import os
+import time
+from pathlib import Path
 
 
 # =========================
 # MINI APP URL (Telegram WebApp)
 # =========================
+
+# маленький кэш, чтобы не rglob на каждый апдейт (но почти realtime)
+_BUILD_CACHE_VALUE: str | None = None
+_BUILD_CACHE_AT: float = 0.0
+_BUILD_CACHE_TTL_SEC = 2.0
+
+
+def _static_dir() -> Path:
+    """
+    app/ui/quickbar.py -> app/webapp/static
+    """
+    app_dir = Path(__file__).resolve().parents[1]  # .../app
+    return (app_dir / "webapp" / "static").resolve()
+
+
+def _scan_static_mtime() -> int:
+    """
+    max mtime (секунды) по всем файлам в app/webapp/static/*
+    Меняется при любом обновлении любого файла.
+    """
+    static_dir = _static_dir()
+    if not static_dir.exists():
+        return int(time.time())
+
+    newest = 0
+    try:
+        for p in static_dir.rglob("*"):
+            if p.is_file():
+                try:
+                    mt = int(p.stat().st_mtime)
+                    if mt > newest:
+                        newest = mt
+                except Exception:
+                    continue
+    except Exception:
+        return int(time.time())
+
+    return newest or int(time.time())
+
+
+def _webapp_build() -> str:
+    """
+    BUILD берём из:
+      1) WEBAPP_BUILD_ID (ручной override)
+      2) RENDER_GIT_COMMIT (Render deploy)
+      3) max mtime по static/*
+    """
+    global _BUILD_CACHE_VALUE, _BUILD_CACHE_AT
+
+    now = time.time()
+    if _BUILD_CACHE_VALUE and (now - _BUILD_CACHE_AT) < _BUILD_CACHE_TTL_SEC:
+        return _BUILD_CACHE_VALUE
+
+    v = (os.getenv("WEBAPP_BUILD_ID") or "").strip()
+    if not v:
+        v = (os.getenv("RENDER_GIT_COMMIT") or "").strip()
+
+    if not v:
+        v = str(_scan_static_mtime())
+
+    v = v[:12] if len(v) > 12 else v
+
+    _BUILD_CACHE_VALUE = v
+    _BUILD_CACHE_AT = now
+    return v
+
+
 def _webapp_url() -> str:
     """
     Берём URL мини-аппа из ENV:
@@ -17,10 +86,7 @@ def _webapp_url() -> str:
 
     ВАЖНО (Telegram iOS cache):
       добавляем авто cache-bust параметр v=BUILD
-      BUILD берём из:
-        - WEBAPP_BUILD_ID (если задашь руками)
-        - RENDER_GIT_COMMIT (Render обычно даёт на деплой)
-      иначе ничего не добавляем (чтобы не ломать).
+      BUILD = _webapp_build() (см. выше)
     """
     url = (os.getenv("WEBAPP_URL") or "").strip()
     if not url:
@@ -30,11 +96,11 @@ def _webapp_url() -> str:
     if not url:
         return ""
 
-    build = (os.getenv("WEBAPP_BUILD_ID") or os.getenv("RENDER_GIT_COMMIT") or "").strip()
+    # всегда добавляем v=BUILD (если смогли получить build)
+    build = _webapp_build().strip()
     if build:
-        b = build[:12]
         sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}v={b}"
+        url = f"{url}{sep}v={build}"
 
     return url
 
