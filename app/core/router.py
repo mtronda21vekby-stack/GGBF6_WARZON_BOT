@@ -433,7 +433,6 @@ class Router:
         msg = upd.get("message") or upd.get("edited_message")
         chat_id = _safe_get(msg, ["chat", "id"]) if msg else None
         if not chat_id:
-            # если вдруг прилетело без message (редко), просто игнор
             return
         await self._on_webapp_data(int(chat_id), str(data_raw or ""))
 
@@ -954,6 +953,11 @@ class Router:
             return
 
         try:
+            log.info("WEBAPP_DATA chat=%s raw=%s", chat_id, raw[:1200])
+        except Exception:
+            pass
+
+        try:
             payload = json.loads(raw)
         except Exception:
             payload = {"type": "text", "text": raw}
@@ -961,15 +965,12 @@ class Router:
         if not isinstance(payload, dict):
             payload = {"type": "text", "text": raw}
 
-        # ---- normalize: sometimes app packs {meta, v, t, ...}
         ptype = str(payload.get("type") or "text").strip().lower()
 
-        # profile may come as payload.profile or flat keys
         profile_from_payload = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
         if not isinstance(profile_from_payload, dict):
             profile_from_payload = {}
 
-        # helper: apply profile dict (max safe)
         def apply_profile_dict(pdict: dict) -> None:
             if not isinstance(pdict, dict):
                 return
@@ -977,12 +978,10 @@ class Router:
                 if key in pdict and str(pdict.get(key)).strip():
                     self._set_profile_field(chat_id, key, str(pdict.get(key)).strip())
 
-        # 1) If payload carries profile, apply it first (so next actions are consistent)
         if profile_from_payload:
             apply_profile_dict(profile_from_payload)
             prof = self._get_profile(chat_id)
 
-        # Also accept flat keys (some clients may send directly)
         flat_profile_like = {}
         for k in ("game", "platform", "input", "difficulty", "voice", "role", "bf6_class", "zombies_map"):
             if k in payload and str(payload.get(k)).strip():
@@ -991,7 +990,6 @@ class Router:
             apply_profile_dict(flat_profile_like)
             prof = self._get_profile(chat_id)
 
-        # ---------- ROUTES ----------
         if ptype == "nav":
             target = str(payload.get("target") or "").strip().lower()
 
@@ -1004,13 +1002,29 @@ class Router:
                 return
 
             if target in ("training", "coach"):
-                # “open training” = показать экран тренировки в боте
-                await self._send_main(chat_id, _wrap_premium("🎯 Открыл: Тренировка.\nЖми кнопки / отправь запрос одной строкой.", profile=prof))
-                await self._send(chat_id, "🎯 Тренировка:", kb_main())
+                await self._send_main(
+                    chat_id,
+                    _wrap_premium(
+                        "🎯 Тренировка открыта.\n\n"
+                        "Формат одной строкой:\n"
+                        "Игра | input | фокус (aim/movement/position) | где умираешь\n\n"
+                        "Или жми «Сгенерировать план» в Mini App.",
+                        profile=prof,
+                    ),
+                )
                 return
 
             if target in ("vod",):
-                await self._send_main(chat_id, _wrap_premium("🎬 Открыл: VOD.\nКинь 3 таймкода + план — разберу.", profile=prof))
+                await self._send_main(
+                    chat_id,
+                    _wrap_premium(
+                        "🎬 VOD открыт.\n\n"
+                        "Кинь 3 таймкода (00:12 / 01:40 / 03:05)\n"
+                        "+ что хотел сделать.\n\n"
+                        "Сделаю элитный разбор решений.",
+                        profile=prof,
+                    ),
+                )
                 return
 
             if target in ("settings",):
@@ -1024,7 +1038,6 @@ class Router:
                     await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
                 return
 
-            # fallback: unknown target
             await self._send_main(chat_id, _wrap_premium(f"🛰 NAV: неизвестная цель: {target}", profile=prof))
             return
 
@@ -1032,11 +1045,17 @@ class Router:
             pdict = payload.get("profile") if isinstance(payload.get("profile"), dict) else payload
             apply_profile_dict(pdict if isinstance(pdict, dict) else {})
             prof = self._get_profile(chat_id)
-            await self._send_main(chat_id, _wrap_premium("✅ Профиль применён из MINI APP.\nТеперь кнопки в боте будут работать под новые настройки.", profile=prof))
+            await self._send_main(
+                chat_id,
+                _wrap_premium(
+                    "✅ Профиль применён из MINI APP.\n"
+                    "Теперь бот будет отвечать под новые настройки.",
+                    profile=prof,
+                ),
+            )
             return
 
         if ptype in ("sync_request", "sync"):
-            # Mini App сам хранит state в Cloud/Local, но полезно отдать текущий профиль
             await self._on_profile(chat_id)
             return
 
@@ -1045,13 +1064,11 @@ class Router:
             if not text:
                 await self._send_main(chat_id, _wrap_premium("🧠 One-line пустой. Заполни строку и отправь.", profile=prof))
                 return
-            # отправляем в мозг как есть (это и есть формат “1 строка”)
             await self._chat_to_brain(chat_id, text)
             return
 
         if ptype in ("training_plan", "train", "training"):
             focus = _norm_focus(str(payload.get("focus") or "aim"))
-            # жёсткий детерминированный план (всегда работает)
             plan = _make_training_plan(prof, focus)
             await self._send_main(chat_id, _wrap_premium(plan, profile=prof))
             return
@@ -1063,13 +1080,15 @@ class Router:
             times = [str(x).strip() for x in times if str(x).strip()]
             note = str(payload.get("note") or payload.get("text") or "").strip()
 
-            if self.brain and hasattr(self.brain, "reply"):
-                # в brain отправляем максимально структурированный запрос
+            ai_key = (getattr(self.settings, "openai_api_key", "") or "").strip() if self.settings else ""
+            ai_enabled = bool(getattr(self.settings, "ai_enabled", True)) if self.settings else False
+            ai_on = bool(ai_enabled and ai_key and self.brain and hasattr(self.brain, "reply"))
+
+            if ai_on:
                 prompt = _vod_prompt(prof, times, note)
                 await self._chat_to_brain(chat_id, prompt)
                 return
 
-            # fallback без AI
             tline = ", ".join(times) if times else "—"
             await self._send_main(
                 chat_id,
@@ -1078,7 +1097,7 @@ class Router:
                         "🎬 VOD получен.\n\n"
                         f"Таймкоды: {tline}\n"
                         f"План/заметка: {note or '—'}\n\n"
-                        "Чтобы сделать элитный разбор автоматически — включи AI (📊 Статус)."
+                        "Хочешь автоматический ‘Demon-разбор’ — включаем AI (📊 Статус)."
                     ),
                     profile=prof,
                 ),
@@ -1136,7 +1155,6 @@ class Router:
                     await self._send(chat_id, self._missing_presets_msg("zombies", _ZOMBIES_IMPORT_ERR), kb_zombies_hub())
                 return
 
-            # unknown zombies action -> open hub
             if zombies_hub_text:
                 await self._send(chat_id, _wrap_premium(zombies_hub_text(prof), profile=prof), kb_zombies_hub())
             else:
@@ -1145,17 +1163,15 @@ class Router:
 
         if ptype in ("pay", "payment"):
             plan = str(payload.get("plan") or "").strip()
-            # Здесь реальная оплата через Invoice будет отдельным модулем/сервисом.
-            # Сейчас: максимум UX — подтверждение + направление в Premium Hub.
-            pretty = "Month" if "month" in plan else ("Lifetime" if "life" in plan else plan or "—")
+            pretty = "Month" if "month" in plan else ("Lifetime" if "life" in plan else (plan or "—"))
+
             await self._send(
                 chat_id,
                 _wrap_premium(
                     (
                         f"💎 Запрос на оплату принят.\n"
                         f"План: {pretty}\n\n"
-                        "Следующий шаг (Invoice):\n"
-                        "• я создам счёт в боте и ты оплатишь в 2 тапа.\n\n"
+                        "Следующий шаг: подключаем Invoice/Stars.\n"
                         "Сейчас открываю Premium Hub 👇"
                     ),
                     profile=prof,
@@ -1164,8 +1180,6 @@ class Router:
             )
             return
 
-        # ---------- fallback ----------
-        # если пришёл какой-то текст — отправим в мозг, иначе покажем payload
         text = str(payload.get("text") or payload.get("value") or "").strip()
         if text:
             await self._chat_to_brain(chat_id, text)
