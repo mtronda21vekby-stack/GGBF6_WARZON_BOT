@@ -4,27 +4,30 @@
 
   const tg = window.Telegram?.WebApp;
 
-  const VERSION = "1.2.0";
+  const VERSION = "1.3.0";
   const STORAGE_KEY = "bco_state_v1";
   const CHAT_KEY = "bco_chat_v1";
 
   const defaults = {
     game: "Warzone",
     focus: "aim",
-    mode: "Normal", // UI key
+    mode: "Normal",
     platform: "PC",
     input: "Controller",
     voice: "TEAMMATE",
     role: "Flex",
     bf6_class: "Assault",
-    zombies_map: "Ashes"
+    zombies_map: "Ashes",
+
+    // ✅ NEW: Zombies character cosmetics
+    character: "male", // male | female
+    skin: "default"    // depends on character
   };
 
   const state = { ...defaults };
 
-  // chat state
   const chat = {
-    history: [], // [{role:'user'|'assistant', text:'...', ts:number}]
+    history: [],
     lastAskAt: 0
   };
 
@@ -40,7 +43,7 @@
     try {
       if (!tg?.HapticFeedback) return;
       if (type === "impact") tg.HapticFeedback.impactOccurred(style);
-      if (type === "notif") tg.HapticFeedback.notificationOccurred(style); // success|warning|error
+      if (type === "notif") tg.HapticFeedback.notificationOccurred(style);
     } catch {}
   }
 
@@ -49,7 +52,7 @@
     if (!t) return;
     t.textContent = text;
     t.classList.add("show");
-    setTimeout(() => t.classList.remove("show"), 1700);
+    setTimeout(() => t.classList.remove("show"), 1600);
   }
 
   // =========================================================
@@ -61,7 +64,7 @@
     let locked = false;
     const lock = () => {
       locked = true;
-      setTimeout(() => (locked = false), 320);
+      setTimeout(() => (locked = false), 280);
     };
 
     const fire = (e) => {
@@ -70,18 +73,16 @@
       try { handler(e); } catch {}
     };
 
-    // iOS иногда "съедает" pointerup на вложенных элементах → даём fallback
     if (window.PointerEvent) {
       el.addEventListener("pointerup", fire, { passive: true });
       el.addEventListener("click", fire, { passive: true });
       return;
     }
-
     el.addEventListener("touchend", fire, { passive: true });
     el.addEventListener("click", fire, { passive: true });
   }
 
-  // ---------- Theme sync (Telegram -> CSS vars) ----------
+  // ---------- Theme sync ----------
   function applyTelegramTheme() {
     if (!tg) return;
     const p = tg.themeParams || {};
@@ -96,7 +97,6 @@
       "--tg-btn-text": p.button_text_color,
       "--tg-secondary-bg": p.secondary_bg_color
     };
-
     Object.entries(map).forEach(([k, v]) => { if (v) root.style.setProperty(k, v); });
 
     const dbgTheme = qs("#dbgTheme");
@@ -240,7 +240,7 @@
       game: state.game,
       platform: state.platform,
       input: state.input,
-      difficulty: state.mode, // router expects difficulty
+      difficulty: state.mode,
       voice: state.voice,
       role: state.role,
       bf6_class: state.bf6_class,
@@ -264,12 +264,9 @@
     };
   }
 
-  // ✅ FIX: profile всегда должен уходить в формате router, а не state-объект
   function sendToBot(payload) {
     try {
       const fixed = { ...payload };
-
-      // если в payload есть profile — подменяем на router-формат
       if ("profile" in fixed) fixed.profile = toRouterProfile();
 
       const pack = enrichPayload(fixed);
@@ -290,7 +287,6 @@
 
       tg.sendData(data);
       haptic("notif", "success");
-
       const statSession = qs("#statSession");
       if (statSession) statSession.textContent = "SENT";
       toast("Отправлено в бота 🚀");
@@ -300,8 +296,8 @@
     }
   }
 
-  // ✅ FIX: router ждёт type="nav", а не "open"
   function openBotMenuHint(target) {
+    // ✅ router ждёт type="nav"
     sendToBot({ type: "nav", target, profile: true });
   }
 
@@ -336,14 +332,8 @@
     tgMainHandler = () => {
       haptic("impact", "medium");
 
-      if (currentTab === "settings") {
-        sendToBot({ type: "set_profile", profile: true });
-        return;
-      }
-      if (currentTab === "coach") {
-        sendToBot({ type: "training_plan", focus: state.focus, profile: true });
-        return;
-      }
+      if (currentTab === "settings") { sendToBot({ type: "set_profile", profile: true }); return; }
+      if (currentTab === "coach") { sendToBot({ type: "training_plan", focus: state.focus, profile: true }); return; }
       if (currentTab === "vod") {
         const t1 = (qs("#vod1")?.value || "").trim();
         const t2 = (qs("#vod2")?.value || "").trim();
@@ -356,7 +346,6 @@
         sendToBot({ type: "zombies_open", map: state.zombies_map, profile: true });
         return;
       }
-
       openBotMenuHint("premium");
     };
 
@@ -384,7 +373,6 @@
 
   // =========================================================
   // ✅ MINI APP CHAT (BOT REPLIES IN APP)
-  // endpoint: POST /webapp/api/ask
   // =========================================================
   function chatLogEl() { return qs("#chatLog"); }
 
@@ -470,7 +458,6 @@
       try { root.scrollTop = root.scrollHeight; } catch {}
       return;
     }
-
     if (existing) existing.remove();
   }
 
@@ -634,7 +621,7 @@
   }
 
   // =========================================================
-  // 🎯 GAME #1: AIM TRIAL (ARCADE)
+  // 🎯 GAME #1: AIM TRIAL (kept)
   // =========================================================
   const aim = {
     running: false,
@@ -684,9 +671,7 @@
   function aimUpdateUI() {
     const { stat, btnStart, btnStop, btnSend } = aimEls();
     const acc = aim.shots ? Math.round((aim.hits / aim.shots) * 100) : 0;
-    const tLeft = aim.running
-      ? Math.max(0, aim.durationMs - (now() - aim.startedAt))
-      : 0;
+    const tLeft = aim.running ? Math.max(0, aim.durationMs - (now() - aim.startedAt)) : 0;
 
     if (stat) stat.textContent = aim.running
       ? `⏱ ${(tLeft / 1000).toFixed(1)}s • 🎯 ${aim.hits}/${aim.shots} • Acc ${acc}%`
@@ -742,179 +727,1549 @@
   }
 
   // =========================================================
-  // 🧟 GAME #2: ZOMBIES SURVIVAL (ARCADE + ROGUELIKE)
+  // 🧟 GAME #2: ZOMBIES SURVIVAL — FULLSCREEN 2D CANVAS
+  //  - Arcade + Roguelike
+  //  - Joystick + Shoot button
+  //  - Bullets visible
+  //  - Shop + Perks + Weapons
+  //  - Character (male/female) + Skins
+  //  - Persist selection (state + cloud/local)
   // =========================================================
-  const zgame = {
-    running: false,
-    startedAt: 0,
-    mode: "arcade", // arcade | roguelike
-    wave: 1,
-    kills: 0,
-    coins: 0,
-    weapon: "SMG",
-    perks: [],
-    hp: 100,
-    timerId: null
-  };
+  const Z = (() => {
+    // ---------- helpers ----------
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const dist2 = (ax, ay, bx, by) => {
+      const dx = ax - bx, dy = ay - by;
+      return dx * dx + dy * dy;
+    };
 
-  function zEls() {
+    // ---------- data ----------
+    const SKINS = {
+      male: [
+        { id: "default", name: "Rookie", colors: ["#9ca3af", "#111827"] },
+        { id: "shadow",  name: "Shadow", colors: ["#111827", "#000000"] },
+        { id: "neon",    name: "Neon",   colors: ["#22d3ee", "#0a0a12"] },
+        { id: "royal",   name: "Royal",  colors: ["#8b5cf6", "#0b1020"] }
+      ],
+      female: [
+        { id: "default", name: "Valkyrie", colors: ["#e5e7eb", "#111827"] },
+        { id: "ember",   name: "Ember",    colors: ["#fb7185", "#0a0a12"] },
+        { id: "aqua",    name: "Aqua",     colors: ["#22d3ee", "#0b1020"] },
+        { id: "royal",   name: "Royal",    colors: ["#8b5cf6", "#0b1020"] }
+      ]
+    };
+
+    const WEAPONS = {
+      Pistol:  { type: "pistol",  dmg: 18,  rpm: 320, speed: 880, spread: 0.06, mag: 12, reload: 1.25,  pierce: 0, crit: 1.7 },
+      SMG:     { type: "smg",     dmg: 13,  rpm: 720, speed: 980, spread: 0.09, mag: 30, reload: 1.35,  pierce: 0, crit: 1.6 },
+      AR:      { type: "ar",      dmg: 17,  rpm: 600, speed: 1050,spread: 0.07, mag: 30, reload: 1.55,  pierce: 0, crit: 1.75 },
+      Shotgun: { type: "shotgun", dmg: 8,   rpm: 110, speed: 920, spread: 0.25, mag: 6,  reload: 1.9,   pierce: 0, crit: 1.5, pellets: 8 },
+      LMG:     { type: "lmg",     dmg: 16,  rpm: 520, speed: 980, spread: 0.10, mag: 60, reload: 2.15,  pierce: 0, crit: 1.6 },
+      Sniper:  { type: "sniper",  dmg: 70,  rpm: 70,  speed: 1400,spread: 0.02, mag: 5,  reload: 2.0,   pierce: 1, crit: 2.2 },
+      Burst:   { type: "burst",   dmg: 15,  rpm: 780, speed: 1050,spread: 0.08, mag: 24, reload: 1.55,  pierce: 0, crit: 1.75, burst: 3 },
+      Launcher:{ type: "launcher",dmg: 55,  rpm: 55,  speed: 680, spread: 0.02, mag: 2,  reload: 2.4,   pierce: 0, crit: 1.0, splash: 90 }
+    };
+
+    const PERKS = [
+      { id: "Jug",       name: "🧪 Jug",        desc: "+Max HP",          cost: 18, apply: (run) => { run.maxHp += 40; run.hp = Math.min(run.hp + 30, run.maxHp); } },
+      { id: "Speed",     name: "⚡ Speed",      desc: "+Reload +RPM",     cost: 16, apply: (run) => { run.reloadMul *= 0.82; run.rpmMul *= 1.10; } },
+      { id: "StaminUp",  name: "🏃 Stamin-Up",  desc: "+Move speed",      cost: 14, apply: (run) => { run.moveMul *= 1.16; } },
+      { id: "DoubleTap", name: "🔥 Double Tap", desc: "+Damage",          cost: 18, apply: (run) => { run.dmgMul *= 1.16; } },
+      { id: "Deadshot",  name: "🎯 Deadshot",   desc: "+Crit chance",     cost: 16, apply: (run) => { run.critChance = Math.min(0.35, run.critChance + 0.08); } },
+      { id: "Armor",     name: "🛡 Armor",      desc: "+Armor",           cost: 14, apply: (run) => { run.armor = Math.min(run.armor + 35, 120); } },
+      { id: "Mag",       name: "📦 Mag+",       desc: "+Mag size",        cost: 15, apply: (run) => { run.magMul *= 1.18; } },
+      { id: "Pierce",    name: "🗡 Pierce",     desc: "Bullets pierce",   cost: 20, apply: (run) => { run.pierceBonus += 1; } },
+      { id: "Lucky",     name: "🍀 Lucky",      desc: "+Coins per kill",  cost: 15, apply: (run) => { run.coinMul *= 1.15; } }
+    ];
+
+    // ---------- runtime ----------
+    let overlay = null;
+    let canvas = null;
+    let ctx = null;
+    let raf = 0;
+
+    const ui = {
+      modeArcade: null,
+      modeRogue: null,
+      btnStart: null,
+      btnClose: null,
+      btnShop: null,
+      btnShoot: null,
+      btnReload: null,
+      btnSend: null,
+      hud: null,
+      toast: null
+    };
+
+    const input = {
+      joyActive: false,
+      joyId: null,
+      joyCx: 0, joyCy: 0,
+      joyX: 0, joyY: 0,
+      shootHeld: false,
+      aimX: 0, aimY: 0
+    };
+
+    const run = {
+      running: false,
+      mode: "arcade",
+      startedAt: 0,
+      endedAt: 0,
+
+      // progress
+      wave: 1,
+      kills: 0,
+      coins: 0,
+
+      // player stats
+      x: 0, y: 0,
+      r: 14,
+      hp: 100,
+      maxHp: 100,
+      armor: 0,
+
+      // multipliers/perks/upgrades
+      perks: [],
+      dmgMul: 1,
+      rpmMul: 1,
+      moveMul: 1,
+      reloadMul: 1,
+      magMul: 1,
+      pierceBonus: 0,
+      critChance: 0.10,
+      coinMul: 1,
+
+      // weapon
+      weaponName: "SMG",
+      ammo: 0,
+      mag: 0,
+      reloading: false,
+      reloadAt: 0,
+      lastShotAt: 0,
+
+      // entities
+      zombies: [],
+      bullets: [],
+      particles: [],
+
+      // difficulty
+      spawnBudget: 0,
+      spawnAt: 0,
+      waveEndsAt: 0,
+
+      // camera/scale
+      w: 0,
+      h: 0,
+      dpr: 1
+    };
+
+    function zToast(t) {
+      if (ui.toast) {
+        ui.toast.textContent = t;
+        ui.toast.style.opacity = "1";
+        clearTimeout(ui.toast._t);
+        ui.toast._t = setTimeout(() => { ui.toast.style.opacity = "0"; }, 1100);
+      } else {
+        toast(t);
+      }
+    }
+
+    function injectStyleOnce() {
+      if (qs("#bco-zstyle")) return;
+      const st = document.createElement("style");
+      st.id = "bco-zstyle";
+      st.textContent = `
+        .bcoz-ov{
+          position:fixed; inset:0; z-index:9999;
+          background: radial-gradient(1200px 800px at 20% 0%, rgba(139,92,246,.25), transparent 60%),
+                      radial-gradient(900px 700px at 90% 30%, rgba(34,211,238,.18), transparent 55%),
+                      linear-gradient(180deg, #07070b, #0a0a12);
+          color: rgba(255,255,255,.92);
+          font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+          overflow:hidden;
+          touch-action:none;
+        }
+        .bcoz-top{
+          position:absolute; left:0; right:0; top:0;
+          padding: calc(12px + env(safe-area-inset-top,0px)) 12px 10px 12px;
+          display:flex; align-items:center; justify-content:space-between; gap:10px;
+          background: rgba(7,7,11,.55);
+          backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+          border-bottom: 1px solid rgba(255,255,255,.08);
+        }
+        .bcoz-title{ font-weight: 1000; letter-spacing:.2px; font-size: 13px; }
+        .bcoz-sub{ font-weight: 800; font-size: 11px; opacity:.7; margin-top:2px; }
+        .bcoz-left{ display:flex; align-items:center; gap:10px; }
+        .bcoz-badge{
+          width:36px; height:36px; border-radius: 14px;
+          display:grid; place-items:center;
+          background: linear-gradient(135deg, rgba(139,92,246,.35), rgba(34,211,238,.20));
+          border: 1px solid rgba(255,255,255,.12);
+        }
+        .bcoz-btn{
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,.12);
+          background: rgba(255,255,255,.06);
+          color: rgba(255,255,255,.92);
+          padding: 10px 10px;
+          font-weight: 950;
+          font-size: 12px;
+          -webkit-tap-highlight-color: transparent;
+          user-select:none;
+        }
+        .bcoz-btn.primary{
+          border-color: rgba(139,92,246,.45);
+          background: linear-gradient(135deg, rgba(139,92,246,.35), rgba(34,211,238,.18));
+        }
+        .bcoz-btn.small{ padding: 8px 10px; border-radius: 999px; font-size: 11px; }
+        .bcoz-modes{ display:flex; gap:8px; flex-wrap:wrap; }
+        .bcoz-seg{
+          border-radius: 999px; padding: 8px 10px;
+          border: 1px solid rgba(255,255,255,.12);
+          background: rgba(255,255,255,.05);
+          font-weight: 950; font-size: 11px;
+          -webkit-tap-highlight-color: transparent;
+        }
+        .bcoz-seg.active{
+          border-color: rgba(139,92,246,.45);
+          background: linear-gradient(135deg, rgba(139,92,246,.25), rgba(34,211,238,.12));
+        }
+        .bcoz-hud{
+          position:absolute; left:12px; right:12px;
+          top: calc(62px + env(safe-area-inset-top,0px));
+          display:flex; align-items:center; justify-content:space-between; gap:10px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          font-size: 12px; font-weight: 900;
+          padding: 10px 12px;
+          border-radius: 16px;
+          background: rgba(0,0,0,.28);
+          border: 1px solid rgba(255,255,255,.10);
+          backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        }
+        .bcoz-canvas{
+          position:absolute; inset:0;
+          width:100%; height:100%;
+        }
+        .bcoz-joybase{
+          position:absolute;
+          left: 18px;
+          bottom: calc(18px + env(safe-area-inset-bottom,0px));
+          width: 120px; height: 120px;
+          border-radius: 999px;
+          background: rgba(255,255,255,.06);
+          border: 1px solid rgba(255,255,255,.10);
+          backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        }
+        .bcoz-joystick{
+          position:absolute;
+          left: 18px;
+          bottom: calc(18px + env(safe-area-inset-bottom,0px));
+          width: 120px; height: 120px;
+          border-radius: 999px;
+          pointer-events:none;
+        }
+        .bcoz-joyknob{
+          position:absolute;
+          width: 54px; height: 54px;
+          left: 33px; top: 33px;
+          border-radius: 999px;
+          background: linear-gradient(135deg, rgba(139,92,246,.40), rgba(34,211,238,.18));
+          border: 1px solid rgba(255,255,255,.14);
+          box-shadow: 0 14px 35px rgba(0,0,0,.35);
+        }
+        .bcoz-right{
+          position:absolute;
+          right: 18px;
+          bottom: calc(18px + env(safe-area-inset-bottom,0px));
+          display:flex; flex-direction:column; gap:10px;
+          align-items:flex-end;
+        }
+        .bcoz-shoot{
+          width: 90px; height: 90px;
+          border-radius: 999px;
+          display:grid; place-items:center;
+          border: 1px solid rgba(139,92,246,.45);
+          background: linear-gradient(135deg, rgba(139,92,246,.40), rgba(34,211,238,.18));
+          color: rgba(255,255,255,.95);
+          font-weight: 1000;
+          -webkit-tap-highlight-color: transparent;
+          user-select:none;
+        }
+        .bcoz-minirow{ display:flex; gap:10px; }
+        .bcoz-mini{
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,.12);
+          background: rgba(255,255,255,.06);
+          color: rgba(255,255,255,.92);
+          padding: 10px 12px;
+          font-weight: 1000;
+          font-size: 12px;
+          -webkit-tap-highlight-color: transparent;
+          user-select:none;
+        }
+        .bcoz-toast{
+          position:absolute; left:50%;
+          bottom: calc(126px + env(safe-area-inset-bottom,0px));
+          transform: translateX(-50%);
+          padding: 10px 12px;
+          border-radius: 999px;
+          background: rgba(0,0,0,.55);
+          border: 1px solid rgba(255,255,255,.10);
+          font-weight: 1000;
+          opacity:0;
+          transition: opacity .15s ease;
+          pointer-events:none;
+        }
+
+        /* Shop modal */
+        .bcoz-shop{
+          position:absolute; inset:0;
+          background: rgba(0,0,0,.55);
+          backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+          display:none;
+          padding: calc(14px + env(safe-area-inset-top,0px)) 14px calc(14px + env(safe-area-inset-bottom,0px)) 14px;
+        }
+        .bcoz-shop.show{ display:block; }
+        .bcoz-panel{
+          max-width: 740px;
+          margin: 0 auto;
+          border-radius: 18px;
+          background: rgba(255,255,255,.06);
+          border: 1px solid rgba(255,255,255,.12);
+          box-shadow: 0 18px 55px rgba(0,0,0,.55);
+          padding: 14px;
+        }
+        .bcoz-row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
+        .bcoz-grid{ display:grid; gap:10px; margin-top:12px; }
+        .bcoz-item{
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,.12);
+          background: rgba(0,0,0,.18);
+          padding: 12px;
+          display:flex;
+          align-items:flex-start;
+          justify-content:space-between;
+          gap:10px;
+        }
+        .bcoz-item .name{ font-weight: 1000; font-size: 13px; }
+        .bcoz-item .desc{ opacity:.72; font-weight: 800; font-size: 12px; margin-top:4px; line-height:1.25; }
+        .bcoz-item .cost{ font-weight: 1000; opacity:.9; }
+        .bcoz-item .owned{ opacity:.6; font-weight: 1000; }
+        .bcoz-hr{ height:1px; background: rgba(255,255,255,.10); margin: 12px 0; }
+
+        /* Character select */
+        .bcoz-char{
+          position:absolute; inset:0;
+          background: rgba(0,0,0,.50);
+          backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+          display:none;
+          padding: calc(14px + env(safe-area-inset-top,0px)) 14px calc(14px + env(safe-area-inset-bottom,0px)) 14px;
+        }
+        .bcoz-char.show{ display:block; }
+        .bcoz-cards{ display:grid; gap:10px; grid-template-columns: 1fr 1fr; }
+        @media (max-width: 520px){ .bcoz-cards{ grid-template-columns: 1fr; } }
+        .bcoz-card{
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,.12);
+          background: rgba(255,255,255,.06);
+          padding: 12px;
+        }
+        .bcoz-card .ttl{ font-weight: 1000; font-size: 13px; }
+        .bcoz-chiprow{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+        .bcoz-chip{
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,.12);
+          background: rgba(0,0,0,.18);
+          padding: 8px 10px;
+          font-weight: 1000; font-size: 11px;
+          -webkit-tap-highlight-color: transparent;
+        }
+        .bcoz-chip.active{
+          border-color: rgba(139,92,246,.45);
+          background: linear-gradient(135deg, rgba(139,92,246,.25), rgba(34,211,238,.12));
+        }
+      `;
+      document.head.appendChild(st);
+    }
+
+    function buildOverlay() {
+      injectStyleOnce();
+
+      overlay = document.createElement("div");
+      overlay.className = "bcoz-ov";
+      overlay.innerHTML = `
+        <canvas class="bcoz-canvas" id="bcozCanvas"></canvas>
+
+        <div class="bcoz-top">
+          <div class="bcoz-left">
+            <div class="bcoz-badge">🧟</div>
+            <div>
+              <div class="bcoz-title">Zombies Survival</div>
+              <div class="bcoz-sub" id="bcozSub">ARCADE • Fullscreen 2D</div>
+            </div>
+          </div>
+
+          <div class="bcoz-modes">
+            <button class="bcoz-seg active" id="bcozModeArcade" type="button">💥 Arcade</button>
+            <button class="bcoz-seg" id="bcozModeRogue" type="button">😈 Roguelike</button>
+            <button class="bcoz-btn small" id="bcozChar" type="button">🧍 Character</button>
+            <button class="bcoz-btn small" id="bcozSend" type="button">📤 Send</button>
+            <button class="bcoz-btn small" id="bcozClose" type="button">✖</button>
+          </div>
+        </div>
+
+        <div class="bcoz-hud" id="bcozHud">
+          <div id="bcozHudL">HP 100 • Armor 0</div>
+          <div id="bcozHudM">Wave 1 • Kills 0 • 💰 0</div>
+          <div id="bcozHudR">SMG • 30/30</div>
+        </div>
+
+        <div class="bcoz-joybase"></div>
+        <div class="bcoz-joystick" id="bcozJoy">
+          <div class="bcoz-joyknob" id="bcozKnob"></div>
+        </div>
+
+        <div class="bcoz-right">
+          <button class="bcoz-shoot" id="bcozShoot" type="button">FIRE</button>
+          <div class="bcoz-minirow">
+            <button class="bcoz-mini" id="bcozReload" type="button">🔄</button>
+            <button class="bcoz-mini" id="bcozShop" type="button">🛒</button>
+            <button class="bcoz-mini" id="bcozStart" type="button">▶</button>
+          </div>
+        </div>
+
+        <div class="bcoz-toast" id="bcozToast">OK</div>
+
+        <div class="bcoz-shop" id="bcozShopModal" aria-hidden="true">
+          <div class="bcoz-panel">
+            <div class="bcoz-row">
+              <div style="font-weight:1000;">🛒 Shop</div>
+              <div style="opacity:.8; font-weight:1000;" id="bcozCoins">💰 0</div>
+              <button class="bcoz-btn small" id="bcozShopClose" type="button">✖ Close</button>
+            </div>
+
+            <div class="bcoz-hr"></div>
+
+            <div style="font-weight:1000; margin-bottom:8px;">Perks</div>
+            <div class="bcoz-grid" id="bcozPerkList"></div>
+
+            <div class="bcoz-hr"></div>
+
+            <div style="font-weight:1000; margin-bottom:8px;">Weapons</div>
+            <div class="bcoz-grid" id="bcozWeaponList"></div>
+          </div>
+        </div>
+
+        <div class="bcoz-char" id="bcozCharModal" aria-hidden="true">
+          <div class="bcoz-panel">
+            <div class="bcoz-row">
+              <div style="font-weight:1000;">🧍 Character & Skins</div>
+              <button class="bcoz-btn small" id="bcozCharClose" type="button">✖ Close</button>
+            </div>
+
+            <div class="bcoz-hr"></div>
+
+            <div class="bcoz-cards">
+              <div class="bcoz-card">
+                <div class="ttl">Male</div>
+                <div class="bcoz-chiprow" id="bcozMaleSkins"></div>
+              </div>
+
+              <div class="bcoz-card">
+                <div class="ttl">Female</div>
+                <div class="bcoz-chiprow" id="bcozFemaleSkins"></div>
+              </div>
+            </div>
+
+            <div class="hint" style="opacity:.75; margin-top:12px; font-weight:900;">
+              Выбор сохраняется. В игре цвет/аура скина видны.
+            </div>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+
+      canvas = qs("#bcozCanvas");
+      ctx = canvas?.getContext?.("2d", { alpha: true });
+
+      ui.modeArcade = qs("#bcozModeArcade");
+      ui.modeRogue = qs("#bcozModeRogue");
+      ui.btnStart = qs("#bcozStart");
+      ui.btnClose = qs("#bcozClose");
+      ui.btnShop = qs("#bcozShop");
+      ui.btnShoot = qs("#bcozShoot");
+      ui.btnReload = qs("#bcozReload");
+      ui.btnSend = qs("#bcozSend");
+      ui.hud = qs("#bcozHud");
+      ui.toast = qs("#bcozToast");
+
+      // prevent scroll/zoom while in overlay
+      overlay.addEventListener("touchmove", (e) => { e.preventDefault(); }, { passive: false });
+
+      wireOverlayUI();
+      resize();
+      renderPerkShop();
+      renderWeaponShop();
+      renderCharSelect();
+      updateHud();
+    }
+
+    function destroyOverlay() {
+      stop();
+      try { cancelAnimationFrame(raf); } catch {}
+      raf = 0;
+      if (overlay) overlay.remove();
+      overlay = null;
+      canvas = null;
+      ctx = null;
+    }
+
+    function ensureSkinValid() {
+      const arr = SKINS[state.character] || [];
+      if (!arr.find(s => s.id === state.skin)) state.skin = (arr[0]?.id || "default");
+    }
+
+    function getSkin() {
+      ensureSkinValid();
+      const arr = SKINS[state.character] || [];
+      return arr.find(s => s.id === state.skin) || arr[0] || { id: "default", colors: ["#9ca3af", "#111827"] };
+    }
+
+    function resize() {
+      if (!canvas) return;
+      const dpr = Math.max(1, Math.min(2.2, window.devicePixelRatio || 1));
+      run.dpr = dpr;
+
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      run.w = w; run.h = h;
+
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      canvas.style.width = w + "px";
+      canvas.style.height = h + "px";
+
+      if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function setMode(m) {
+      run.mode = m;
+      if (ui.modeArcade) ui.modeArcade.classList.toggle("active", m === "arcade");
+      if (ui.modeRogue) ui.modeRogue.classList.toggle("active", m === "roguelike");
+
+      const sub = qs("#bcozSub");
+      if (sub) sub.textContent = (m === "roguelike")
+        ? "ROGUELIKE • Shop • Permadeath"
+        : "ARCADE • Endless waves";
+
+      zToast(m === "roguelike" ? "Режим: Roguelike 😈" : "Режим: Arcade 💥");
+      haptic("impact", "light");
+      updateHud();
+    }
+
+    function baseWeapon() {
+      const w = WEAPONS[run.weaponName] || WEAPONS.SMG;
+      const mag = Math.max(1, Math.floor(w.mag * run.magMul));
+      return { ...w, mag };
+    }
+
+    function resetRun(hard = true) {
+      const centerX = run.w * 0.5;
+      const centerY = run.h * 0.55;
+
+      run.running = false;
+      run.startedAt = 0;
+      run.endedAt = 0;
+
+      run.wave = 1;
+      run.kills = 0;
+      run.coins = 0;
+
+      run.r = 14;
+      run.x = centerX;
+      run.y = centerY;
+
+      run.maxHp = 100;
+      run.hp = 100;
+      run.armor = 0;
+
+      run.perks = [];
+      run.dmgMul = 1;
+      run.rpmMul = 1;
+      run.moveMul = 1;
+      run.reloadMul = 1;
+      run.magMul = 1;
+      run.pierceBonus = 0;
+      run.critChance = 0.10;
+      run.coinMul = 1;
+
+      run.weaponName = "SMG";
+      run.reloading = false;
+      run.reloadAt = 0;
+      run.lastShotAt = 0;
+
+      run.zombies = [];
+      run.bullets = [];
+      run.particles = [];
+
+      run.spawnBudget = 0;
+      run.spawnAt = now() + 700;
+      run.waveEndsAt = now() + 16000;
+
+      const w = baseWeapon();
+      run.mag = w.mag;
+      run.ammo = w.mag;
+
+      if (!hard) return;
+      input.joyActive = false;
+      input.joyX = 0; input.joyY = 0;
+      input.shootHeld = false;
+      input.aimX = centerX + 80;
+      input.aimY = centerY;
+    }
+
+    function addParticle(x, y, c = "rgba(255,255,255,.8)", n = 10) {
+      for (let i = 0; i < n; i++) {
+        run.particles.push({
+          x, y,
+          vx: (Math.random() * 2 - 1) * 220,
+          vy: (Math.random() * 2 - 1) * 220,
+          life: 0.25 + Math.random() * 0.25,
+          t: 0,
+          c
+        });
+      }
+    }
+
+    function spawnZombie(edge = true) {
+      const side = Math.floor(Math.random() * 4);
+      const pad = 40;
+      let x = 0, y = 0;
+
+      if (edge) {
+        if (side === 0) { x = -pad; y = Math.random() * run.h; }
+        if (side === 1) { x = run.w + pad; y = Math.random() * run.h; }
+        if (side === 2) { x = Math.random() * run.w; y = -pad; }
+        if (side === 3) { x = Math.random() * run.w; y = run.h + pad; }
+      } else {
+        x = Math.random() * run.w;
+        y = Math.random() * run.h;
+      }
+
+      const base = 22 + (run.wave * 1.4);
+      const hp = (run.mode === "roguelike") ? base * 1.12 : base;
+
+      const z = {
+        x, y,
+        r: 16 + Math.random() * 6,
+        hp,
+        maxHp: hp,
+        spd: (run.mode === "roguelike" ? 58 : 52) + run.wave * 0.95 + Math.random() * 10,
+        dmg: (run.mode === "roguelike" ? 10 : 8) + run.wave * 0.12,
+        id: Math.random().toString(16).slice(2)
+      };
+      run.zombies.push(z);
+    }
+
+    function difficultyTick(t) {
+      // wave pacing
+      const waveLen = (run.mode === "roguelike") ? 15000 : 17000;
+      if (t >= run.waveEndsAt && run.running) {
+        run.wave += 1;
+        run.waveEndsAt = t + waveLen;
+
+        // reward
+        const bonus = (run.mode === "roguelike") ? 6 : 4;
+        run.coins += Math.round((bonus + run.wave * 0.6) * run.coinMul);
+
+        zToast(`Wave ${run.wave} 🔥`);
+        haptic("impact", "medium");
+
+        // a bit heal in arcade, less in rogue
+        if (run.mode === "arcade") {
+          run.hp = Math.min(run.maxHp, run.hp + 12);
+          run.armor = Math.min(120, run.armor + 8);
+        } else {
+          run.hp = Math.min(run.maxHp, run.hp + 6);
+        }
+      }
+
+      // spawn pressure
+      const baseInterval = (run.mode === "roguelike") ? 520 : 620;
+      const interval = Math.max(180, baseInterval - run.wave * 14);
+
+      if (t >= run.spawnAt && run.running) {
+        const count = 1 + (run.wave >= 6 ? 1 : 0) + (run.wave >= 12 ? 1 : 0);
+        for (let i = 0; i < count; i++) spawnZombie(true);
+        run.spawnAt = t + interval + Math.random() * 120;
+      }
+
+      // cap entities
+      const cap = (run.mode === "roguelike") ? 70 : 60;
+      if (run.zombies.length > cap) run.zombies.splice(0, run.zombies.length - cap);
+    }
+
+    function canShoot(t) {
+      if (!run.running) return false;
+      if (run.reloading) return false;
+
+      const w = baseWeapon();
+      const rpm = w.rpm * run.rpmMul;
+      const dt = 60000 / Math.max(1, rpm);
+      return (t - run.lastShotAt) >= dt;
+    }
+
+    function startReload(t) {
+      if (!run.running) return;
+      if (run.reloading) return;
+      const w = baseWeapon();
+      if (run.ammo >= w.mag) return;
+
+      run.reloading = true;
+      run.reloadAt = t + (w.reload * run.reloadMul * 1000);
+      zToast("Reload…");
+      haptic("impact", "light");
+    }
+
+    function finishReload() {
+      const w = baseWeapon();
+      run.ammo = w.mag;
+      run.reloading = false;
+      run.reloadAt = 0;
+      zToast("Reloaded ✅");
+      haptic("notif", "success");
+    }
+
+    function shoot(t) {
+      if (!canShoot(t)) return;
+
+      const w = baseWeapon();
+      if (run.ammo <= 0) {
+        startReload(t);
+        haptic("notif", "warning");
+        return;
+      }
+
+      run.lastShotAt = t;
+      run.ammo -= 1;
+
+      // aim direction: towards last aim point; fallback to movement dir
+      let dx = input.aimX - run.x;
+      let dy = input.aimY - run.y;
+      const len = Math.hypot(dx, dy) || 1;
+
+      dx /= len; dy /= len;
+
+      const spread = w.spread;
+      const ang = Math.atan2(dy, dx);
+
+      const pierce = (w.pierce || 0) + run.pierceBonus;
+      const dmgBase = w.dmg * run.dmgMul;
+
+      const mkBullet = (a) => {
+        const vx = Math.cos(a) * w.speed;
+        const vy = Math.sin(a) * w.speed;
+        run.bullets.push({
+          x: run.x + dx * (run.r + 10),
+          y: run.y + dy * (run.r + 10),
+          vx, vy,
+          r: (w.type === "sniper") ? 3.2 : 2.6,
+          life: 1.15,
+          t: 0,
+          dmg: dmgBase,
+          pierce,
+          splash: w.splash || 0
+        });
+      };
+
+      if (w.type === "shotgun" && w.pellets) {
+        for (let i = 0; i < w.pellets; i++) {
+          const a = ang + (Math.random() * 2 - 1) * spread;
+          mkBullet(a);
+        }
+      } else if (w.type === "burst" && w.burst) {
+        // pseudo burst: schedule micro bullets
+        for (let i = 0; i < w.burst; i++) {
+          const delay = i * 30;
+          setTimeout(() => {
+            const a = ang + (Math.random() * 2 - 1) * spread * 0.85;
+            mkBullet(a);
+          }, delay);
+        }
+      } else if (w.type === "launcher") {
+        const a = ang + (Math.random() * 2 - 1) * spread * 0.25;
+        mkBullet(a);
+      } else {
+        const a = ang + (Math.random() * 2 - 1) * spread;
+        mkBullet(a);
+      }
+
+      // recoil feedback
+      haptic("impact", "light");
+    }
+
+    function applySplash(x, y, radius, dmg) {
+      const r2 = radius * radius;
+      for (const z of run.zombies) {
+        const d = dist2(x, y, z.x, z.y);
+        if (d <= r2) {
+          const t = 1 - Math.sqrt(d) / radius;
+          z.hp -= dmg * (0.45 + 0.55 * t);
+        }
+      }
+    }
+
+    function tick(dt, t) {
+      // reload completion
+      if (run.reloading && t >= run.reloadAt) finishReload();
+
+      // movement
+      const moveSpeed = 220 * run.moveMul;
+      run.x = clamp(run.x + input.joyX * moveSpeed * dt, 18, run.w - 18);
+      run.y = clamp(run.y + input.joyY * moveSpeed * dt, 90 + (tg ? 40 : 40), run.h - 24);
+
+      // auto aim: if no aim, aim forward
+      if (!input.aimX && !input.aimY) {
+        input.aimX = run.x + 80;
+        input.aimY = run.y;
+      }
+
+      // shooting (hold)
+      if (input.shootHeld) shoot(t);
+
+      // difficulty & spawns
+      difficultyTick(t);
+
+      // bullets
+      for (let i = run.bullets.length - 1; i >= 0; i--) {
+        const b = run.bullets[i];
+        b.t += dt;
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+
+        if (b.t >= b.life || b.x < -60 || b.y < -60 || b.x > run.w + 60 || b.y > run.h + 60) {
+          run.bullets.splice(i, 1);
+          continue;
+        }
+
+        // collisions
+        let hit = false;
+        for (let j = run.zombies.length - 1; j >= 0; j--) {
+          const z = run.zombies[j];
+          const rr = (z.r + b.r) * (z.r + b.r);
+          if (dist2(b.x, b.y, z.x, z.y) <= rr) {
+            hit = true;
+
+            const crit = (Math.random() < run.critChance) ? (WEAPONS[run.weaponName]?.crit || 1.6) : 1;
+            const dmg = b.dmg * crit;
+
+            z.hp -= dmg;
+
+            if (b.splash) applySplash(b.x, b.y, b.splash, dmg * 0.85);
+
+            addParticle(b.x, b.y, crit > 1 ? "rgba(34,211,238,.9)" : "rgba(255,255,255,.75)", crit > 1 ? 14 : 9);
+
+            // pierce
+            if (b.pierce > 0) {
+              b.pierce -= 1;
+            } else {
+              run.bullets.splice(i, 1);
+            }
+
+            // kill
+            if (z.hp <= 0) {
+              run.zombies.splice(j, 1);
+              run.kills += 1;
+
+              const baseCoin = (run.mode === "roguelike") ? 2 : 1;
+              const add = Math.round(baseCoin * run.coinMul);
+              run.coins += add;
+
+              addParticle(z.x, z.y, "rgba(139,92,246,.85)", 16);
+
+              // tiny heal chance in arcade
+              if (run.mode === "arcade" && Math.random() < 0.06) {
+                run.hp = Math.min(run.maxHp, run.hp + 4);
+              }
+            }
+
+            break;
+          }
+        }
+
+        // launcher bullet explode on first hit (feels good)
+        if (hit && WEAPONS[run.weaponName]?.type === "launcher") {
+          applySplash(b.x, b.y, 120, b.dmg * 1.05);
+          run.bullets.splice(i, 1);
+        }
+      }
+
+      // zombies AI
+      for (let i = run.zombies.length - 1; i >= 0; i--) {
+        const z = run.zombies[i];
+        const dx = run.x - z.x;
+        const dy = run.y - z.y;
+        const len = Math.hypot(dx, dy) || 1;
+
+        const vx = (dx / len) * z.spd;
+        const vy = (dy / len) * z.spd;
+
+        // slight randomness so they don't stack perfectly
+        const jx = (Math.random() * 2 - 1) * 12;
+        const jy = (Math.random() * 2 - 1) * 12;
+
+        z.x += (vx + jx) * dt;
+        z.y += (vy + jy) * dt;
+
+        // attack if close
+        const rr = (z.r + run.r + 6) * (z.r + run.r + 6);
+        if (dist2(z.x, z.y, run.x, run.y) <= rr) {
+          const dmg = z.dmg * dt; // continuous contact damage
+          if (run.armor > 0) {
+            const a = Math.min(run.armor, dmg * 14);
+            run.armor -= a;
+            const left = dmg - a / 14;
+            if (left > 0) run.hp -= left * 1.0;
+          } else {
+            run.hp -= dmg * 1.0;
+          }
+
+          // pushback
+          z.x -= (dx / len) * 18 * dt;
+          z.y -= (dy / len) * 18 * dt;
+        }
+      }
+
+      // particles
+      for (let i = run.particles.length - 1; i >= 0; i--) {
+        const p = run.particles[i];
+        p.t += dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vx *= 0.90;
+        p.vy *= 0.90;
+        if (p.t >= p.life) run.particles.splice(i, 1);
+      }
+
+      // game over
+      if (run.hp <= 0 && run.running) {
+        run.hp = 0;
+        endRun(true);
+      }
+
+      updateHud();
+    }
+
+    function draw() {
+      if (!ctx || !canvas) return;
+
+      // clear
+      ctx.clearRect(0, 0, run.w, run.h);
+
+      // subtle floor grid
+      ctx.save();
+      ctx.globalAlpha = 0.08;
+      ctx.strokeStyle = "rgba(255,255,255,.25)";
+      const step = 62;
+      for (let x = 0; x < run.w; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, run.h);
+        ctx.stroke();
+      }
+      for (let y = 0; y < run.h; y += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(run.w, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // particles
+      for (const p of run.particles) {
+        const k = 1 - (p.t / p.life);
+        ctx.save();
+        ctx.globalAlpha = 0.75 * k;
+        ctx.fillStyle = p.c;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 2.2 + 2.8 * (1 - k), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // bullets
+      ctx.save();
+      for (const b of run.bullets) {
+        ctx.globalAlpha = 0.95;
+        ctx.fillStyle = (WEAPONS[run.weaponName]?.type === "sniper") ? "rgba(34,211,238,.95)" : "rgba(255,255,255,.95)";
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // zombies
+      for (const z of run.zombies) {
+        // body
+        ctx.save();
+        ctx.globalAlpha = 0.95;
+        ctx.fillStyle = "rgba(34,197,94,.18)";
+        ctx.beginPath();
+        ctx.arc(z.x, z.y, z.r + 7, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "rgba(34,197,94,.85)";
+        ctx.beginPath();
+        ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2);
+        ctx.fill();
+
+        // eyes
+        ctx.fillStyle = "rgba(0,0,0,.45)";
+        ctx.beginPath();
+        ctx.arc(z.x - z.r * 0.25, z.y - z.r * 0.1, 2.2, 0, Math.PI * 2);
+        ctx.arc(z.x + z.r * 0.25, z.y - z.r * 0.1, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // hp bar
+        const hp = clamp(z.hp / z.maxHp, 0, 1);
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = "rgba(0,0,0,.35)";
+        ctx.fillRect(z.x - 22, z.y - z.r - 16, 44, 5);
+        ctx.fillStyle = "rgba(239,68,68,.9)";
+        ctx.fillRect(z.x - 22, z.y - z.r - 16, 44 * hp, 5);
+
+        ctx.restore();
+      }
+
+      // player
+      const skin = getSkin();
+      const c1 = skin.colors[0] || "#9ca3af";
+      const c2 = skin.colors[1] || "#111827";
+
+      ctx.save();
+      // aura
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = (state.skin === "royal") ? "rgba(139,92,246,.55)" : "rgba(34,211,238,.35)";
+      ctx.beginPath();
+      ctx.arc(run.x, run.y, run.r + 16, 0, Math.PI * 2);
+      ctx.fill();
+
+      // body
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = c1;
+      ctx.beginPath();
+      ctx.arc(run.x, run.y, run.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // armor ring
+      if (run.armor > 0) {
+        ctx.globalAlpha = 0.85;
+        ctx.strokeStyle = "rgba(59,130,246,.9)";
+        ctx.lineWidth = 3;
+        const k = clamp(run.armor / 120, 0, 1);
+        ctx.beginPath();
+        ctx.arc(run.x, run.y, run.r + 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k);
+        ctx.stroke();
+      }
+
+      // detail
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = c2;
+      ctx.beginPath();
+      ctx.arc(run.x - 4, run.y - 3, 2.1, 0, Math.PI * 2);
+      ctx.arc(run.x + 4, run.y - 3, 2.1, 0, Math.PI * 2);
+      ctx.fill();
+
+      // crown for royal skin
+      if (state.skin === "royal") {
+        ctx.globalAlpha = 0.95;
+        ctx.fillStyle = "rgba(250,204,21,.95)";
+        ctx.fillText("👑", run.x - 10, run.y - 18);
+      }
+
+      // aim line
+      ctx.globalAlpha = 0.22;
+      ctx.strokeStyle = "rgba(255,255,255,.65)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(run.x, run.y);
+      ctx.lineTo(input.aimX, input.aimY);
+      ctx.stroke();
+
+      ctx.restore();
+
+      // vignette
+      ctx.save();
+      const g = ctx.createRadialGradient(run.w * 0.5, run.h * 0.45, 10, run.w * 0.5, run.h * 0.45, Math.max(run.w, run.h) * 0.65);
+      g.addColorStop(0, "rgba(0,0,0,0)");
+      g.addColorStop(1, "rgba(0,0,0,.45)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, run.w, run.h);
+      ctx.restore();
+    }
+
+    let lastT = 0;
+    function loop(tms) {
+      raf = requestAnimationFrame(loop);
+      const t = tms || performance.now();
+      if (!lastT) lastT = t;
+      const dt = clamp((t - lastT) / 1000, 0, 0.033);
+      lastT = t;
+
+      if (run.running) tick(dt, now());
+      draw();
+    }
+
+    function start() {
+      if (!overlay) buildOverlay();
+
+      if (run.running) { zToast("Уже запущено"); return; }
+
+      resize();
+      resetRun(true);
+
+      run.running = true;
+      run.startedAt = now();
+      run.waveEndsAt = now() + ((run.mode === "roguelike") ? 15000 : 17000);
+      run.spawnAt = now() + 600;
+
+      // early pack: few zombies
+      for (let i = 0; i < 4; i++) spawnZombie(true);
+
+      zToast(run.mode === "roguelike" ? "ROGUELIKE: выживай 😈" : "ARCADE: мясо пошло 💥");
+      haptic("notif", "success");
+      updateHud();
+    }
+
+    function endRun(auto = false) {
+      if (!run.running) return;
+      run.running = false;
+      run.endedAt = now();
+
+      const dur = Math.max(0, run.endedAt - run.startedAt);
+      const score = Math.round(run.kills * 55 + run.wave * 120 + run.coins * 2);
+
+      zToast(auto ? "RUN закончился ☠️" : "STOP");
+      haptic("notif", auto ? "error" : "warning");
+
+      // send result immediately (roguelike feels right)
+      if (run.mode === "roguelike") {
+        sendResult("auto");
+      } else {
+        // arcade: let player decide
+      }
+
+      // small freeze
+      setTimeout(() => {
+        // keep overlay open; user can restart or send
+      }, 150);
+    }
+
+    function stop() {
+      run.running = false;
+      run.endedAt = now();
+      input.shootHeld = false;
+    }
+
+    function updateHud() {
+      const l = qs("#bcozHudL");
+      const m = qs("#bcozHudM");
+      const r = qs("#bcozHudR");
+      const w = baseWeapon();
+
+      if (l) l.textContent = `HP ${Math.round(run.hp)}/${run.maxHp} • Armor ${Math.round(run.armor)}`;
+      if (m) m.textContent = `Wave ${run.wave} • Kills ${run.kills} • 💰 ${run.coins}`;
+      if (r) r.textContent = `${run.weaponName} • ${run.ammo}/${w.mag}` + (run.reloading ? " • Reload…" : "");
+
+      const coins = qs("#bcozCoins");
+      if (coins) coins.textContent = `💰 ${run.coins}`;
+    }
+
+    function sendResult(origin = "manual") {
+      const ended = run.endedAt || now();
+      const started = run.startedAt || ended;
+      const duration = Math.max(0, ended - started);
+
+      const score = Math.round(run.kills * 55 + run.wave * 120 + run.coins * 2);
+
+      sendToBot({
+        action: "game_result",
+        game: "zombies",
+        mode: run.mode,
+        map: state.zombies_map,
+        character: state.character,
+        skin: state.skin,
+        wave: run.wave,
+        kills: run.kills,
+        coins: run.coins,
+        duration_ms: duration,
+        loadout: {
+          weapon: run.weaponName,
+          perks: run.perks.slice(0, 10),
+          upgrades: {
+            dmgMul: +run.dmgMul.toFixed(3),
+            rpmMul: +run.rpmMul.toFixed(3),
+            moveMul: +run.moveMul.toFixed(3),
+            reloadMul: +run.reloadMul.toFixed(3),
+            magMul: +run.magMul.toFixed(3),
+            pierce: run.pierceBonus,
+            critChance: +run.critChance.toFixed(3),
+            coinMul: +run.coinMul.toFixed(3)
+          }
+        },
+        score,
+        origin,
+        profile: true
+      });
+
+      zToast("Отправлено в бота ✅");
+    }
+
+    function buyPerk(perkId) {
+      if (run.mode !== "roguelike") { zToast("Shop = только Roguelike 😈"); return; }
+      if (!run.running) { zToast("Стартани ран сначала"); return; }
+
+      if (run.perks.includes(perkId)) { zToast("Уже куплено"); return; }
+
+      const perk = PERKS.find(p => p.id === perkId);
+      if (!perk) return;
+
+      if (run.coins < perk.cost) { haptic("notif", "warning"); zToast("Не хватает 💰"); return; }
+
+      run.coins -= perk.cost;
+      run.perks.push(perkId);
+      try { perk.apply?.(run); } catch {}
+
+      haptic("notif", "success");
+      zToast(`Куплено: ${perk.name}`);
+      updateHud();
+      renderPerkShop();
+    }
+
+    function buyWeapon(name) {
+      if (run.mode !== "roguelike") { zToast("Оружие: только Roguelike"); return; }
+      if (!run.running) { zToast("Стартани ран сначала"); return; }
+      if (!WEAPONS[name]) return;
+
+      // cost scaling
+      const base = { Pistol: 0, SMG: 16, AR: 20, Burst: 22, Shotgun: 22, LMG: 26, Sniper: 28, Launcher: 32 }[name] ?? 20;
+      const cost = Math.round(base + run.wave * 0.9);
+
+      if (run.weaponName === name) { zToast("Уже в руках"); return; }
+      if (run.coins < cost) { haptic("notif", "warning"); zToast("Не хватает 💰"); return; }
+
+      run.coins -= cost;
+      run.weaponName = name;
+
+      const w = baseWeapon();
+      run.mag = w.mag;
+      run.ammo = w.mag;
+
+      haptic("notif", "success");
+      zToast(`Оружие: ${name} ✅`);
+      updateHud();
+      renderWeaponShop();
+    }
+
+    function renderPerkShop() {
+      const root = qs("#bcozPerkList");
+      if (!root) return;
+
+      root.innerHTML = PERKS.map(p => {
+        const owned = run.perks.includes(p.id);
+        return `
+          <div class="bcoz-item" data-perk="${p.id}">
+            <div>
+              <div class="name">${p.name}</div>
+              <div class="desc">${p.desc}</div>
+            </div>
+            <div style="text-align:right;">
+              ${owned ? `<div class="owned">OWNED</div>` : `<div class="cost">💰 ${p.cost}</div>`}
+              <button class="bcoz-btn small" data-buy-perk="${p.id}" type="button" ${owned ? "disabled" : ""}>Buy</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderWeaponShop() {
+      const root = qs("#bcozWeaponList");
+      if (!root) return;
+
+      const names = Object.keys(WEAPONS);
+      root.innerHTML = names.map(name => {
+        const base = { Pistol: 0, SMG: 16, AR: 20, Burst: 22, Shotgun: 22, LMG: 26, Sniper: 28, Launcher: 32 }[name] ?? 20;
+        const cost = Math.round(base + run.wave * 0.9);
+        const owned = (run.weaponName === name);
+
+        const w = WEAPONS[name];
+        const dps = Math.round(w.dmg * (w.rpm / 60));
+        const tags = [
+          `DMG ${w.dmg}`,
+          `RPM ${w.rpm}`,
+          `MAG ${w.mag}`,
+          (w.pellets ? `PEL ${w.pellets}` : ""),
+          (w.pierce ? `PIERCE ${w.pierce}` : ""),
+          (w.splash ? `SPLASH` : "")
+        ].filter(Boolean).join(" • ");
+
+        return `
+          <div class="bcoz-item">
+            <div>
+              <div class="name">🔫 ${name}</div>
+              <div class="desc">${tags} • DPS~${dps}</div>
+            </div>
+            <div style="text-align:right;">
+              ${owned ? `<div class="owned">EQUIPPED</div>` : `<div class="cost">💰 ${cost}</div>`}
+              <button class="bcoz-btn small" data-buy-weapon="${name}" type="button" ${owned ? "disabled" : ""}>Take</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderCharSelect() {
+      const male = qs("#bcozMaleSkins");
+      const female = qs("#bcozFemaleSkins");
+      if (!male || !female) return;
+
+      const mk = (sex, root) => {
+        const arr = SKINS[sex] || [];
+        root.innerHTML = arr.map(s => {
+          const active = (state.character === sex && state.skin === s.id);
+          return `<button class="bcoz-chip ${active ? "active" : ""}" data-skin="${sex}:${s.id}" type="button">${s.name}</button>`;
+        }).join("");
+      };
+
+      mk("male", male);
+      mk("female", female);
+    }
+
+    function openShop(open = true) {
+      const modal = qs("#bcozShopModal");
+      if (!modal) return;
+      modal.classList.toggle("show", !!open);
+      modal.setAttribute("aria-hidden", open ? "false" : "true");
+      updateHud();
+      renderPerkShop();
+      renderWeaponShop();
+      haptic("impact", "light");
+    }
+
+    function openChar(open = true) {
+      const modal = qs("#bcozCharModal");
+      if (!modal) return;
+      modal.classList.toggle("show", !!open);
+      modal.setAttribute("aria-hidden", open ? "false" : "true");
+      renderCharSelect();
+      haptic("impact", "light");
+    }
+
+    function joySetKnob(nx, ny) {
+      const knob = qs("#bcozKnob");
+      if (!knob) return;
+      const baseX = 33, baseY = 33;
+      const max = 30;
+      knob.style.transform = `translate(${baseX + nx * max}px, ${baseY + ny * max}px)`;
+    }
+
+    function pointerToOverlayXY(e) {
+      const x = e.clientX ?? (e.touches?.[0]?.clientX ?? 0);
+      const y = e.clientY ?? (e.touches?.[0]?.clientY ?? 0);
+      return { x, y };
+    }
+
+    function wireOverlayUI() {
+      // resize
+      window.addEventListener("resize", resize);
+
+      onTap(ui.modeArcade, () => setMode("arcade"));
+      onTap(ui.modeRogue, () => setMode("roguelike"));
+
+      onTap(ui.btnStart, () => {
+        if (run.running) {
+          endRun(false);
+        } else {
+          start();
+        }
+      });
+
+      onTap(ui.btnClose, () => {
+        destroyOverlay();
+        try { tg?.HapticFeedback?.notificationOccurred?.("success"); } catch {}
+      });
+
+      onTap(ui.btnSend, () => {
+        sendResult("manual");
+      });
+
+      onTap(qs("#bcozChar"), () => openChar(true));
+      onTap(qs("#bcozCharClose"), () => openChar(false));
+
+      // skin pick
+      const charModal = qs("#bcozCharModal");
+      if (charModal) {
+        charModal.addEventListener("click", async (e) => {
+          const btn = e.target.closest("[data-skin]");
+          if (!btn) return;
+          const [sex, skin] = String(btn.dataset.skin || "").split(":");
+          if (!sex || !skin) return;
+
+          state.character = sex;
+          state.skin = skin;
+          ensureSkinValid();
+          await saveState();
+
+          renderCharSelect();
+          zToast(`Выбран: ${sex} • ${skin}`);
+        }, { passive: true });
+      }
+
+      // shop
+      onTap(ui.btnShop, () => openShop(true));
+      onTap(qs("#bcozShopClose"), () => openShop(false));
+
+      const shop = qs("#bcozShopModal");
+      if (shop) {
+        shop.addEventListener("click", (e) => {
+          const pb = e.target.closest("[data-buy-perk]");
+          if (pb) {
+            buyPerk(pb.dataset.buyPerk);
+            return;
+          }
+          const wb = e.target.closest("[data-buy-weapon]");
+          if (wb) {
+            buyWeapon(wb.dataset.buyWeapon);
+            return;
+          }
+        }, { passive: true });
+      }
+
+      // reload
+      onTap(ui.btnReload, () => startReload(now()));
+
+      // shoot hold
+      const shootBtn = ui.btnShoot;
+      if (shootBtn) {
+        const down = (e) => {
+          input.shootHeld = true;
+          const p = pointerToOverlayXY(e);
+          input.aimX = p.x; input.aimY = p.y;
+          e.preventDefault?.();
+        };
+        const up = (e) => { input.shootHeld = false; e.preventDefault?.(); };
+
+        if (window.PointerEvent) {
+          shootBtn.addEventListener("pointerdown", down, { passive: false });
+          shootBtn.addEventListener("pointerup", up, { passive: false });
+          shootBtn.addEventListener("pointercancel", up, { passive: false });
+        } else {
+          shootBtn.addEventListener("touchstart", down, { passive: false });
+          shootBtn.addEventListener("touchend", up, { passive: false });
+          shootBtn.addEventListener("touchcancel", up, { passive: false });
+        }
+      }
+
+      // joystick + aim on canvas
+      const joy = qs("#bcozJoy");
+      const onJoyDown = (e) => {
+        const p = pointerToOverlayXY(e);
+        input.joyActive = true;
+        input.joyId = e.pointerId ?? "touch";
+        input.joyCx = p.x;
+        input.joyCy = p.y;
+        input.joyX = 0; input.joyY = 0;
+        joySetKnob(0, 0);
+        e.preventDefault?.();
+      };
+
+      const onJoyMove = (e) => {
+        if (!input.joyActive) return;
+        const p = pointerToOverlayXY(e);
+        const dx = p.x - input.joyCx;
+        const dy = p.y - input.joyCy;
+        const len = Math.hypot(dx, dy) || 1;
+        const max = 42;
+        const nx = clamp(dx / max, -1, 1);
+        const ny = clamp(dy / max, -1, 1);
+        input.joyX = nx;
+        input.joyY = ny;
+        joySetKnob(nx, ny);
+        e.preventDefault?.();
+      };
+
+      const onJoyUp = (e) => {
+        input.joyActive = false;
+        input.joyId = null;
+        input.joyX = 0; input.joyY = 0;
+        joySetKnob(0, 0);
+        e.preventDefault?.();
+      };
+
+      if (joy) {
+        if (window.PointerEvent) {
+          joy.addEventListener("pointerdown", onJoyDown, { passive: false });
+          window.addEventListener("pointermove", onJoyMove, { passive: false });
+          window.addEventListener("pointerup", onJoyUp, { passive: false });
+          window.addEventListener("pointercancel", onJoyUp, { passive: false });
+        } else {
+          joy.addEventListener("touchstart", onJoyDown, { passive: false });
+          window.addEventListener("touchmove", onJoyMove, { passive: false });
+          window.addEventListener("touchend", onJoyUp, { passive: false });
+          window.addEventListener("touchcancel", onJoyUp, { passive: false });
+        }
+      }
+
+      // aim direction by tapping canvas
+      if (canvas) {
+        const aimMove = (e) => {
+          const p = pointerToOverlayXY(e);
+          input.aimX = p.x;
+          input.aimY = p.y;
+        };
+
+        if (window.PointerEvent) {
+          canvas.addEventListener("pointerdown", aimMove, { passive: true });
+          canvas.addEventListener("pointermove", (e) => {
+            if (input.shootHeld) aimMove(e);
+          }, { passive: true });
+        } else {
+          canvas.addEventListener("touchstart", aimMove, { passive: true });
+          canvas.addEventListener("touchmove", (e) => { if (input.shootHeld) aimMove(e); }, { passive: true });
+        }
+      }
+
+      // start RAF
+      if (!raf) raf = requestAnimationFrame(loop);
+    }
+
+    function open() {
+      if (!overlay) buildOverlay();
+      resize();
+      resetRun(true);
+      setMode(run.mode || "arcade");
+      updateHud();
+      zToast("Zombies ready 😈");
+      haptic("notif", "success");
+      if (!raf) raf = requestAnimationFrame(loop);
+    }
+
     return {
-      stat: qs("#zStat"),
-      btnArcade: qs("#btnZModeArcade"),
-      btnRogue: qs("#btnZModeRogue"),
-      btnStart: qs("#btnZGameStart"),
-      btnStop: qs("#btnZGameStop"),
-      btnSend: qs("#btnZGameSend"),
-      btnBuyJug: qs("#btnZBuyJug"),
-      btnBuySpeed: qs("#btnZBuySpeed"),
-      btnBuyAmmo: qs("#btnZBuyAmmo"),
-      arena: qs("#zArena"),
-      z1: qs("#z1"),
-      z2: qs("#z2"),
-      z3: qs("#z3")
+      open,
+      start,
+      stop,
+      destroy: destroyOverlay,
+      setMode,
+      sendResult,
+      isOpen: () => !!overlay
     };
-  }
+  })();
 
-  function zUpdateUI() {
-    const { stat, btnStart, btnStop, btnSend } = zEls();
-    const dur = zgame.running ? (now() - zgame.startedAt) : 0;
-
-    if (stat) {
-      stat.textContent =
-        `🎮 ${zgame.mode.toUpperCase()} • 🧟 Wave ${zgame.wave} • ☠️ ${zgame.kills} • 💰 ${zgame.coins} • ❤️ ${zgame.hp} • 🔫 ${zgame.weapon}` +
-        (zgame.perks.length ? ` • 🧪 ${zgame.perks.join(", ")}` : "") +
-        (zgame.running ? ` • ⏱ ${(dur / 1000).toFixed(0)}s` : "");
-    }
-
-    if (btnStart) btnStart.disabled = zgame.running;
-    if (btnStop) btnStop.disabled = !zgame.running;
-    if (btnSend) btnSend.disabled = zgame.running || zgame.kills < 5;
-  }
-
-  function zReset() {
-    zgame.running = false;
-    zgame.startedAt = 0;
-    zgame.wave = 1;
-    zgame.kills = 0;
-    zgame.coins = 0;
-    zgame.weapon = "SMG";
-    zgame.perks = [];
-    zgame.hp = 100;
-    if (zgame.timerId) { clearInterval(zgame.timerId); zgame.timerId = null; }
-    zUpdateUI();
-  }
-
-  function zSpawn() {
-    const { arena, z1, z2, z3 } = zEls();
-    if (!arena || !z1 || !z2 || !z3) return;
-
-    const rect = arena.getBoundingClientRect();
-    const pad = 14;
-
-    const place = (el) => {
-      const x = pad + Math.random() * (Math.max(180, rect.width) - pad * 2);
-      const y = pad + Math.random() * (Math.max(180, rect.height) - pad * 2);
-      el.style.transform = `translate(${x}px, ${y}px)`;
-      el.classList.remove("dead");
-      el.dataset.alive = "1";
-    };
-
-    place(z1); place(z2); place(z3);
-  }
-
-  function zOnKill() {
-    zgame.kills += 1;
-    zgame.coins += (zgame.mode === "roguelike") ? 2 : 1;
-
-    // wave up: каждые 10 киллов
-    if (zgame.kills % 10 === 0) {
-      zgame.wave += 1;
-      // сложность: по чуть-чуть жмём HP
-      if (zgame.mode === "roguelike") zgame.hp = Math.max(0, zgame.hp - 6);
-      else zgame.hp = Math.max(0, zgame.hp - 3);
-      toast(`Wave ${zgame.wave} 🔥`);
-      haptic("impact", "medium");
-      zSpawn();
-    }
-
-    // death condition
-    if (zgame.hp <= 0) {
-      zStop(true);
-    }
-
-    zUpdateUI();
-  }
-
-  function zStop(auto = false) {
-    if (!zgame.running) return;
-    zgame.running = false;
-    if (zgame.timerId) { clearInterval(zgame.timerId); zgame.timerId = null; }
-    zUpdateUI();
-    toast(auto ? "Zombies: конец рана" : "Zombies: стоп");
-    haptic("notif", auto ? "warning" : "success");
-  }
-
-  function zStart() {
-    if (zgame.running) return;
-    zReset();
-    zgame.running = true;
-    zgame.startedAt = now();
-    zSpawn();
-    zUpdateUI();
-
-    // авто-спавн/давление
-    zgame.timerId = setInterval(() => {
-      // периодический “урон” как давление
-      if (zgame.mode === "roguelike") zgame.hp = Math.max(0, zgame.hp - 2);
-      else zgame.hp = Math.max(0, zgame.hp - 1);
-
-      if (zgame.hp <= 0) zStop(true);
-      zUpdateUI();
-    }, 1800);
-
-    toast(zgame.mode === "roguelike" ? "Roguelike: выживай 😈" : "Arcade: поехали 💥");
-    haptic("notif", "success");
-  }
-
-  function zSendResult() {
-    const duration = zgame.running ? (now() - zgame.startedAt) : (now() - (zgame.startedAt || now()));
-    sendToBot({
-      action: "game_result",
-      game: "zombies",
-      mode: zgame.mode,
-      wave: zgame.wave,
-      kills: zgame.kills,
-      coins: zgame.coins,
-      duration_ms: duration,
-      loadout: { weapon: zgame.weapon, perks: zgame.perks.slice(0, 6) },
-      score: Math.round(zgame.kills * 50 + zgame.wave * 80 + zgame.coins),
-      profile: true
-    });
-  }
-
-  function zSetMode(m) {
-    zgame.mode = m;
-    const { btnArcade, btnRogue } = zEls();
-    if (btnArcade) btnArcade.classList.toggle("active", m === "arcade");
-    if (btnRogue) btnRogue.classList.toggle("active", m === "roguelike");
-    toast(m === "roguelike" ? "Режим: Roguelike 😈" : "Режим: Arcade 💥");
-    haptic("impact", "light");
-    zUpdateUI();
-  }
-
-  function zBuy(name, cost, effect) {
-    if (!zgame.running || zgame.mode !== "roguelike") { toast("Roguelike только во время рана"); return; }
-    if (zgame.coins < cost) { haptic("notif", "warning"); toast("Не хватает монет 💰"); return; }
-    if (zgame.perks.includes(name)) { toast("Уже куплено"); return; }
-    zgame.coins -= cost;
-    zgame.perks.push(name);
-    try { effect?.(); } catch {}
-    toast(`Куплено: ${name} ✅`);
-    haptic("notif", "success");
-    zUpdateUI();
-  }
-
+  // =========================================================
   // ---------- Wire buttons ----------
+  // =========================================================
   function wireButtons() {
     onTap(qs("#btnClose"), () => {
       haptic("impact", "medium");
@@ -957,7 +2312,7 @@
       const text =
         "BLACK CROWN OPS 😈\n" +
         "Тренировки, VOD, настройки, Zombies — всё в одном месте.\n" +
-        "Теперь ещё и мини-игры: Aim Trial + Zombies (Arcade/Roguelike).";
+        "Mini App + Fullscreen 2D Zombies (Arcade/Roguelike).";
       tryShare(text);
     });
 
@@ -992,7 +2347,6 @@
     onTap(btnSend, () => aimSendResult());
 
     if (arena && target) {
-      // hit
       onTap(target, (e) => {
         if (!aim.running) return;
         aim.shots += 1;
@@ -1004,7 +2358,6 @@
         e?.stopPropagation?.();
       });
 
-      // miss (tap arena)
       onTap(arena, () => {
         if (!aim.running) return;
         aim.shots += 1;
@@ -1013,39 +2366,23 @@
       });
     }
 
-    // ZOMBIES game
-    const ze = zEls();
-    onTap(ze.btnArcade, () => zSetMode("arcade"));
-    onTap(ze.btnRogue, () => zSetMode("roguelike"));
-    onTap(ze.btnStart, () => zStart());
-    onTap(ze.btnStop, () => zStop(false));
-    onTap(ze.btnSend, () => zSendResult());
+    // ✅ ZOMBIES Fullscreen (hooks into your existing buttons)
+    // В твоём index.html есть кнопки: btnZGameStart / btnZGameStop / btnZGameSend / btnZModeArcade / btnZModeRogue
+    // Мы используем их как "launcher" — игра открывается поверх (overlay).
+    const btnZArc = qs("#btnZModeArcade");
+    const btnZRog = qs("#btnZModeRogue");
+    const btnZStart = qs("#btnZGameStart");
+    const btnZStop = qs("#btnZGameStop");
+    const btnZSend = qs("#btnZGameSend");
 
-    onTap(ze.btnBuyJug, () => zBuy("Jug", 12, () => { zgame.hp = Math.min(140, zgame.hp + 25); }));
-    onTap(ze.btnBuySpeed, () => zBuy("Speed", 10, () => { zgame.weapon = "AR"; }));
-    onTap(ze.btnBuyAmmo, () => zBuy("Ammo", 8, () => { zgame.coins += 2; }));
+    onTap(btnZArc, () => { Z.open(); Z.setMode("arcade"); });
+    onTap(btnZRog, () => { Z.open(); Z.setMode("roguelike"); });
 
-    const hitZombie = (zEl) => {
-      if (!zgame.running) return;
-      if (!zEl || zEl.dataset.alive !== "1") return;
-      zEl.dataset.alive = "0";
-      zEl.classList.add("dead");
-      haptic("impact", "light");
-      zOnKill();
-    };
+    onTap(btnZStart, () => { Z.open(); Z.start(); });
+    onTap(btnZStop, () => { /* stop run but keep overlay */ Z.open(); Z.stop(); toast("Zombies: стоп"); });
+    onTap(btnZSend, () => { Z.open(); Z.sendResult("manual"); });
 
-    onTap(ze.z1, () => hitZombie(ze.z1));
-    onTap(ze.z2, () => hitZombie(ze.z2));
-    onTap(ze.z3, () => hitZombie(ze.z3));
-
-    // miss on arena = hp down
-    onTap(ze.arena, () => {
-      if (!zgame.running) return;
-      zgame.hp = Math.max(0, zgame.hp - (zgame.mode === "roguelike" ? 4 : 2));
-      haptic("notif", "warning");
-      zUpdateUI();
-      if (zgame.hp <= 0) zStop(true);
-    });
+    // Если у тебя этих кнопок нет — ничего не ломаем
   }
 
   // ---------- Build tag ----------
@@ -1056,7 +2393,6 @@
         : null;
 
     const txt = buildFromIndex ? `build ${buildFromIndex} • v${VERSION}` : `v${VERSION}`;
-
     const buildTag = qs("#buildTag");
     if (buildTag) buildTag.textContent = txt;
   }
@@ -1133,8 +2469,6 @@
 
     // games init
     aimReset();
-    zReset();
-    zSetMode("arcade");
 
     selectTab("home");
   }
