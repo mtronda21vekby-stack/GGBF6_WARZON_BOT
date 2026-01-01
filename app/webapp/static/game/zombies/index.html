@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Zombies Rush — BLACK CROWN OPS</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="../game.css">
+  <style>
+    .hudRow{ display:flex; justify-content:space-between; gap:10px; margin-top:10px; }
+    .hudBox{
+      flex:1; padding:10px 12px; border-radius:16px;
+      border:1px solid rgba(255,255,255,.10); background: rgba(0,0,0,.18);
+      color:var(--mut); font-size:12px;
+    }
+    .hudBox b{ display:block; color:var(--txt); font-size:14px; margin-top:3px; }
+    .canvasWrap{
+      margin-top:12px;
+      border-radius:24px;
+      border:1px solid rgba(255,255,255,.10);
+      overflow:hidden;
+      background: rgba(0,0,0,.20);
+      box-shadow: var(--shadow);
+      height: 58vh;
+      min-height: 360px;
+      position:relative;
+    }
+    canvas{ width:100%; height:100%; display:block; touch-action:none; }
+
+    /* On-screen controls */
+    .ctrl{
+      position:absolute;
+      bottom: 12px;
+      left: 12px;
+      width: 140px; height: 140px;
+      border-radius: 999px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.18);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      user-select:none;
+    }
+    .stick{
+      width: 62px; height: 62px;
+      border-radius: 999px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(124,92,255,.16);
+      box-shadow: 0 18px 40px rgba(124,92,255,.15);
+      transform: translate(0,0);
+    }
+
+    .btnsRight{
+      position:absolute;
+      bottom: 12px;
+      right: 12px;
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:10px;
+      width: 140px;
+      user-select:none;
+    }
+    .rbtn{
+      padding:12px 12px;
+      border-radius: 16px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.18);
+      color:var(--txt);
+      font-weight:900;
+      text-align:center;
+    }
+    .rbtn.primary{
+      background: linear-gradient(180deg, rgba(24,209,163,.92), rgba(24,209,163,.60));
+      border:none;
+      box-shadow: 0 18px 40px rgba(24,209,163,.14);
+    }
+    .rbtn:active{ transform: translateY(1px); }
+
+    /* Shop */
+    .shop{
+      position:fixed;
+      inset:0;
+      display:none;
+      align-items:flex-end;
+      justify-content:center;
+      padding: 12px 12px calc(12px + var(--safe-bot));
+      background: rgba(0,0,0,.45);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .sheet{
+      width:100%;
+      max-width:720px;
+      border-radius: 24px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(12,16,32,.92);
+      box-shadow: var(--shadow);
+      padding: 14px;
+    }
+    .sheetHeader{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      margin-bottom: 10px;
+    }
+    .sheetHeader b{ font-size:16px; }
+    .sheetHeader .x{
+      padding:8px 10px;
+      border-radius: 14px;
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.22);
+      color:var(--mut);
+      font-weight:900;
+    }
+    .shopGrid{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:10px;
+      margin-top:10px;
+    }
+    .item{
+      border-radius: 18px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.18);
+      padding: 12px;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+    }
+    .item .meta{ display:flex; flex-direction:column; gap:2px; }
+    .item .meta small{ color:var(--mut); }
+    .buy{
+      padding:10px 12px;
+      border-radius: 16px;
+      border:none;
+      background: linear-gradient(180deg, rgba(124,92,255,.98), rgba(124,92,255,.66));
+      color:var(--txt);
+      font-weight:900;
+      min-width: 92px;
+    }
+    .buy:disabled{
+      opacity:.5;
+      filter:saturate(.6);
+    }
+    .miniBtns{ margin-top:10px; display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <b>🧟 Zombies Rush</b>
+        <small id="subLine">Solo • Waves • Shop (weapons + perks)</small>
+      </div>
+      <div class="pill"><span class="dot"></span><span id="modePillText">TEAMMATE</span></div>
+    </div>
+
+    <div class="main">
+      <div class="card hero">
+        <h1>Survive</h1>
+        <p>Coins → купи оружие и перки. Чем выше волна — тем жирнее награда. Умрёшь — бот заберёт результат и даст разбор.</p>
+
+        <div class="hudRow">
+          <div class="hudBox">HP <b id="hp">100</b></div>
+          <div class="hudBox">Coins <b id="coins">0</b></div>
+          <div class="hudBox">Wave <b id="wave">1</b></div>
+        </div>
+
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+
+          <div class="ctrl" id="joyBase">
+            <div class="stick" id="joyStick"></div>
+          </div>
+
+          <div class="btnsRight">
+            <div class="rbtn primary" id="btnShoot">FIRE</div>
+            <div class="rbtn" id="btnReload">RELOAD</div>
+            <div class="rbtn" id="btnShop">SHOP</div>
+          </div>
+        </div>
+
+        <div class="miniBtns">
+          <button class="btnGhost" id="btnBack">⬅ Hub</button>
+          <button class="btn" id="btnStart">Start</button>
+        </div>
+
+        <div class="footerHint" id="status">Готов. Нажми Start.</div>
+      </div>
+    </div>
+
+    <div class="tabbar">
+      <div class="tabInner">
+        <div class="tab" id="tabHome">Hub</div>
+        <div class="tab" id="tabAim">Aim</div>
+        <div class="tab active" id="tabZ">Zombies</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shop sheet -->
+  <div class="shop" id="shop">
+    <div class="sheet">
+      <div class="sheetHeader">
+        <div>
+          <b>🛒 Shop</b><br/>
+          <small style="color:var(--mut)">Weapons & Perks • Coins: <span id="shopCoins">0</span></small>
+        </div>
+        <div class="x" id="shopClose">✕</div>
+      </div>
+
+      <div class="shopGrid" id="shopGrid"></div>
+
+      <div style="margin-top:10px; color:var(--mut); font-size:12px; line-height:1.35;">
+        Элитный мув: покупай Jug перед плотной волной, а оружие — когда начинаешь терять контроль.
+      </div>
+    </div>
+  </div>
+
+  <script src="./zombies.js"></script>
+</body>
+</html>
