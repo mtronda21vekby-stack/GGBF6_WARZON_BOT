@@ -993,6 +993,7 @@ class Router:
           - zombies_open {map}
           - zombies {action, map}
           - pay {plan}
+          - game_result (через action)  ✅
         """
         prof = self._get_profile(chat_id)
 
@@ -1036,6 +1037,136 @@ class Router:
         if flat_profile_like:
             apply_profile_dict(flat_profile_like)
             prof = self._get_profile(chat_id)
+
+        # =========================================================
+        # ✅ GAME RESULT FROM MINI APP
+        # поддерживаем формат:
+        #   {"action":"game_result", "game":"aim|zombies", ...}
+        # (ptype может быть любым — ловим по action)
+        # =========================================================
+        if str(payload.get("action") or "").strip().lower() == "game_result":
+            game = str(payload.get("game") or "unknown").strip().lower()
+            mode = str(payload.get("mode") or "").strip().lower()
+
+            score = payload.get("score")
+            shots = payload.get("shots")
+            hits = payload.get("hits")
+            acc = payload.get("accuracy")
+
+            wave = payload.get("wave")
+            kills = payload.get("kills")
+            coins = payload.get("coins_earned") if "coins_earned" in payload else payload.get("coins")
+            duration = payload.get("duration_ms")
+
+            loadout = payload.get("loadout") if isinstance(payload.get("loadout"), dict) else {}
+
+            prof = self._get_profile(chat_id)
+            voice = _norm_voice(prof.get("voice", "TEAMMATE"))
+
+            # сохранить в memory store (если есть)
+            if self.store and hasattr(self.store, "add"):
+                try:
+                    self.store.add(
+                        chat_id,
+                        "game_result",
+                        {
+                            "game": game,
+                            "mode": mode,
+                            "score": score,
+                            "shots": shots,
+                            "hits": hits,
+                            "accuracy": acc,
+                            "wave": wave,
+                            "kills": kills,
+                            "coins": coins,
+                            "duration_ms": duration,
+                            "loadout": loadout,
+                        },
+                    )
+                except Exception:
+                    pass
+
+            # формат ответа
+            if voice == "COACH":
+                lines = []
+                lines.append("👑 POST-MATCH REPORT")
+                lines.append("━━━━━━━━━━━━━━━━━━")
+                lines.append(f"🎮 Game: {game.upper()}{(' · ' + mode.upper()) if mode else ''}")
+                if score is not None:
+                    lines.append(f"📊 Score: {score}")
+                if wave is not None:
+                    lines.append(f"🧟 Wave: {wave}")
+                if kills is not None:
+                    lines.append(f"☠️ Kills: {kills}")
+                if coins is not None:
+                    lines.append(f"💰 Coins: {coins}")
+
+                if shots is not None and hits is not None:
+                    try:
+                        a = (hits / shots) if shots else 0
+                        lines.append(f"🎯 Acc: {int(round(a * 100))}%")
+                    except Exception:
+                        pass
+                elif acc is not None:
+                    try:
+                        lines.append(f"🎯 Acc: {int(round(float(acc) * 100))}%")
+                    except Exception:
+                        pass
+
+                if loadout:
+                    wpn = str(loadout.get("weapon") or "").strip()
+                    perks = loadout.get("perks") if isinstance(loadout.get("perks"), list) else []
+                    perks = [str(x) for x in perks if str(x).strip()]
+                    if wpn:
+                        lines.append(f"🔫 Weapon: {wpn}")
+                    if perks:
+                        lines.append(f"🧪 Perks: {', '.join(perks)}")
+
+                lines.append("")
+                lines.append("📚 Разбор (elite):")
+                if game in ("aim", "aimtrial", "flick"):
+                    lines.append("• Если accuracy < 45% — ты стреляешь раньше стопа.")
+                    lines.append("• Правило: перенос → микро-стоп → выстрел (не наоборот).")
+                    lines.append("• Следующий ран: цель +10% к accuracy без потери темпа.")
+                elif game in ("zombies", "zombie"):
+                    lines.append("• Если после 10-й волны тяжело — проблема в тайминге шопа/позиции.")
+                    lines.append("• Правило: контроль линии > жадность по киллам.")
+                    lines.append("• Следующий ран: Jug до плотной волны + оружие, когда начинаешь терять контроль.")
+                else:
+                    lines.append("• Цель следующего рана: +10–15% к метрике без хаоса в решениях.")
+
+                lines.append("━━━━━━━━━━━━━━━━━━")
+                lines.append("— BLACK CROWN OPS 😈")
+                await self._send_main(chat_id, "\n".join(lines))
+            else:
+                lines = []
+                lines.append("⚡ Результат принят!")
+                lines.append("")
+                lines.append(f"🎮 {game.upper()}{(' · ' + mode.upper()) if mode else ''}")
+                if score is not None:
+                    lines.append(f"📊 Score: {score}")
+                if wave is not None:
+                    lines.append(f"🧟 Wave: {wave}")
+                if kills is not None:
+                    lines.append(f"☠️ Kills: {kills}")
+
+                if shots is not None and hits is not None:
+                    try:
+                        a = (hits / shots) if shots else 0
+                        lines.append(f"🎯 Acc: {int(round(a * 100))}%")
+                    except Exception:
+                        pass
+                elif acc is not None:
+                    try:
+                        lines.append(f"🎯 Acc: {int(round(float(acc) * 100))}%")
+                    except Exception:
+                        pass
+
+                lines.append("")
+                lines.append("Хороший ран 👑 Если хочешь — скажи, где было больно, разберём.")
+                await self._send_main(chat_id, "\n".join(lines))
+
+            return
 
         if ptype == "nav":
             target = str(payload.get("target") or "").strip().lower()
