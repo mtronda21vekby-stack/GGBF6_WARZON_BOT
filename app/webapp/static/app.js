@@ -1,11 +1,10 @@
 // app/webapp/static/app.js
 (() => {
-  // ✅ health indicator for index.html
   window.__BCO_JS_OK__ = true;
 
   const tg = window.Telegram?.WebApp;
 
-  const VERSION = "1.1.0";
+  const VERSION = "1.2.0";
   const STORAGE_KEY = "bco_state_v1";
   const CHAT_KEY = "bco_chat_v1";
 
@@ -23,23 +22,19 @@
 
   const state = { ...defaults };
 
-  // ✅ chat state (kept separate to avoid breaking old storage)
+  // chat state
   const chat = {
     history: [], // [{role:'user'|'assistant', text:'...', ts:number}]
     lastAskAt: 0
   };
 
-  // current UI tab (single source of truth)
   let currentTab = "home";
 
   const qs = (s) => document.querySelector(s);
   const qsa = (s) => Array.from(document.querySelectorAll(s));
+  const now = () => Date.now();
 
-  function now() { return Date.now(); }
-
-  function safeJsonParse(s) {
-    try { return JSON.parse(s); } catch { return null; }
-  }
+  function safeJsonParse(s) { try { return JSON.parse(s); } catch { return null; } }
 
   function haptic(type = "impact", style = "medium") {
     try {
@@ -66,7 +61,7 @@
     let locked = false;
     const lock = () => {
       locked = true;
-      setTimeout(() => (locked = false), 350);
+      setTimeout(() => (locked = false), 320);
     };
 
     const fire = (e) => {
@@ -75,10 +70,13 @@
       try { handler(e); } catch {}
     };
 
+    // iOS иногда "съедает" pointerup на вложенных элементах → даём fallback
     if (window.PointerEvent) {
       el.addEventListener("pointerup", fire, { passive: true });
+      el.addEventListener("click", fire, { passive: true });
       return;
     }
+
     el.addEventListener("touchend", fire, { passive: true });
     el.addEventListener("click", fire, { passive: true });
   }
@@ -99,9 +97,7 @@
       "--tg-secondary-bg": p.secondary_bg_color
     };
 
-    Object.entries(map).forEach(([k, v]) => {
-      if (v) root.style.setProperty(k, v);
-    });
+    Object.entries(map).forEach(([k, v]) => { if (v) root.style.setProperty(k, v); });
 
     const dbgTheme = qs("#dbgTheme");
     if (dbgTheme) dbgTheme.textContent = tg.colorScheme ?? "—";
@@ -244,7 +240,7 @@
       game: state.game,
       platform: state.platform,
       input: state.input,
-      difficulty: state.mode, // ✅ router expects difficulty
+      difficulty: state.mode, // router expects difficulty
       voice: state.voice,
       role: state.role,
       bf6_class: state.bf6_class,
@@ -268,13 +264,13 @@
     };
   }
 
+  // ✅ FIX: profile всегда должен уходить в формате router, а не state-объект
   function sendToBot(payload) {
     try {
       const fixed = { ...payload };
 
-      if (fixed.profile && typeof fixed.profile === "object") {
-        fixed.profile = toRouterProfile();
-      }
+      // если в payload есть profile — подменяем на router-формат
+      if ("profile" in fixed) fixed.profile = toRouterProfile();
 
       const pack = enrichPayload(fixed);
       let data = JSON.stringify(pack);
@@ -304,8 +300,9 @@
     }
   }
 
+  // ✅ FIX: router ждёт type="nav", а не "open"
   function openBotMenuHint(target) {
-    sendToBot({ type: "open", target, profile: state });
+    sendToBot({ type: "nav", target, profile: true });
   }
 
   // ---------- Telegram native buttons ----------
@@ -340,11 +337,11 @@
       haptic("impact", "medium");
 
       if (currentTab === "settings") {
-        sendToBot({ type: "set_profile", profile: state });
+        sendToBot({ type: "set_profile", profile: true });
         return;
       }
       if (currentTab === "coach") {
-        sendToBot({ type: "training_plan", focus: state.focus, profile: state });
+        sendToBot({ type: "training_plan", focus: state.focus, profile: true });
         return;
       }
       if (currentTab === "vod") {
@@ -352,11 +349,11 @@
         const t2 = (qs("#vod2")?.value || "").trim();
         const t3 = (qs("#vod3")?.value || "").trim();
         const note = (qs("#vodNote")?.value || "").trim();
-        sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
+        sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
         return;
       }
       if (currentTab === "zombies") {
-        sendToBot({ type: "zombies_open", map: state.zombies_map, profile: state });
+        sendToBot({ type: "zombies_open", map: state.zombies_map, profile: true });
         return;
       }
 
@@ -368,19 +365,11 @@
       selectTab("home");
     };
 
-    try {
-      tg.MainButton.offClick?.(tgMainHandler);
-      tg.MainButton.onClick(tgMainHandler);
-    } catch {
-      try { tg.MainButton.onClick(tgMainHandler); } catch {}
-    }
+    try { tg.MainButton.offClick?.(tgMainHandler); } catch {}
+    try { tg.MainButton.onClick(tgMainHandler); } catch {}
 
-    try {
-      tg.BackButton.offClick?.(tgBackHandler);
-      tg.BackButton.onClick(tgBackHandler);
-    } catch {
-      try { tg.BackButton.onClick(tgBackHandler); } catch {}
-    }
+    try { tg.BackButton.offClick?.(tgBackHandler); } catch {}
+    try { tg.BackButton.onClick(tgBackHandler); } catch {}
   }
 
   // ---------- Share ----------
@@ -489,14 +478,9 @@
     const t = String(text ?? "").trim();
     if (!t) return null;
 
-    // анти-спам кликов
     const delta = now() - (chat.lastAskAt || 0);
     if (delta < 450) return null;
     chat.lastAskAt = now();
-
-    if (!tg) {
-      // Browser mode: still try fetch
-    }
 
     setTyping(true);
 
@@ -504,8 +488,7 @@
       initData: tg?.initData || "",
       text: t,
       profile: toRouterProfile(),
-      history: chat.history.slice(-20)
-        .map(m => ({ role: m.role, content: m.text })) // not required, but nice
+      history: chat.history.slice(-20).map(m => ({ role: m.role, content: m.text }))
     };
 
     try {
@@ -541,7 +524,6 @@
     renderChat();
     await saveChat();
 
-    // ask server brain
     const reply = await askBrain(text);
 
     if (reply) {
@@ -552,7 +534,6 @@
       return;
     }
 
-    // fallback: if no reply — offer sendData route
     haptic("notif", "warning");
     toast("Нет ответа. Можно отправить в бота.");
   }
@@ -583,6 +564,11 @@
 
     if (window.PointerEvent) {
       root.addEventListener("pointerup", (e) => {
+        const btn = e.target.closest(".seg-btn");
+        if (!btn) return;
+        handler(btn);
+      }, { passive: true });
+      root.addEventListener("click", (e) => {
         const btn = e.target.closest(".seg-btn");
         if (!btn) return;
         handler(btn);
@@ -647,6 +633,287 @@
     });
   }
 
+  // =========================================================
+  // 🎯 GAME #1: AIM TRIAL (ARCADE)
+  // =========================================================
+  const aim = {
+    running: false,
+    startedAt: 0,
+    durationMs: 20000,
+    shots: 0,
+    hits: 0,
+    timerId: null
+  };
+
+  function aimEls() {
+    return {
+      arena: qs("#aimArena"),
+      target: qs("#aimTarget"),
+      stat: qs("#aimStat"),
+      btnStart: qs("#btnAimStart"),
+      btnStop: qs("#btnAimStop"),
+      btnSend: qs("#btnAimSend")
+    };
+  }
+
+  function aimReset() {
+    aim.running = false;
+    aim.startedAt = 0;
+    aim.shots = 0;
+    aim.hits = 0;
+    if (aim.timerId) { clearInterval(aim.timerId); aim.timerId = null; }
+    aimUpdateUI();
+  }
+
+  function aimMoveTarget() {
+    const { arena, target } = aimEls();
+    if (!arena || !target) return;
+
+    const rect = arena.getBoundingClientRect();
+    const pad = 18;
+
+    const w = Math.max(60, rect.width);
+    const h = Math.max(160, rect.height);
+
+    const x = pad + Math.random() * (w - pad * 2);
+    const y = pad + Math.random() * (h - pad * 2);
+
+    target.style.transform = `translate(${x}px, ${y}px)`;
+  }
+
+  function aimUpdateUI() {
+    const { stat, btnStart, btnStop, btnSend } = aimEls();
+    const acc = aim.shots ? Math.round((aim.hits / aim.shots) * 100) : 0;
+    const tLeft = aim.running
+      ? Math.max(0, aim.durationMs - (now() - aim.startedAt))
+      : 0;
+
+    if (stat) stat.textContent = aim.running
+      ? `⏱ ${(tLeft / 1000).toFixed(1)}s • 🎯 ${aim.hits}/${aim.shots} • Acc ${acc}%`
+      : `🎯 ${aim.hits}/${aim.shots} • Acc ${acc}%`;
+
+    if (btnStart) btnStart.disabled = aim.running;
+    if (btnStop) btnStop.disabled = !aim.running;
+    if (btnSend) btnSend.disabled = aim.running || aim.shots < 5;
+  }
+
+  function aimStop(auto = false) {
+    if (!aim.running) return;
+    aim.running = false;
+    if (aim.timerId) { clearInterval(aim.timerId); aim.timerId = null; }
+    aimUpdateUI();
+    haptic("notif", auto ? "warning" : "success");
+    toast(auto ? "AIM завершён" : "Остановлено");
+  }
+
+  function aimStart() {
+    if (aim.running) return;
+    aimReset();
+    aim.running = true;
+    aim.startedAt = now();
+    aimMoveTarget();
+    aimUpdateUI();
+
+    aim.timerId = setInterval(() => {
+      aimMoveTarget();
+      aimUpdateUI();
+      if (now() - aim.startedAt >= aim.durationMs) aimStop(true);
+    }, 650);
+
+    toast("AIM: поехали 😈");
+    haptic("notif", "success");
+  }
+
+  function aimSendResult() {
+    const duration = aim.running ? (now() - aim.startedAt) : aim.durationMs;
+    const acc = aim.shots ? (aim.hits / aim.shots) : 0;
+
+    sendToBot({
+      action: "game_result",
+      game: "aim",
+      mode: "arcade",
+      shots: aim.shots,
+      hits: aim.hits,
+      accuracy: acc,
+      score: Math.round(aim.hits * 100 + acc * 100),
+      duration_ms: duration,
+      profile: true
+    });
+  }
+
+  // =========================================================
+  // 🧟 GAME #2: ZOMBIES SURVIVAL (ARCADE + ROGUELIKE)
+  // =========================================================
+  const zgame = {
+    running: false,
+    startedAt: 0,
+    mode: "arcade", // arcade | roguelike
+    wave: 1,
+    kills: 0,
+    coins: 0,
+    weapon: "SMG",
+    perks: [],
+    hp: 100,
+    timerId: null
+  };
+
+  function zEls() {
+    return {
+      stat: qs("#zStat"),
+      btnArcade: qs("#btnZModeArcade"),
+      btnRogue: qs("#btnZModeRogue"),
+      btnStart: qs("#btnZGameStart"),
+      btnStop: qs("#btnZGameStop"),
+      btnSend: qs("#btnZGameSend"),
+      btnBuyJug: qs("#btnZBuyJug"),
+      btnBuySpeed: qs("#btnZBuySpeed"),
+      btnBuyAmmo: qs("#btnZBuyAmmo"),
+      arena: qs("#zArena"),
+      z1: qs("#z1"),
+      z2: qs("#z2"),
+      z3: qs("#z3")
+    };
+  }
+
+  function zUpdateUI() {
+    const { stat, btnStart, btnStop, btnSend } = zEls();
+    const dur = zgame.running ? (now() - zgame.startedAt) : 0;
+
+    if (stat) {
+      stat.textContent =
+        `🎮 ${zgame.mode.toUpperCase()} • 🧟 Wave ${zgame.wave} • ☠️ ${zgame.kills} • 💰 ${zgame.coins} • ❤️ ${zgame.hp} • 🔫 ${zgame.weapon}` +
+        (zgame.perks.length ? ` • 🧪 ${zgame.perks.join(", ")}` : "") +
+        (zgame.running ? ` • ⏱ ${(dur / 1000).toFixed(0)}s` : "");
+    }
+
+    if (btnStart) btnStart.disabled = zgame.running;
+    if (btnStop) btnStop.disabled = !zgame.running;
+    if (btnSend) btnSend.disabled = zgame.running || zgame.kills < 5;
+  }
+
+  function zReset() {
+    zgame.running = false;
+    zgame.startedAt = 0;
+    zgame.wave = 1;
+    zgame.kills = 0;
+    zgame.coins = 0;
+    zgame.weapon = "SMG";
+    zgame.perks = [];
+    zgame.hp = 100;
+    if (zgame.timerId) { clearInterval(zgame.timerId); zgame.timerId = null; }
+    zUpdateUI();
+  }
+
+  function zSpawn() {
+    const { arena, z1, z2, z3 } = zEls();
+    if (!arena || !z1 || !z2 || !z3) return;
+
+    const rect = arena.getBoundingClientRect();
+    const pad = 14;
+
+    const place = (el) => {
+      const x = pad + Math.random() * (Math.max(180, rect.width) - pad * 2);
+      const y = pad + Math.random() * (Math.max(180, rect.height) - pad * 2);
+      el.style.transform = `translate(${x}px, ${y}px)`;
+      el.classList.remove("dead");
+      el.dataset.alive = "1";
+    };
+
+    place(z1); place(z2); place(z3);
+  }
+
+  function zOnKill() {
+    zgame.kills += 1;
+    zgame.coins += (zgame.mode === "roguelike") ? 2 : 1;
+
+    // wave up: каждые 10 киллов
+    if (zgame.kills % 10 === 0) {
+      zgame.wave += 1;
+      // сложность: по чуть-чуть жмём HP
+      if (zgame.mode === "roguelike") zgame.hp = Math.max(0, zgame.hp - 6);
+      else zgame.hp = Math.max(0, zgame.hp - 3);
+      toast(`Wave ${zgame.wave} 🔥`);
+      haptic("impact", "medium");
+      zSpawn();
+    }
+
+    // death condition
+    if (zgame.hp <= 0) {
+      zStop(true);
+    }
+
+    zUpdateUI();
+  }
+
+  function zStop(auto = false) {
+    if (!zgame.running) return;
+    zgame.running = false;
+    if (zgame.timerId) { clearInterval(zgame.timerId); zgame.timerId = null; }
+    zUpdateUI();
+    toast(auto ? "Zombies: конец рана" : "Zombies: стоп");
+    haptic("notif", auto ? "warning" : "success");
+  }
+
+  function zStart() {
+    if (zgame.running) return;
+    zReset();
+    zgame.running = true;
+    zgame.startedAt = now();
+    zSpawn();
+    zUpdateUI();
+
+    // авто-спавн/давление
+    zgame.timerId = setInterval(() => {
+      // периодический “урон” как давление
+      if (zgame.mode === "roguelike") zgame.hp = Math.max(0, zgame.hp - 2);
+      else zgame.hp = Math.max(0, zgame.hp - 1);
+
+      if (zgame.hp <= 0) zStop(true);
+      zUpdateUI();
+    }, 1800);
+
+    toast(zgame.mode === "roguelike" ? "Roguelike: выживай 😈" : "Arcade: поехали 💥");
+    haptic("notif", "success");
+  }
+
+  function zSendResult() {
+    const duration = zgame.running ? (now() - zgame.startedAt) : (now() - (zgame.startedAt || now()));
+    sendToBot({
+      action: "game_result",
+      game: "zombies",
+      mode: zgame.mode,
+      wave: zgame.wave,
+      kills: zgame.kills,
+      coins: zgame.coins,
+      duration_ms: duration,
+      loadout: { weapon: zgame.weapon, perks: zgame.perks.slice(0, 6) },
+      score: Math.round(zgame.kills * 50 + zgame.wave * 80 + zgame.coins),
+      profile: true
+    });
+  }
+
+  function zSetMode(m) {
+    zgame.mode = m;
+    const { btnArcade, btnRogue } = zEls();
+    if (btnArcade) btnArcade.classList.toggle("active", m === "arcade");
+    if (btnRogue) btnRogue.classList.toggle("active", m === "roguelike");
+    toast(m === "roguelike" ? "Режим: Roguelike 😈" : "Режим: Arcade 💥");
+    haptic("impact", "light");
+    zUpdateUI();
+  }
+
+  function zBuy(name, cost, effect) {
+    if (!zgame.running || zgame.mode !== "roguelike") { toast("Roguelike только во время рана"); return; }
+    if (zgame.coins < cost) { haptic("notif", "warning"); toast("Не хватает монет 💰"); return; }
+    if (zgame.perks.includes(name)) { toast("Уже куплено"); return; }
+    zgame.coins -= cost;
+    zgame.perks.push(name);
+    try { effect?.(); } catch {}
+    toast(`Куплено: ${name} ✅`);
+    haptic("notif", "success");
+    zUpdateUI();
+  }
+
   // ---------- Wire buttons ----------
   function wireButtons() {
     onTap(qs("#btnClose"), () => {
@@ -654,12 +921,14 @@
       tg?.close?.();
     });
 
+    // home / bot
     onTap(qs("#btnOpenBot"), () => openBotMenuHint("main"));
     onTap(qs("#btnPremium"), () => openBotMenuHint("premium"));
-    onTap(qs("#btnSync"), () => sendToBot({ type: "sync_request", profile: state }));
+    onTap(qs("#btnSync"), () => sendToBot({ type: "sync_request", profile: true }));
 
+    // coach / vod / settings / zombies (bot-side)
     onTap(qs("#btnOpenTraining"), () => openBotMenuHint("training"));
-    onTap(qs("#btnSendPlan"), () => sendToBot({ type: "training_plan", focus: state.focus, profile: state }));
+    onTap(qs("#btnSendPlan"), () => sendToBot({ type: "training_plan", focus: state.focus, profile: true }));
 
     onTap(qs("#btnOpenVod"), () => openBotMenuHint("vod"));
     onTap(qs("#btnSendVod"), () => {
@@ -667,31 +936,32 @@
       const t2 = (qs("#vod2")?.value || "").trim();
       const t3 = (qs("#vod3")?.value || "").trim();
       const note = (qs("#vodNote")?.value || "").trim();
-      sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: state });
+      sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
     });
 
     onTap(qs("#btnOpenSettings"), () => openBotMenuHint("settings"));
-    onTap(qs("#btnApplyProfile"), () => sendToBot({ type: "set_profile", profile: state }));
+    onTap(qs("#btnApplyProfile"), () => sendToBot({ type: "set_profile", profile: true }));
 
-    onTap(qs("#btnOpenZombies"), () => sendToBot({ type: "zombies_open", map: state.zombies_map, profile: state }));
-    onTap(qs("#btnZPerks"), () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map, profile: state }));
-    onTap(qs("#btnZLoadout"), () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map, profile: state }));
-    onTap(qs("#btnZEggs"), () => sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map, profile: state }));
-    onTap(qs("#btnZRound"), () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map, profile: state }));
-    onTap(qs("#btnZTips"), () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map, profile: state }));
+    onTap(qs("#btnOpenZombies"), () => sendToBot({ type: "zombies_open", map: state.zombies_map, profile: true }));
+    onTap(qs("#btnZPerks"), () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map, profile: true }));
+    onTap(qs("#btnZLoadout"), () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map, profile: true }));
+    onTap(qs("#btnZEggs"), () => sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map, profile: true }));
+    onTap(qs("#btnZRound"), () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map, profile: true }));
+    onTap(qs("#btnZTips"), () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map, profile: true }));
 
-    onTap(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month", profile: state }));
-    onTap(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime", profile: state }));
+    // pay
+    onTap(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month", profile: true }));
+    onTap(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime", profile: true }));
 
     onTap(qs("#btnShare"), () => {
       const text =
         "BLACK CROWN OPS 😈\n" +
         "Тренировки, VOD, настройки, Zombies — всё в одном месте.\n" +
-        "Теперь ещё и чат внутри Mini App.";
+        "Теперь ещё и мини-игры: Aim Trial + Zombies (Arcade/Roguelike).";
       tryShare(text);
     });
 
-    // ✅ chat buttons
+    // chat
     onTap(qs("#btnChatSend"), () => sendChatFromUI());
     onTap(qs("#btnChatClear"), async () => {
       haptic("impact", "light");
@@ -705,7 +975,6 @@
       tryShare(exportChatText() || "— пусто —");
     });
 
-    // Enter-to-send (iOS friendly): Enter = send, Shift+Enter = newline
     const chatInput = qs("#chatInput");
     if (chatInput) {
       chatInput.addEventListener("keydown", (e) => {
@@ -715,35 +984,81 @@
         }
       });
     }
+
+    // AIM game
+    const { arena, target, btnStart, btnStop, btnSend } = aimEls();
+    onTap(btnStart, () => aimStart());
+    onTap(btnStop, () => aimStop(false));
+    onTap(btnSend, () => aimSendResult());
+
+    if (arena && target) {
+      // hit
+      onTap(target, (e) => {
+        if (!aim.running) return;
+        aim.shots += 1;
+        aim.hits += 1;
+        haptic("impact", "light");
+        aimMoveTarget();
+        aimUpdateUI();
+        e?.preventDefault?.();
+        e?.stopPropagation?.();
+      });
+
+      // miss (tap arena)
+      onTap(arena, () => {
+        if (!aim.running) return;
+        aim.shots += 1;
+        haptic("impact", "light");
+        aimUpdateUI();
+      });
+    }
+
+    // ZOMBIES game
+    const ze = zEls();
+    onTap(ze.btnArcade, () => zSetMode("arcade"));
+    onTap(ze.btnRogue, () => zSetMode("roguelike"));
+    onTap(ze.btnStart, () => zStart());
+    onTap(ze.btnStop, () => zStop(false));
+    onTap(ze.btnSend, () => zSendResult());
+
+    onTap(ze.btnBuyJug, () => zBuy("Jug", 12, () => { zgame.hp = Math.min(140, zgame.hp + 25); }));
+    onTap(ze.btnBuySpeed, () => zBuy("Speed", 10, () => { zgame.weapon = "AR"; }));
+    onTap(ze.btnBuyAmmo, () => zBuy("Ammo", 8, () => { zgame.coins += 2; }));
+
+    const hitZombie = (zEl) => {
+      if (!zgame.running) return;
+      if (!zEl || zEl.dataset.alive !== "1") return;
+      zEl.dataset.alive = "0";
+      zEl.classList.add("dead");
+      haptic("impact", "light");
+      zOnKill();
+    };
+
+    onTap(ze.z1, () => hitZombie(ze.z1));
+    onTap(ze.z2, () => hitZombie(ze.z2));
+    onTap(ze.z3, () => hitZombie(ze.z3));
+
+    // miss on arena = hp down
+    onTap(ze.arena, () => {
+      if (!zgame.running) return;
+      zgame.hp = Math.max(0, zgame.hp - (zgame.mode === "roguelike" ? 4 : 2));
+      haptic("notif", "warning");
+      zUpdateUI();
+      if (zgame.hp <= 0) zStop(true);
+    });
   }
 
   // ---------- Build tag ----------
   function ensureBuildTag() {
-    const buildFromIndex = (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__")
-      ? window.__BCO_BUILD__
-      : null;
+    const buildFromIndex =
+      (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__")
+        ? window.__BCO_BUILD__
+        : null;
 
-    const txt = buildFromIndex
-      ? `build ${buildFromIndex} • v${VERSION}`
-      : `v${VERSION}`;
+    const txt = buildFromIndex ? `build ${buildFromIndex} • v${VERSION}` : `v${VERSION}`;
 
     const buildTag = qs("#buildTag");
-    if (buildTag) {
-      buildTag.textContent = txt;
-      return;
-    }
-
-    const footLeft = qs(".foot-left");
-    if (footLeft) {
-      const span = document.createElement("span");
-      span.id = "buildTag";
-      span.style.display = "block";
-      span.style.marginTop = "8px";
-      span.style.opacity = "0.65";
-      span.style.fontSize = "12px";
-      span.textContent = txt;
-      footLeft.appendChild(span);
-    }
+    if (buildTag) buildTag.textContent = txt;
   }
 
   // ---------- Init Telegram ----------
@@ -813,8 +1128,13 @@
     wireHeaderChips();
     wireButtons();
 
-    // ✅ render chat from storage
+    // chat
     renderChat();
+
+    // games init
+    aimReset();
+    zReset();
+    zSetMode("arcade");
 
     selectTab("home");
   }
