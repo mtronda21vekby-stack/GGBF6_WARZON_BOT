@@ -382,7 +382,32 @@
       document.body.appendChild(s);
     })();
   </script>
+<script>
+  (function () {
+    var build = window.__BCO_BUILD__ || String(Date.now());
 
+    function load(src) {
+      return new Promise(function (resolve, reject) {
+        var s = document.createElement("script");
+        s.src = src + "?build=" + encodeURIComponent(build);
+        s.onload = resolve;
+        s.onerror = reject;
+        document.body.appendChild(s);
+      });
+    }
+
+    // ✅ ВАЖНО: порядок!
+    // 1) zombies.js (ядро игры, ставит window.BCO_ZOMBIES)
+    // 2) zombies.assets.js (подменяет draw-хуки / подключает ассеты)
+    // 3) app.js (всё остальное: UI, кнопки, запуск)
+    load("/webapp/zombies.js")
+      .then(function () { return load("/webapp/zombies.assets.js"); })
+      .then(function () { return load("/webapp/app.js"); })
+      .catch(function (e) {
+        console.error("BCO boot load error:", e);
+      });
+  })();
+</script>
   <!-- ✅ индикатор: js подхватился -->
   <script>
     (function () {
