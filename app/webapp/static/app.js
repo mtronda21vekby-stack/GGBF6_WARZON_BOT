@@ -4,7 +4,7 @@
 
   const tg = window.Telegram?.WebApp;
 
-  const VERSION = "1.3.1";
+  const VERSION = "1.3.2";
   const STORAGE_KEY = "bco_state_v1";
   const CHAT_KEY = "bco_chat_v1";
 
@@ -64,7 +64,7 @@
     let locked = false;
     const lock = () => {
       locked = true;
-      setTimeout(() => (locked = false), 280);
+      setTimeout(() => (locked = false), 260);
     };
 
     const fire = (e) => {
@@ -73,6 +73,8 @@
       try { handler(e); } catch {}
     };
 
+    // PointerEvent exists on iOS modern; keep both pointerup and click,
+    // but guard with lock (prevents double-fire).
     if (window.PointerEvent) {
       el.addEventListener("pointerup", fire, { passive: true });
       el.addEventListener("click", fire, { passive: true });
@@ -264,6 +266,52 @@
     };
   }
 
+  // ✅ safer truncation: never slice JSON mid-string
+  function packWithinLimit(pack, maxLen = 15000) {
+    const tryStringify = (obj) => {
+      try { return JSON.stringify(obj); } catch { return ""; }
+    };
+
+    let s = tryStringify(pack);
+    if (s.length <= maxLen) return { ok: true, json: s, pack };
+
+    // shrink common big fields first
+    const clone = JSON.parse(JSON.stringify(pack || {}));
+    const shrinkField = (path, limit) => {
+      try {
+        let ref = clone;
+        for (let i = 0; i < path.length - 1; i++) ref = ref?.[path[i]];
+        const k = path[path.length - 1];
+        if (typeof ref?.[k] === "string") ref[k] = ref[k].slice(0, limit);
+      } catch {}
+    };
+
+    shrinkField(["text"], 2500);
+    shrinkField(["note"], 2500);
+    shrinkField(["meta", "note"], 2000);
+
+    // history can be big in some payloads
+    if (Array.isArray(clone.history)) clone.history = clone.history.slice(-10);
+
+    s = tryStringify(clone);
+    if (s.length <= maxLen) return { ok: true, json: s, pack: clone };
+
+    // last resort: drop non-critical
+    if (clone.meta) {
+      clone.meta = { ...clone.meta, dropped: true };
+    }
+    delete clone.history;
+    delete clone.note;
+    delete clone.text;
+
+    s = tryStringify(clone);
+    if (s.length <= maxLen) return { ok: true, json: s, pack: clone };
+
+    // absolute last: minimal ping
+    const min = { v: VERSION, t: now(), type: "ping" };
+    return { ok: false, json: tryStringify(min), pack: min };
+  }
+
   function sendToBot(payload) {
     try {
       const fixed = { ...(payload || {}) };
@@ -274,14 +322,7 @@
       }
 
       const pack = enrichPayload(fixed);
-      let data = JSON.stringify(pack);
-
-      const MAX = 15000;
-      if (data.length > MAX) {
-        if (typeof pack.text === "string") pack.text = pack.text.slice(0, 4000);
-        if (typeof pack.note === "string") pack.note = pack.note.slice(0, 4000);
-        data = JSON.stringify(pack).slice(0, MAX);
-      }
+      const bounded = packWithinLimit(pack, 15000);
 
       if (!tg?.sendData) {
         haptic("notif", "error");
@@ -289,8 +330,9 @@
         return;
       }
 
-      tg.sendData(data);
+      tg.sendData(bounded.json);
       haptic("notif", "success");
+
       const statSession = qs("#statSession");
       if (statSession) statSession.textContent = "SENT";
       toast("Отправлено в бота 🚀");
@@ -333,6 +375,7 @@
     if (tgButtonsWired) return;
     tgButtonsWired = true;
 
+    // Wire once, but keep stable references
     tgMainHandler = () => {
       haptic("impact", "medium");
 
@@ -358,10 +401,11 @@
       selectTab("home");
     };
 
+    // ensure no duplicates
     try { tg.MainButton.offClick?.(tgMainHandler); } catch {}
-    try { tg.MainButton.onClick?.(tgMainHandler); } catch {}
-
     try { tg.BackButton.offClick?.(tgBackHandler); } catch {}
+
+    try { tg.MainButton.onClick?.(tgMainHandler); } catch {}
     try { tg.BackButton.onClick?.(tgBackHandler); } catch {}
   }
 
@@ -875,7 +919,6 @@
       dpr: 1,
 
       _syncPlates() {
-        // plates reflect armor buckets (ceil), capped
         const p = Math.ceil((run.armor || 0) / run.plateValue);
         run.plates = clamp(p, 0, run.platesMax);
         run.armor = clamp(run.armor, 0, run.armorMax);
@@ -997,10 +1040,7 @@
           border: 1px solid rgba(255,255,255,.10);
           backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
         }
-        .bcoz-canvas{
-          position:absolute; inset:0;
-          width:100%; height:100%;
-        }
+        .bcoz-canvas{ position:absolute; inset:0; width:100%; height:100%; }
         .bcoz-joybase{
           position:absolute;
           left: 18px;
@@ -1144,8 +1184,19 @@
       if (!arr.find(s => s.id === state.skin)) state.skin = (arr[0]?.id || "default");
     }
 
+    function syncAssetsIfAny() {
+      // Optional: if you подключишь zombies.assets.js, синхронизируем выбор скина безопасно.
+      try {
+        const A = window.BCO_ZOMBIES_ASSETS;
+        if (!A) return;
+        // API is optional; call only if functions exist.
+        if (typeof A.setPlayerSkin === "function") A.setPlayerSkin(state.character, state.skin);
+      } catch {}
+    }
+
     function getSkin() {
       ensureSkinValid();
+      syncAssetsIfAny();
       const arr = SKINS[state.character] || [];
       return arr.find(s => s.id === state.skin) || arr[0] || { id: "default", colors: ["#9ca3af", "#111827"] };
     }
@@ -1243,6 +1294,8 @@
       input.joyActive = false;
       input.joyX = 0; input.joyY = 0;
       input.shootHeld = false;
+
+      // Default aim: forward
       input.aimX = centerX + 80;
       input.aimY = centerY;
     }
@@ -1304,7 +1357,6 @@
 
         if (run.mode === "arcade") {
           run.hp = Math.min(run.maxHp, run.hp + 12);
-          // arcade чуть подливает armor, но честно — как очки
           run.armor = Math.min(run.armorMax, run.armor + 18);
           run._syncPlates();
         } else {
@@ -1427,8 +1479,8 @@
       for (const z of run.zombies) {
         const d = dist2(x, y, z.x, z.y);
         if (d <= r2) {
-          const t = 1 - Math.sqrt(d) / radius;
-          z.hp -= dmg * (0.45 + 0.55 * t);
+          const tt = 1 - Math.sqrt(d) / radius;
+          z.hp -= dmg * (0.45 + 0.55 * tt);
         }
       }
     }
@@ -1447,7 +1499,6 @@
 
     // ✅ plates shop
     function plateCost() {
-      // wave scaling: чуть дороже на поздних
       const extra = Math.floor(run.wave * 0.6);
       return clamp(run.plateCostBase + extra, 10, 26);
     }
@@ -1479,7 +1530,7 @@
       run.x = clamp(run.x + input.joyX * moveSpeed * dt, 18, run.w - 18);
       run.y = clamp(run.y + input.joyY * moveSpeed * dt, 18 + 90, run.h - 24);
 
-      if (!input.aimX && !input.aimY) {
+      if ((!input.aimX && !input.aimY) || (Number.isNaN(input.aimX) || Number.isNaN(input.aimY))) {
         input.aimX = run.x + 80;
         input.aimY = run.y;
       }
@@ -1563,7 +1614,6 @@
 
         const rr = (z.r + run.r + 6) * (z.r + run.r + 6);
         if (dist2(z.x, z.y, run.x, run.y) <= rr) {
-          // ✅ damage per second -> scaled by dt; armor absorbs 1:1
           const dmg = z.dmg * dt;
           applyPlayerDamage(dmg);
 
@@ -1595,6 +1645,7 @@
 
       ctx.clearRect(0, 0, run.w, run.h);
 
+      // grid
       ctx.save();
       ctx.globalAlpha = 0.08;
       ctx.strokeStyle = "rgba(255,255,255,.25)";
@@ -1613,6 +1664,7 @@
       }
       ctx.restore();
 
+      // particles
       for (const p of run.particles) {
         const k = 1 - (p.t / p.life);
         ctx.save();
@@ -1624,6 +1676,7 @@
         ctx.restore();
       }
 
+      // bullets
       ctx.save();
       for (const b of run.bullets) {
         ctx.globalAlpha = 0.95;
@@ -1634,6 +1687,7 @@
       }
       ctx.restore();
 
+      // zombies
       for (const z of run.zombies) {
         ctx.save();
         ctx.globalAlpha = 0.95;
@@ -1663,6 +1717,7 @@
         ctx.restore();
       }
 
+      // player
       const skin = getSkin();
       const c1 = skin.colors[0] || "#9ca3af";
       const c2 = skin.colors[1] || "#111827";
@@ -1680,7 +1735,7 @@
       ctx.arc(run.x, run.y, run.r, 0, Math.PI * 2);
       ctx.fill();
 
-      // ✅ armor ring shows fill fraction (0..1), synced to plates/armor
+      // ✅ armor ring shows fill fraction (0..1)
       if (run.armor > 0) {
         ctx.globalAlpha = 0.85;
         ctx.strokeStyle = "rgba(59,130,246,.9)";
@@ -1704,6 +1759,7 @@
         ctx.fillText("👑", run.x - 10, run.y - 18);
       }
 
+      // Aim line (yes: aim+shoot on map)
       ctx.globalAlpha = 0.22;
       ctx.strokeStyle = "rgba(255,255,255,.65)";
       ctx.lineWidth = 2;
@@ -1714,6 +1770,7 @@
 
       ctx.restore();
 
+      // vignette
       ctx.save();
       const g = ctx.createRadialGradient(run.w * 0.5, run.h * 0.45, 10, run.w * 0.5, run.h * 0.45, Math.max(run.w, run.h) * 0.65);
       g.addColorStop(0, "rgba(0,0,0,0)");
@@ -1827,7 +1884,6 @@
             critChance: +run.critChance.toFixed(3),
             coinMul: +run.coinMul.toFixed(3),
 
-            // ✅ armor info
             armor: Math.round(run.armor),
             armorMax: run.armorMax,
             plates: run.plates,
@@ -2089,6 +2145,7 @@
 
       onTap(ui.btnReload, () => startReload(now()));
 
+      // FIRE button: hold to shoot; also updates aim
       const shootBtn = ui.btnShoot;
       if (shootBtn) {
         const down = (e) => {
@@ -2110,6 +2167,7 @@
         }
       }
 
+      // Left joystick: movement
       const joy = qs("#bcozJoy");
       const onJoyDown = (e) => {
         const p = pointerToOverlayXY(e);
@@ -2161,6 +2219,7 @@
         }
       }
 
+      // Canvas aim: tap sets aim; drag updates aim while firing (so yes: aim+shoot on map)
       if (canvas) {
         const aimMove = (e) => {
           const p = pointerToOverlayXY(e);
@@ -2238,7 +2297,6 @@
 
             <div class="bcoz-hr"></div>
 
-            <!-- ✅ Plates block -->
             <div style="font-weight:1000; margin-bottom:8px;">Armor Plates</div>
             <div id="bcozPlateItem"></div>
 
@@ -2309,6 +2367,7 @@
       renderWeaponShop();
       renderCharSelect();
       updateHud();
+      syncAssetsIfAny();
     }
 
     function destroyOverlay() {
@@ -2346,8 +2405,8 @@
       destroy: destroyOverlay,
       setMode,
       sendResult,
-      buyPerk,     // ✅ exposed for main buttons
-      buyPlate,    // ✅ exposed for main buttons
+      buyPerk,
+      buyPlate,
       isOpen: () => !!overlay
     };
   })();
@@ -2451,7 +2510,7 @@
       });
     }
 
-    // ✅ ZOMBIES Fullscreen launcher (keeps your existing HTML buttons)
+    // ✅ ZOMBIES Fullscreen launcher
     const btnZArc = qs("#btnZModeArcade");
     const btnZRog = qs("#btnZModeRogue");
     const btnZStart = qs("#btnZGameStart");
@@ -2465,7 +2524,7 @@
     onTap(btnZStop, () => { Z.open(); Z.stop(); toast("Zombies: стоп"); });
     onTap(btnZSend, () => { Z.open(); Z.sendResult("manual"); });
 
-    // ✅ Old home "Shop" buttons now реально покупают (в overlay roguelike)
+    // ✅ Old home "Shop" buttons now реально покупают
     onTap(qs("#btnZBuyJug"), () => { Z.open(); Z.setMode("roguelike"); Z.start(); Z.buyPerk("Jug"); });
     onTap(qs("#btnZBuySpeed"), () => { Z.open(); Z.setMode("roguelike"); Z.start(); Z.buyPerk("Speed"); });
     onTap(qs("#btnZBuyAmmo"), () => { Z.open(); Z.setMode("roguelike"); Z.start(); Z.buyPerk("Mag"); });
