@@ -1,262 +1,266 @@
 /* =========================================================
-   BLACK CROWN OPS — ZOMBIES PERKS [LUX + COMPAT]
+   BLACK CROWN OPS — ZOMBIES PERKS [LUX + 3D-READY + COMPAT]
    File: app/webapp/static/zombies.perks.js
 
-   Provides: window.BCO_ZOMBIES_PERKS with BOTH APIs:
-   A) "Shop API" (used by zombies.js overlay):
-      - cost(perkId, run) -> number
-      - canBuy(perkId, run) -> boolean
-      - buy(perkId, run) -> boolean
-      - apply(perkId, run) -> void
-      - tick(run, dt, tms) -> void
-      - label(perkId, run) -> string
+   Goals:
+     ✅ Two-level API:
+        A) Shop API (cost/canBuy/buy/apply/tick/label)
+        B) Back-compat direct fn (Jug/Speed/Mag/Armor/Reload/Crit/Loot/Sprint/Tap/Quick/Dead)
+     ✅ Works with your LUX zombies.core.js v1.2:
+        - CORE.state.perks is flags (0/1) in core today
+        - This file adds OPTIONAL leveling stored separately in run._perkLv
+          (so we don't break core flags). Core flags are still set to 1 on first buy.
+     ✅ NO UI changes; UI can call CORE.buyPerk("Jug") etc; world/init can wire.
+     ✅ 3D-ready: no DOM/canvas; pure state mutation + small runtime cache.
+     ✅ Elite feel: regen, DR scalar, small bonus logic, future hooks.
 
-   B) Back-compat "direct perk fn" (your current style):
-      - Jug(CORE), Speed(CORE), Mag(CORE)
-      (works with zombies.core.js if you call it on buy)
+   Notes:
+     - Your CORE already handles perks flags in _effectiveStats() and _weaponEffective().
+     - This module adds extra depth (levels, regen, dmgMul, etc.) without breaking core.
+     - If you want CORE to actually use dmgMul, we’ll patch CORE._damagePlayer in zombies.core.js next.
    ========================================================= */
 (() => {
   "use strict";
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const now = () => (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
 
   // ---------------------------------------------------------
-  // Perk definitions (scalable, elite-feel)
+  // Perk definitions (elite curve, scalable)
   // ---------------------------------------------------------
   const DEF = {
-    Jug: {
-      name: "Jugger",
-      emoji: "🧪",
-      maxLv: 3,
-      baseCost: 12,
-      costMul: 1.55,
-      desc: "HP max +, damage resist (L2+)"
-    },
-    Speed: {
-      name: "Stamin-Up",
-      emoji: "⚡",
-      maxLv: 3,
-      baseCost: 10,
-      costMul: 1.55,
-      desc: "Move speed +, iFrames + (L2+)"
-    },
-    Mag: {
-      name: "Ammo",
-      emoji: "🔫",
-      maxLv: 3,
-      baseCost: 8,
-      costMul: 1.55,
-      desc: "Pierce +, spread -, reload feel (future)"
-    },
+    Jug:    { name: "Jugger",     emoji: "🧪", maxLv: 3, baseCost: 12, costMul: 1.55, desc: "HP max +, damage resist (L2+)" },
+    Speed:  { name: "Stamin-Up",  emoji: "⚡", maxLv: 3, baseCost: 10, costMul: 1.55, desc: "Move speed +, iFrames + (L2+)" },
+    Mag:    { name: "Ammo",       emoji: "📦", maxLv: 3, baseCost: 8,  costMul: 1.55, desc: "Mag/reserve +, pierce +" },
+    Armor:  { name: "Plates",     emoji: "🛡", maxLv: 3, baseCost: 14, costMul: 1.55, desc: "Armor max +, plating faster" },
+    Reload: { name: "Fast Hands", emoji: "🔄", maxLv: 3, baseCost: 11, costMul: 1.55, desc: "Reload faster" },
+    Crit:   { name: "Deadshot",   emoji: "🎯", maxLv: 3, baseCost: 13, costMul: 1.60, desc: "Crit chance/dmg +" },
+    Loot:   { name: "Scavenger",  emoji: "💰", maxLv: 3, baseCost: 12, costMul: 1.55, desc: "Better drops + magnet" },
+    Sprint: { name: "Marathon",   emoji: "🏃", maxLv: 3, baseCost: 10, costMul: 1.55, desc: "Less move penalty" },
 
-    // Extras (future UI can expose)
-    Tap: {
-      name: "Double Tap",
-      emoji: "💥",
-      maxLv: 3,
-      baseCost: 14,
-      costMul: 1.60,
-      desc: "Fire rate +, recoil/spread -"
-    },
-    Quick: {
-      name: "Quick Revive",
-      emoji: "💉",
-      maxLv: 3,
-      baseCost: 11,
-      costMul: 1.55,
-      desc: "HP regen over time"
-    },
-    Dead: {
-      name: "Deadshot",
-      emoji: "🎯",
-      maxLv: 3,
-      baseCost: 13,
-      costMul: 1.60,
-      desc: "Aim assist +, crit bonus (future)"
-    }
+    // extra/future perks (safe to exist even if UI doesn't show them)
+    Tap:    { name: "Double Tap", emoji: "💥", maxLv: 3, baseCost: 14, costMul: 1.60, desc: "Fire rate +, spread -" },
+    Quick:  { name: "Quick Rev",  emoji: "💉", maxLv: 3, baseCost: 11, costMul: 1.55, desc: "HP regen over time" },
+    Dead:   { name: "Deadshot+",  emoji: "🧿", maxLv: 3, baseCost: 15, costMul: 1.62, desc: "Aim assist + (future) + crit" }
   };
 
-  function getPerksObj(run) {
-    // overlay run has run.perks, CORE has CORE.state.perks
+  // ---------------------------------------------------------
+  // Helpers to read/write across "run" shapes
+  // run can be CORE or an overlay state object
+  // ---------------------------------------------------------
+  function getPerksFlags(run) {
+    // CORE: run.state.perks ; overlay: run.perks
     if (!run) return null;
-    if (run.perks && typeof run.perks === "object") return run.perks;
     if (run.state?.perks && typeof run.state.perks === "object") return run.state.perks;
+    if (run.perks && typeof run.perks === "object") return run.perks;
     return null;
   }
 
   function getCoins(run) {
     if (!run) return 0;
-    if (Number.isFinite(run.coins)) return run.coins;
-    if (Number.isFinite(run.state?.coins)) return run.state.coins;
+    if (Number.isFinite(run.state?.coins)) return run.state.coins | 0;
+    if (Number.isFinite(run.coins)) return run.coins | 0;
     return 0;
   }
 
   function setCoins(run, v) {
+    const val = v | 0;
     if (!run) return;
-    if (Number.isFinite(run.coins)) run.coins = v;
-    else if (Number.isFinite(run.state?.coins)) run.state.coins = v;
+    if (Number.isFinite(run.state?.coins)) run.state.coins = val;
+    else if (Number.isFinite(run.coins)) run.coins = val;
   }
 
   function getMode(run) {
     const m = String(run?.mode || run?.meta?.mode || "").toLowerCase();
-    if (m.includes("rogue")) return "roguelike";
-    return "arcade";
+    return m.includes("rogue") ? "roguelike" : "arcade";
   }
 
   function getPlayer(run) {
-    // overlay: run.p ; CORE: run.state.player
-    return run?.p || run?.state?.player || null;
+    return run?.state?.player || run?.player || run?.p || null;
   }
 
   function getCfg(run) {
-    // overlay: CFG is inside zombies.js; CORE: run.cfg
-    // We can still mutate some values if present in run.cfg.
-    return run?.cfg || null;
+    return run?.cfg || run?.state?.cfg || null;
+  }
+
+  // ---------------------------------------------------------
+  // Level storage (DO NOT break core flags)
+  // - Core uses state.perks.{Jug:0/1,...}
+  // - We keep levels in run._perkLv (per-run) and mirror "owned" into flags.
+  // ---------------------------------------------------------
+  function getLvStore(run) {
+    if (!run) return null;
+    run._perkLv = run._perkLv || {};
+    return run._perkLv;
   }
 
   function lvlOf(perkId, run) {
-    const P = getPerksObj(run);
-    if (!P) return 0;
-    return clamp(Number(P[perkId] || 0) | 0, 0, (DEF[perkId]?.maxLv || 1));
+    const d = DEF[perkId];
+    if (!d) return 0;
+
+    const store = getLvStore(run);
+    const lv = store ? (store[perkId] | 0) : 0;
+    return clamp(lv, 0, d.maxLv | 0);
   }
 
   function setLvl(perkId, run, lv) {
-    const P = getPerksObj(run);
-    if (!P) return;
-    P[perkId] = clamp(lv | 0, 0, (DEF[perkId]?.maxLv || 1));
+    const d = DEF[perkId];
+    if (!d) return;
+    const store = getLvStore(run);
+    if (!store) return;
+    store[perkId] = clamp(lv | 0, 0, d.maxLv | 0);
   }
 
+  function ensureOwnedFlag(perkId, run) {
+    const flags = getPerksFlags(run);
+    if (!flags) return;
+    // keep compatibility with core: flags are 0/1 (owned)
+    flags[perkId] = 1;
+  }
+
+  // ---------------------------------------------------------
+  // Shop API
+  // ---------------------------------------------------------
   function cost(perkId, run) {
     const d = DEF[perkId];
     if (!d) return 999;
+
     const lv = lvlOf(perkId, run);
     if (lv >= d.maxLv) return 999;
 
-    // Elite curve: base * mul^lv, rounded to even
+    // Elite curve: base * mul^lv
     const raw = d.baseCost * Math.pow(d.costMul, lv);
     return Math.max(1, Math.round(raw));
   }
 
   function canBuy(perkId, run) {
-    if (!DEF[perkId]) return false;
+    const d = DEF[perkId];
+    if (!d) return false;
     if (getMode(run) !== "roguelike") return false;
 
     const lv = lvlOf(perkId, run);
-    if (lv >= DEF[perkId].maxLv) return false;
+    if (lv >= d.maxLv) return false;
 
-    const c = cost(perkId, run);
-    return getCoins(run) >= c;
+    return (getCoins(run) | 0) >= (cost(perkId, run) | 0);
   }
 
   function label(perkId, run) {
     const d = DEF[perkId];
     if (!d) return String(perkId || "");
     const lv = lvlOf(perkId, run);
-    const max = d.maxLv;
     const c = cost(perkId, run);
-
-    const lvTag = `L${lv}/${max}`;
-    const price = (lv >= max) ? "MAX" : String(c);
-
-    // Example: 🧪 Jug L1/3 (12)
-    return `${d.emoji} ${perkId} ${lvTag} (${price})`;
+    const price = (lv >= d.maxLv) ? "MAX" : String(c);
+    return `${d.emoji} ${perkId} L${lv}/${d.maxLv} (${price})`;
   }
 
   // ---------------------------------------------------------
-  // Apply perk effects (instant + passive tick)
+  // Apply effects (instant). Passive effects in tick().
+  // This is SAFE even if CORE already boosts via flags.
   // ---------------------------------------------------------
   function apply(perkId, run) {
     const p = getPlayer(run);
     if (!p) return;
 
-    // NOTE:
-    // - Overlay zombies.js already has effectiveStats() based on Jug/Speed flags.
-    // - CORE effectiveStats() already does Jug/Speed multipliers.
-    // Here we add LUX extras: regen, resist, pierce tweaks, fire-rate, etc.
-    const lv = lvlOf(perkId, run);
+    const lv = lvlOf(perkId, run); // current after setLvl in buy()
+    const cfg = getCfg(run);
 
-    // Small instant feedback: heal on buy (premium feel)
+    // Premium instant feedback on buy:
     if (perkId === "Jug") {
-      // heal chunk each level
-      const heal = 18 + lv * 6;
-      p.hp = Math.min((p.hp || 0) + heal, (p.hpMax || 99999));
+      const heal = 18 + lv * 7;
+      // prefer CORE effectiveStats hpMax if exists
+      const maxHp = safeHpMax(run, p);
+      p.hp = Math.min((p.hp | 0) + heal, maxHp);
     }
 
     if (perkId === "Quick") {
-      // immediate small heal, then regen in tick()
-      const heal = 12 + lv * 4;
-      p.hp = Math.min((p.hp || 0) + heal, (p.hpMax || 99999));
+      const heal = 12 + lv * 5;
+      const maxHp = safeHpMax(run, p);
+      p.hp = Math.min((p.hp | 0) + heal, maxHp);
     }
 
+    // Soft config nudges (won't break if cfg missing)
     if (perkId === "Mag") {
-      // If CORE cfg exists — buff pierce progressively
-      const cfg = getCfg(run);
-      if (cfg?.bullet) {
-        cfg.bullet.pierce = Math.max(cfg.bullet.pierce || 0, 1 + (lv >= 2 ? 1 : 0) + (lv >= 3 ? 1 : 0));
-      }
+      // do NOT mutate base weapon templates aggressively; instead set helper scalars
+      run._perkMagMul = (lv === 1) ? 1.08 : (lv === 2) ? 1.14 : 1.20;
+      run._perkPierceBonus = (lv === 1) ? 0 : (lv === 2) ? 1 : 2;
+      // if core has cfg.bullet, set minimum pierce baseline (core also has weapon pierce)
+      try {
+        if (cfg?.bullet) cfg.bullet.pierce = Math.max(cfg.bullet.pierce || 0, 1);
+      } catch {}
     }
 
     if (perkId === "Tap") {
-      // If CORE cfg exists — buff rpm a bit (soft, no breaking)
-      const cfg = getCfg(run);
-      if (cfg?.weapons) {
-        for (const k of Object.keys(cfg.weapons)) {
-          const w = cfg.weapons[k];
-          if (!w || !w.rpm) continue;
-          const mul = (lv === 1) ? 1.10 : (lv === 2) ? 1.18 : 1.26;
-          w.rpm = Math.round(w.rpm * mul);
-          // reduce spread slightly
-          if (Number.isFinite(w.spread)) w.spread = Math.max(0.01, w.spread * (lv === 1 ? 0.92 : lv === 2 ? 0.86 : 0.80));
-        }
-      }
+      run._perkRpmMul = (lv === 1) ? 1.06 : (lv === 2) ? 1.12 : 1.18;
+      run._perkSpreadMul = (lv === 1) ? 0.92 : (lv === 2) ? 0.86 : 0.80;
+    }
+
+    if (perkId === "Reload") {
+      run._perkReloadMul = (lv === 1) ? 0.92 : (lv === 2) ? 0.86 : 0.80;
+    }
+
+    if (perkId === "Crit" || perkId === "Dead" ) {
+      run._perkCritBonus = (lv === 1) ? 0.03 : (lv === 2) ? 0.06 : 0.09;
+      run._perkCritMul = (lv === 1) ? 1.10 : (lv === 2) ? 1.18 : 1.28;
+    }
+
+    if (perkId === "Armor") {
+      run._perkArmorMul = (lv === 1) ? 1.06 : (lv === 2) ? 1.12 : 1.18;
+      run._perkPlateSpeedMul = (lv === 1) ? 0.92 : (lv === 2) ? 0.86 : 0.80;
+    }
+
+    if (perkId === "Loot") {
+      run._perkLootBonus = (lv === 1) ? 0.15 : (lv === 2) ? 0.30 : 0.45;
+      run._perkMagnetMul = (lv === 1) ? 1.08 : (lv === 2) ? 1.18 : 1.30;
+    }
+
+    if (perkId === "Sprint") {
+      run._perkMovePenaltyMul = (lv === 1) ? 0.92 : (lv === 2) ? 0.84 : 0.76;
     }
 
     if (perkId === "Speed") {
-      // L2+: slightly longer iFrames if CORE cfg exists
-      const cfg = getCfg(run);
-      if (cfg?.player && lv >= 2) {
-        cfg.player.iFramesMs = Math.round((cfg.player.iFramesMs || 220) * (lv === 2 ? 1.08 : 1.14));
-      }
+      // iFrames helper for future core patch
+      run._perkIFramesMul = (lv === 1) ? 1.02 : (lv === 2) ? 1.08 : 1.14;
     }
   }
 
-  // Passive tick effects (regen, resist, etc.)
   function tick(run, dt, tms) {
     const p = getPlayer(run);
     if (!p) return;
 
-    // We’ll store perk runtime state on run._perkRT
+    const time = (Number(tms) || now());
     const rt = (run._perkRT = run._perkRT || { lastRegenAt: 0 });
 
-    // QUICK REVIVE regen (if perk exists)
+    // Quick Revive regen
     const quickLv = lvlOf("Quick", run);
     if (quickLv > 0) {
-      // regen rate per sec
-      const regen = (quickLv === 1) ? 1.2 : (quickLv === 2) ? 2.0 : 3.0;
-      // apply regen ~10x/sec to keep it smooth
-      if ((tms - rt.lastRegenAt) > 90) {
-        rt.lastRegenAt = tms;
-        const maxHp = (p.hpMax || 99999);
+      const regenPerSec = (quickLv === 1) ? 1.2 : (quickLv === 2) ? 2.0 : 3.0;
+      if ((time - rt.lastRegenAt) > 90) {
+        rt.lastRegenAt = time;
+        const maxHp = safeHpMax(run, p);
         const cur = (p.hp || 0);
         if (cur > 0 && cur < maxHp) {
-          p.hp = Math.min(maxHp, cur + regen);
+          // dt is fixed in core (60hz); keep regen stable anyway
+          const add = regenPerSec * 0.10;
+          p.hp = Math.min(maxHp, cur + add);
         }
       }
     }
 
-    // JUG damage resist flag (overlay/core should read it if you wire it later)
-    // We'll add a simple scalar you can use in hitPlayer().
+    // Jug DR scalar (core patch will read run._dmgMul if we wire it)
     const jugLv = lvlOf("Jug", run);
     run._dmgMul = (jugLv === 0) ? 1.0 : (jugLv === 1) ? 0.92 : (jugLv === 2) ? 0.86 : 0.80;
+
+    // Loot magnet scalar (core can read this later)
+    const lootLv = lvlOf("Loot", run);
+    run._magnetMul = (lootLv === 0) ? 1.0 : (lootLv === 1) ? 1.08 : (lootLv === 2) ? 1.18 : 1.30;
   }
 
-  // Buy implements “levels” + calls apply()
   function buy(perkId, run) {
     if (!DEF[perkId]) return false;
     if (!canBuy(perkId, run)) return false;
 
-    const c = cost(perkId, run);
-    const coins = getCoins(run);
+    const c = cost(perkId, run) | 0;
+    const coins = getCoins(run) | 0;
     if (coins < c) return false;
 
     setCoins(run, coins - c);
@@ -264,35 +268,129 @@
     const lv = lvlOf(perkId, run);
     setLvl(perkId, run, lv + 1);
 
-    // Apply effects immediately
+    // Maintain core-compatible "owned" flag from first buy
+    ensureOwnedFlag(perkId, run);
+
+    // Apply immediate
     try { apply(perkId, run); } catch {}
 
     return true;
   }
 
   // ---------------------------------------------------------
-  // BACK-COMPAT: Your direct CORE style
+  // Back-compat direct functions (called as PERKS.Jug(CORE))
+  // These MUST NOT break core.
   // ---------------------------------------------------------
   function Jug(CORE) {
+    // Mark owned + set lv to at least 1 + instant heal
     try {
-      // Top-up on buy
-      const st = CORE._effectiveStats();
-      CORE.state.player.hp = Math.min(CORE.state.player.hp + 30, st.hpMax);
-      // Add resist scalar for future usage
+      ensureOwnedFlag("Jug", CORE);
+      if (lvlOf("Jug", CORE) <= 0) setLvl("Jug", CORE, 1);
+      apply("Jug", CORE);
+      // default DR scalar
       CORE._dmgMul = 0.92;
     } catch {}
   }
 
   function Speed(CORE) {
-    // Nothing required (core effectiveStats uses perk flag)
+    try {
+      ensureOwnedFlag("Speed", CORE);
+      if (lvlOf("Speed", CORE) <= 0) setLvl("Speed", CORE, 1);
+      apply("Speed", CORE);
+    } catch {}
   }
 
   function Mag(CORE) {
     try {
-      CORE.cfg.bullet.pierce = Math.max(CORE.cfg.bullet.pierce || 0, 1);
+      ensureOwnedFlag("Mag", CORE);
+      if (lvlOf("Mag", CORE) <= 0) setLvl("Mag", CORE, 1);
+      apply("Mag", CORE);
     } catch {}
   }
 
+  function Armor(CORE) {
+    try {
+      ensureOwnedFlag("Armor", CORE);
+      if (lvlOf("Armor", CORE) <= 0) setLvl("Armor", CORE, 1);
+      apply("Armor", CORE);
+    } catch {}
+  }
+
+  function Reload(CORE) {
+    try {
+      ensureOwnedFlag("Reload", CORE);
+      if (lvlOf("Reload", CORE) <= 0) setLvl("Reload", CORE, 1);
+      apply("Reload", CORE);
+    } catch {}
+  }
+
+  function Crit(CORE) {
+    try {
+      ensureOwnedFlag("Crit", CORE);
+      if (lvlOf("Crit", CORE) <= 0) setLvl("Crit", CORE, 1);
+      apply("Crit", CORE);
+    } catch {}
+  }
+
+  function Loot(CORE) {
+    try {
+      ensureOwnedFlag("Loot", CORE);
+      if (lvlOf("Loot", CORE) <= 0) setLvl("Loot", CORE, 1);
+      apply("Loot", CORE);
+    } catch {}
+  }
+
+  function Sprint(CORE) {
+    try {
+      ensureOwnedFlag("Sprint", CORE);
+      if (lvlOf("Sprint", CORE) <= 0) setLvl("Sprint", CORE, 1);
+      apply("Sprint", CORE);
+    } catch {}
+  }
+
+  function Tap(CORE) {
+    try {
+      ensureOwnedFlag("Tap", CORE);
+      if (lvlOf("Tap", CORE) <= 0) setLvl("Tap", CORE, 1);
+      apply("Tap", CORE);
+    } catch {}
+  }
+
+  function Quick(CORE) {
+    try {
+      ensureOwnedFlag("Quick", CORE);
+      if (lvlOf("Quick", CORE) <= 0) setLvl("Quick", CORE, 1);
+      apply("Quick", CORE);
+    } catch {}
+  }
+
+  function Dead(CORE) {
+    try {
+      ensureOwnedFlag("Dead", CORE);
+      if (lvlOf("Dead", CORE) <= 0) setLvl("Dead", CORE, 1);
+      apply("Dead", CORE);
+    } catch {}
+  }
+
+  // ---------------------------------------------------------
+  // Small helpers
+  // ---------------------------------------------------------
+  function safeHpMax(run, p) {
+    // Prefer CORE._effectiveStats().hpMax
+    try {
+      if (typeof run?._effectiveStats === "function") {
+        const st = run._effectiveStats();
+        if (st && Number.isFinite(st.hpMax)) return st.hpMax | 0;
+      }
+    } catch {}
+    // fallback to player.hpMax if present
+    const hpMax = (p && Number.isFinite(p.hpMax)) ? (p.hpMax | 0) : 100;
+    return Math.max(1, hpMax);
+  }
+
+  // ---------------------------------------------------------
+  // Export
+  // ---------------------------------------------------------
   window.BCO_ZOMBIES_PERKS = {
     // Shop API
     cost,
@@ -302,14 +400,25 @@
     tick,
     label,
 
-    // Back-compat direct functions
+    // Back-compat direct fns
     Jug,
     Speed,
     Mag,
+    Armor,
+    Reload,
+    Crit,
+    Loot,
+    Sprint,
+    Tap,
+    Quick,
+    Dead,
 
-    // Expose defs (optional for UI)
-    defs: DEF
+    // defs + helpers (optional)
+    defs: DEF,
+    lvlOf: (id, run) => lvlOf(String(id || ""), run),
+    setLvl: (id, run, lv) => setLvl(String(id || ""), run, lv),
+    _version: "LUX_PERKS_v2_3D_READY"
   };
 
-  console.log("[Z_PERKS] loaded (LUX+COMPAT)");
+  console.log("[Z_PERKS] loaded (LUX + 3D-ready + compat)");
 })();
