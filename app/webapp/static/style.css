@@ -1,7 +1,7 @@
 /* app/webapp/static/style.css */
 /* BLACK CROWN OPS — Mini App (Premium iOS glass + nebula) */
-/* v1.4.0 LUX MAX — Game Takeover (Zombies full takeover) +3D-ready layers */
-/* НИЧЕГО НЕ УРЕЗАНО — только добавлено/усилено/починено (клики, слои, safe-area, full takeover, 3D hooks). */
+/* v1.4.1 LUX MAX++ — Game Takeover (true fullscreen lock) + iOS tap hardening + anti-zoom helpers + 3D-ready layers */
+/* НИЧЕГО НЕ УРЕЗАНО — только добавлено/усилено/починено (клики, слои, safe-area, full takeover, 3D hooks, missing UI classes). */
 
 :root{
   --bg0:#07070b;
@@ -51,6 +51,10 @@
   /* If later you want “console” performance mode: just toggle .bco-perf on html */
   --perf-blur: 0px;
   --perf-shadows: none;
+
+  /* Layout helpers */
+  --tap: 44px;
+  --tabbar-h: 82px;
 }
 
 /* =========================
@@ -58,7 +62,8 @@
 ========================= */
 *{ box-sizing:border-box; }
 html, body{
-  height:100%;
+  width: 100%;
+  height: 100%;
   margin:0;
   padding:0;
   background: var(--bg0);
@@ -66,6 +71,9 @@ html, body{
   font-family: var(--font);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* anti rubber-band + stability */
+  overscroll-behavior: none;
 }
 body{
   overflow-x:hidden;
@@ -74,7 +82,12 @@ body{
 }
 button, input, textarea{ font-family: inherit; outline:none; }
 a{ color: var(--accent2); }
+::selection{ background: rgba(139,92,246,.35); color: rgba(255,255,255,.95); }
 
+/* Prevent iOS text zoom */
+html{ -webkit-text-size-adjust: 100%; }
+
+/* Reduced motion */
 @media (prefers-reduced-motion: reduce){
   *{ animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
@@ -83,18 +96,23 @@ a{ color: var(--accent2); }
    iOS / WebView HARDENING (tap reliability)
 ========================= */
 button, .btn, .chip, .seg-btn, .nav-btn, .tab,
-.bco-z-mini, .bco-shopbtn, .bco-fire, .bco-joy{
+.bco-z-mini, .bco-shopbtn, .bco-fire, .bco-joy,
+.chat-mini, .chat-send, .cardlite button{
   -webkit-tap-highlight-color: rgba(0,0,0,0);
   touch-action: manipulation;
   user-select:none;
+  -webkit-user-select: none;
 }
 button:focus-visible, .btn:focus-visible, .seg-btn:focus-visible,
-.nav-btn:focus-visible, .tab:focus-visible, .bco-shopbtn:focus-visible, .bco-z-mini:focus-visible{
+.nav-btn:focus-visible, .tab:focus-visible, .bco-shopbtn:focus-visible,
+.bco-z-mini:focus-visible, .chat-mini:focus-visible, .chat-send:focus-visible{
   box-shadow: var(--touch-ring);
 }
-*{ -webkit-user-drag: none; }
-
-html{ -webkit-text-size-adjust: 100%; }
+*{
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+}
+img, svg{ -webkit-user-drag:none; user-drag:none; }
 
 /* Remove “rubber band” on iOS inside overlays */
 body, .bco-z-overlay{ overscroll-behavior: none; }
@@ -120,6 +138,7 @@ html.bco-perf .bco-z-card{
 
 /* =========================
    BACKGROUND FX (nebula)
+   - works even if HTML has .bg/.stars/.nebula/.gridfx
 ========================= */
 body::before{
   content:"";
@@ -143,6 +162,44 @@ body::after{
     radial-gradient(600px 420px at 30% 30%, rgba(139,92,246,.22), transparent 60%),
     radial-gradient(480px 380px at 70% 40%, rgba(34,211,238,.14), transparent 62%),
     radial-gradient(520px 420px at 45% 70%, rgba(236,72,153,.10), transparent 66%);
+  transform: translateZ(0);
+}
+
+/* Optional bg layers in your HTML */
+.bg{
+  position: fixed;
+  inset: 0;
+  z-index: -20;
+  pointer-events: none;
+}
+.bg .stars, .bg .nebula, .bg .gridfx{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+}
+.bg .stars{
+  opacity:.22;
+  background:
+    radial-gradient(1px 1px at 15% 30%, rgba(255,255,255,.35), transparent 60%),
+    radial-gradient(1px 1px at 40% 70%, rgba(255,255,255,.28), transparent 60%),
+    radial-gradient(1px 1px at 70% 20%, rgba(255,255,255,.22), transparent 60%),
+    radial-gradient(1px 1px at 85% 80%, rgba(255,255,255,.18), transparent 60%);
+  filter: blur(.3px);
+}
+.bg .nebula{
+  opacity:.55;
+  background:
+    radial-gradient(900px 600px at 25% 15%, rgba(139,92,246,.12), transparent 60%),
+    radial-gradient(900px 600px at 80% 35%, rgba(34,211,238,.10), transparent 60%),
+    radial-gradient(900px 600px at 50% 110%, rgba(236,72,153,.06), transparent 60%);
+  filter: blur(18px) saturate(1.1);
+}
+.bg .gridfx{
+  opacity:.06;
+  background-image:
+    linear-gradient(rgba(255,255,255,.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.12) 1px, transparent 1px);
+  background-size: 44px 44px;
   transform: translateZ(0);
 }
 
@@ -195,6 +252,7 @@ body::after{
   flex-wrap: wrap;
 }
 .chip{
+  min-height: var(--tap);
   border: 1px solid rgba(255,255,255,.12);
   background: rgba(255,255,255,.06);
   color: rgba(255,255,255,.92);
@@ -237,6 +295,7 @@ body::after{
 .top-tabs::-webkit-scrollbar{ display:none; }
 
 .tab{
+  min-height: var(--tap);
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 10px 12px;
@@ -283,6 +342,17 @@ body::after{
   .grid-2{ grid-template-columns: 1fr; }
 }
 
+/* Compatibility: your HTML uses .grid2, .grid, .grid2 (typo-safe) */
+.grid{ display:block; }
+.grid2, .grid-2{ display:grid; }
+.grid2{
+  margin-top: 10px;
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 520px){ .grid2{ grid-template-columns: 1fr; } }
+
 /* =========================
    CARDS
 ========================= */
@@ -315,8 +385,19 @@ body::after{
   background: rgba(255,255,255,.08);
 }
 
+/* cardlite used in your HTML */
+.cardlite{
+  border-radius: 16px;
+  background: rgba(255,255,255,.045);
+  border: 1px solid rgba(255,255,255,.09);
+  box-shadow: 0 12px 30px rgba(0,0,0,.28);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 14px;
+}
+
 /* =========================
-   HERO
+   HERO (compat: your HTML has hero-left/right, kicker/desc/actions)
 ========================= */
 .hero{
   display:grid;
@@ -325,40 +406,32 @@ body::after{
 }
 @media (max-width: 820px){ .hero{ grid-template-columns: 1fr; } }
 
+.hero-kicker{
+  font-weight: 950;
+  font-size: 12px;
+  letter-spacing:.22px;
+  color: rgba(255,255,255,.70);
+  margin-bottom: 4px;
+}
 .hero-title{
   font-weight: 1000;
   font-size: 18px;
   letter-spacing:.2px;
   line-height: 1.15;
 }
-.hero-sub{
+.hero-desc{
   margin-top: 8px;
   font-size: 12.5px;
   color: rgba(255,255,255,.70);
   line-height: 1.45;
 }
-.hero-row{
+.hero-actions{
   margin-top: 12px;
   display:flex;
   gap: 10px;
   flex-wrap: wrap;
 }
-.mini-card{
-  border-radius: var(--r2);
-  background: rgba(255,255,255,.04);
-  border: 1px solid rgba(255,255,255,.08);
-  padding: 12px;
-}
-.mini-title{
-  font-weight: 950;
-  font-size: 13px;
-}
-.mini-sub{
-  margin-top: 6px;
-  font-size: 12px;
-  color: rgba(255,255,255,.68);
-  line-height: 1.35;
-}
+
 .stats{
   margin-top: 12px;
   display:grid;
@@ -377,15 +450,37 @@ body::after{
   gap: 10px;
   align-items: baseline;
 }
-.stat .k{
-  font-size: 11px;
-  font-weight: 900;
-  color: rgba(255,255,255,.55);
+.stat-label{
+  font-size: 12px;
+  font-weight: 950;
+  color: rgba(255,255,255,.65);
 }
-.stat .v{
+.stat-value{
   font-size: 12px;
   font-weight: 1000;
   letter-spacing:.2px;
+  color: rgba(255,255,255,.92);
+}
+
+/* Premium block used in your HTML */
+.premium{
+  margin-top: 10px;
+  border-radius: 16px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.09);
+  padding: 12px;
+}
+.premium-title{
+  font-weight: 1000;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.premium-desc{
+  font-weight: 850;
+  font-size: 12px;
+  color: rgba(255,255,255,.68);
+  line-height: 1.35;
+  margin-bottom: 10px;
 }
 
 /* =========================
@@ -394,7 +489,15 @@ body::after{
 .row{ display:flex; gap: 10px; flex-wrap: wrap; align-items:center; }
 .label{ font-weight: 950; font-size: 12px; color: rgba(255,255,255,.75); }
 
+.actions{
+  display:flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items:center;
+}
+
 .btn{
+  min-height: var(--tap);
   border-radius: var(--r2);
   border: 1px solid rgba(255,255,255,.12);
   background: rgba(255,255,255,.06);
@@ -434,6 +537,24 @@ body::after{
 }
 .inp::placeholder{ color: rgba(255,255,255,.45); }
 
+/* Compatibility: your HTML uses .input (not .inp) */
+.input{
+  width:100%;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.20);
+  color: rgba(255,255,255,.92);
+  padding: 12px 12px;
+  font-weight: 800;
+  font-size: 12.5px;
+  line-height: 1.35;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.input::placeholder{ color: rgba(255,255,255,.45); }
+
+.field{ margin-top: 10px; }
+
 .grid-3{
   display:grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -450,6 +571,7 @@ body::after{
   margin-top: 10px;
 }
 .seg-btn{
+  min-height: var(--tap);
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.12);
   background: rgba(255,255,255,.04);
@@ -478,6 +600,12 @@ body::after{
   background: rgba(255,255,255,.05);
   border: 1px solid rgba(255,255,255,.10);
 }
+.mini-row{
+  margin-top: 10px;
+  display:flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 
 /* Hint */
 .hint{
@@ -485,6 +613,28 @@ body::after{
   font-size: 12px;
   color: var(--hint);
   line-height: 1.35;
+}
+
+/* =========================
+   LIST (your HTML uses .list .li .dot)
+========================= */
+.list{ margin-top: 10px; }
+.li{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  padding: 8px 0;
+  font-weight: 850;
+  color: rgba(255,255,255,.82);
+}
+.dot{
+  width: 8px; height: 8px;
+  border-radius: 999px;
+  background: rgba(34,211,238,.55);
+  box-shadow: 0 0 0 3px rgba(34,211,238,.10);
+}
+.mono{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
 /* =========================
@@ -523,42 +673,129 @@ body::after{
 }
 
 /* =========================
-   CHAT (support app.js chat bubbles)
-   - твой HTML использует свои классы, но app.js рисует: .chat-row .bubble .chat-meta
-   - добавляем стили (НЕ ломая твоё)
+   MINI ZOMBIES PLACEHOLDER (your old HTML block uses .z-arena .zombie)
+   - keep it pretty; real game is overlay
 ========================= */
-.chat-log{
+.z-arena{
   margin-top: 10px;
+  height: 140px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.10);
+  background:
+    radial-gradient(620px 240px at 25% 20%, rgba(139,92,246,.10), transparent 60%),
+    radial-gradient(520px 220px at 85% 40%, rgba(34,211,238,.08), transparent 60%),
+    rgba(0,0,0,.16);
+  display:flex;
+  align-items:center;
+  justify-content: center;
+  gap: 10px;
+  overflow:hidden;
+}
+.zombie{
+  min-height: var(--tap);
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  padding: 10px 12px;
+  font-weight: 1000;
+  color: rgba(255,255,255,.92);
+  box-shadow: 0 10px 22px rgba(0,0,0,.22);
+}
+.zombie:active{ transform: scale(.985); }
+
+/* =========================
+   CHAT (support app.js chat bubbles + your HTML shell)
+========================= */
+.chat-shell{
+  margin-top: 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.045);
+  box-shadow: 0 12px 34px rgba(0,0,0,.30);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+.chat-head{
+  padding: 12px;
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  background: rgba(0,0,0,.18);
+}
+.chat-head .left{ display:flex; align-items:center; gap: 10px; }
+.chat-head .right{ display:flex; align-items:center; gap: 8px; }
+.chat-badge{
+  width: 34px; height: 34px;
+  border-radius: 12px;
+  display:grid;
+  place-items:center;
+  background: linear-gradient(135deg, rgba(139,92,246,.22), rgba(34,211,238,.12));
+  border: 1px solid rgba(255,255,255,.10);
+}
+.chat-title{
+  font-weight: 1000;
+  letter-spacing:.2px;
+  font-size: 13px;
+}
+.chat-sub{
+  margin-top: 2px;
+  font-weight: 900;
+  font-size: 11.5px;
+  color: rgba(255,255,255,.62);
+}
+.chat-mini{
+  min-height: 36px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.05);
+  color: rgba(255,255,255,.90);
+  padding: 8px 10px;
+  font-weight: 950;
+  font-size: 11.5px;
+}
+.chat-mini:active{ transform: scale(.985); }
+
+.chat-log{
+  margin: 0;
   height: 360px;
   overflow:auto;
   -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
-  border-radius: var(--r2);
-  border: 1px solid rgba(255,255,255,.08);
   background:
     radial-gradient(600px 260px at 20% 10%, rgba(139,92,246,.10), transparent 60%),
     radial-gradient(520px 240px at 85% 25%, rgba(34,211,238,.08), transparent 60%),
     rgba(0,0,0,.14);
   padding: 12px;
 }
-.chat-actions{ margin-top: 10px; }
-.chat-input{
-  width:100%;
-  border-radius: 16px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(0,0,0,.20);
-  color: rgba(255,255,255,.92);
-  padding: 12px 12px;
-  font-weight: 800;
-  font-size: 12.5px;
-  line-height: 1.35;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  resize: none;
+
+.chat-compose{
+  padding: 12px;
+  display:flex;
+  gap: 10px;
+  align-items:flex-end;
+  border-top: 1px solid rgba(255,255,255,.08);
+  background: rgba(0,0,0,.16);
+}
+.chat-compose textarea{
+  flex: 1;
   min-height: 44px;
   max-height: 120px;
-  margin-bottom: 10px;
+  resize: none;
 }
+.chat-send{
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: linear-gradient(135deg, rgba(139,92,246,.28), rgba(34,211,238,.14));
+  box-shadow: 0 14px 32px rgba(139,92,246,.18);
+  color: rgba(255,255,255,.95);
+  font-weight: 1000;
+}
+.chat-send:active{ transform: scale(.985); }
 
 /* chat bubbles (added) */
 .chat-row{
@@ -589,7 +826,6 @@ body::after{
   background: rgba(0,0,0,.18);
   border-color: rgba(255,255,255,.10);
 }
-
 .chat-meta{
   margin-top: 6px;
   font-size: 11px;
@@ -598,7 +834,7 @@ body::after{
   padding-left: 2px;
 }
 
-/* typing dots (added) */
+/* typing dots */
 .typing{ display:inline-flex; gap: 6px; align-items:center; }
 .typing .dot{
   width: 6px; height: 6px;
@@ -614,7 +850,7 @@ body::after{
 }
 
 /* =========================
-   Debug (existing)
+   Debug
 ========================= */
 .debug .debug-grid{
   display:grid;
@@ -648,6 +884,7 @@ body::after{
   gap: 8px;
 }
 .nav-btn{
+  min-height: 54px;
   border-radius: 16px;
   border: 1px solid rgba(255,255,255,.10);
   background: rgba(255,255,255,.04);
@@ -758,6 +995,7 @@ body::after{
 
 /* topbar buttons */
 .bco-z-mini{
+  min-height: 38px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.12);
   background: rgba(255,255,255,.06);
@@ -859,6 +1097,9 @@ body::after{
   pointer-events: auto;
   touch-action: none;
   transform: translateZ(0);
+
+  /* keep joystick above any accidental overlays */
+  z-index: calc(var(--game-ui-z) + 3);
 }
 .bco-joy::before{
   content:"";
@@ -903,6 +1144,8 @@ body::after{
   user-select:none;
   touch-action: none;
   transform: translateZ(0);
+
+  z-index: calc(var(--game-ui-z) + 3);
 }
 .bco-fire:active{ transform: scale(.985); filter: brightness(1.06); }
 
@@ -920,11 +1163,10 @@ body::after{
 
   pointer-events: auto;
   touch-action: manipulation;
-
-  /* avoid UI stealing touches from joysticks on small screens */
   max-width: 100%;
 }
 .bco-shopbtn{
+  min-height: 40px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.12);
   background: rgba(255,255,255,.06);
@@ -1015,16 +1257,25 @@ body::after{
 
 /* =========================
    GAME TAKEOVER MODE (driven by app.js: .bco-game on html/body)
+   - TRUE fullscreen lock (fixes iOS scroll + Telegram bleed)
 ========================= */
 html.bco-game, body.bco-game{
   height: 100%;
+  width: 100%;
   overflow: hidden !important;
   overscroll-behavior: none;
   background: #000;
+
+  /* critical: lock page under overlay */
+  position: fixed;
+  inset: 0;
 }
+
+/* Hide all app chrome while in game */
 html.bco-game .app-header,
 html.bco-game .top-tabs,
-html.bco-game .bottom-nav{
+html.bco-game .bottom-nav,
+html.bco-game .foot{
   display: none !important;
 }
 html.bco-game .app-main{
@@ -1036,9 +1287,20 @@ html.bco-game .toast{
   bottom: calc(16px + var(--safe-bottom));
 }
 
+/* Make sure overlay + canvases are true viewport sized */
+html.bco-game .bco-z-overlay,
+html.bco-game .bco-z-canvas,
+html.bco-game .bco-z-canvas-3d{
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+
 /* If you later add a 3D “renderer” toggle, you can set: html.bco-3d */
 html.bco-3d .bco-z-overlay{
-  /* a bit darker for 3D contrast */
   background:
     radial-gradient(900px 600px at 20% 10%, rgba(139,92,246,.16), transparent 60%),
     radial-gradient(900px 600px at 90% 30%, rgba(34,211,238,.12), transparent 60%),
@@ -1046,10 +1308,22 @@ html.bco-3d .bco-z-overlay{
 }
 
 /* =========================
+   FOOTER (your HTML has .foot)
+========================= */
+.foot{
+  margin-top: 14px;
+  padding: 12px 2px;
+  display:flex;
+  justify-content: space-between;
+  color: rgba(255,255,255,.55);
+  font-weight: 850;
+  font-size: 12px;
+}
+
+/* =========================
    Micro polish
 ========================= */
-::selection{ background: rgba(139,92,246,.35); color: rgba(255,255,255,.95); }
-.card, .chip, .btn, .seg-btn, .nav-btn, .tab{ transform: translateZ(0); }
+.card, .chip, .btn, .seg-btn, .nav-btn, .tab, .cardlite{ transform: translateZ(0); }
 
 /* Subtle lift on tap for important elements */
 .btn.primary:active,
@@ -1057,3 +1331,16 @@ html.bco-3d .bco-z-overlay{
 .bco-fire:active{
   filter: brightness(1.06) saturate(1.06);
 }
+
+/* Make tap targets feel “premium” on iOS */
+@media (max-width: 520px){
+  .chip, .seg-btn, .btn{ min-height: 46px; }
+  .nav-btn{ min-height: 58px; }
+}
+
+/* Ensure clickable controls are never blocked by accidental overlays */
+.bco-z-overlay *{ pointer-events: auto; }
+.bco-z-hud{ pointer-events: none; }
+
+/* Tiny safety: if any element ends up above overlay, overlay still wins */
+.bco-z-overlay{ isolation: isolate; }
