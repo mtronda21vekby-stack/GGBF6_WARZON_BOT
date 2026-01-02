@@ -1,4 +1,4 @@
-// app/webapp/static/zombies.core.js  [ULTRA LUX COD-ZOMBIES-2D v1.3 | 3D-READY CORE]
+// app/webapp/static/zombies.core.js  [ULTRA LUX COD-ZOMBIES-2D v1.4 | 3D-READY CORE]
 // Core = gameplay/physics/state ONLY. Renderer (2D now / 3D later) reads snapshots.
 // ULTRA: real roguelike loop (coins/loot/rarities/levels/shop methods) + relic quest 0/5 -> wonder weapon.
 // - Armor/plates, reload + ammo reserve
@@ -7,10 +7,12 @@
 // - Events (Max Ammo / Double Points / Insta-Kill)
 // - Roguelike economy + progression (xp/level) inside run
 // - Relics quest: 0/5 -> Wonder Weapon unlock (persist in run)
-// - Public shop methods: buyUpgrade / rerollWeapon / buyReload / buyPerk
+// - Public shop methods: buyUpgrade / rerollWeapon / buyReload / buyPerk / usePlate
 // - Boss hook compatible with zombies.bosses.js via CORE._onBulletHit
 // - Map bounds + collisions integration if optional modules exist
 // - Fixed-timestep simulation + stable snapshot API for 3D renderer
+// v1.4 FIX: economy always progresses (direct coins on kill + pickups), safer boss death path, stronger pickup magnet,
+//          safer mode detect, explicit install API for optional modules, snapshot has all HUD fields always.
 (() => {
   "use strict";
 
@@ -49,10 +51,10 @@
     legendary: { id: "legendary", name: "Legendary", dmg: 1.45, rpm: 1.08, spread: 0.84, mag: 1.26, reload: 0.84, value: 3.0, color: "rgba(255,200,120,.95)" }
   };
 
-  function rollRarity(wave) {
+  function rollRarity(wave, lootBoost = 0) {
     const w = Math.max(1, wave | 0);
     const t = Math.random();
-    const bonus = clamp((w - 1) / 18, 0, 0.35);
+    const bonus = clamp((w - 1) / 18, 0, 0.35) + clamp(lootBoost * 0.12, 0, 0.18);
 
     const thLegend = 0.015 + bonus * 0.35;
     const thEpic   = 0.055 + bonus * 0.55;
@@ -159,11 +161,11 @@
       relicChanceBoss: 0.65,
       relicNeed: 5,
 
-      pickupRadius: 42,
-      pickupLifeMs: 12000,
+      pickupRadius: 46,
+      pickupLifeMs: 14000,
 
-      magnetRadius: 120,
-      magnetStrength: 6.0
+      magnetRadius: 160,
+      magnetStrength: 10.0
     },
 
     events: {
@@ -237,7 +239,8 @@
   }
 
   function isRogue(CORE) {
-    return String(CORE?.meta?.mode || "").toLowerCase().includes("rogue");
+    const m = String(CORE?.meta?.mode || "").toLowerCase();
+    return (m.includes("rogue") || m.includes("roguelike"));
   }
 
   // -------------------------
@@ -312,6 +315,7 @@
     _tickWorld: null,
     _buyPerk: null,
     _onBulletHit: null,
+    _bossInstalled: false,
 
     hooks: {
       onStart: null,
@@ -325,8 +329,16 @@
     // -------------------------------------------------------
     // Public control
     // -------------------------------------------------------
+    install({ tickWorld, buyPerk, onBulletHit } = {}) {
+      if (typeof tickWorld === "function") this._tickWorld = tickWorld;
+      if (typeof buyPerk === "function") this._buyPerk = buyPerk;
+      if (typeof onBulletHit === "function") this._onBulletHit = onBulletHit;
+      return true;
+    },
+
     start(mode, w, h, opts = {}, tms = _now()) {
-      this.meta.mode = (String(mode || "").toLowerCase().includes("rogue")) ? "roguelike" : "arcade";
+      const m = String(mode || "").toLowerCase();
+      this.meta.mode = (m.includes("rogue")) ? "roguelike" : "arcade";
       this.state.w = Math.max(1, w | 0);
       this.state.h = Math.max(1, h | 0);
 
@@ -446,14 +458,12 @@
       S.coins -= cost;
       S.weapon.upgrade = up + 1;
 
-      // rebuild weapon to apply new maxima while preserving rarity/key
       const key = S.weapon.key || this.meta.weaponKey;
       const rar = S.weapon.rarity || "common";
       S.weapon = mkWeapon(key, rar, S.weapon.upgrade);
 
-      // keep ammo feel: top up a bit (lux)
-      S.weapon.mag = Math.min(S.weapon.magMax, Math.max(S.weapon.mag, Math.floor(S.weapon.magMax * 0.65)));
-      S.weapon.reserve = Math.min(S.weapon.reserveMax, Math.max(S.weapon.reserve, Math.floor(S.weapon.reserveMax * 0.55)));
+      S.weapon.mag = Math.min(S.weapon.magMax, Math.max(S.weapon.mag, Math.floor(S.weapon.magMax * 0.70)));
+      S.weapon.reserve = Math.min(S.weapon.reserveMax, Math.max(S.weapon.reserve, Math.floor(S.weapon.reserveMax * 0.60)));
 
       this._clampAmmoToEffective();
       return true;
@@ -473,13 +483,13 @@
       S.coins -= cost;
 
       const wkey = pick(keys);
-      const rarity = rollRarity(w + (Math.random() < 0.25 ? 2 : 0));
+      const st = this._effectiveStats();
+      const rarity = rollRarity(w + (Math.random() < 0.25 ? 2 : 0), st.lootBonus || 0);
       const up = clamp(Math.floor((w - 1) / 6), 0, 4);
 
       S.weapon = mkWeapon(wkey, rarity, up);
       this.meta.weaponKey = wkey;
 
-      // full refill on roll (lux)
       this._clampAmmoToEffective();
       S.weapon.mag = S.weapon.magMax;
       S.weapon.reserve = S.weapon.reserveMax;
@@ -598,13 +608,13 @@
         y: lerp(S.player.py, S.player.y),
         vx: S.player.vx,
         vy: S.player.vy,
-        hp: S.player.hp,
-        armor: S.player.armor,
-        plates: S.player.plates,
+        hp: S.player.hp | 0,
+        armor: S.player.armor | 0,
+        plates: S.player.plates | 0,
         plating: !!S.player.plating.active
       };
 
-      const bullets = S.bullets.map(b => ({
+      const bullets = (S.bullets || []).map(b => ({
         id: b.id,
         x: lerp(b.px, b.x),
         y: lerp(b.py, b.y),
@@ -616,7 +626,7 @@
         pierce: b.pierce
       }));
 
-      const zombies = S.zombies.map(z => ({
+      const zombies = (S.zombies || []).map(z => ({
         id: z.id,
         kind: z.kind,
         x: lerp(z.px, z.x),
@@ -628,7 +638,7 @@
         elite: z.elite ? 1 : 0
       }));
 
-      const pickups = S.pickups.map(p => ({
+      const pickups = (S.pickups || []).map(p => ({
         id: p.id,
         kind: p.kind,
         x: lerp(p.px, p.x),
@@ -641,11 +651,11 @@
         key: S.weapon.key,
         name: S.weapon.name,
         rarity: S.weapon.rarity,
-        upgrade: S.weapon.upgrade,
-        mag: S.weapon.mag,
-        reserve: S.weapon.reserve,
-        magMax: S.weapon.magMax,
-        reserveMax: S.weapon.reserveMax
+        upgrade: S.weapon.upgrade | 0,
+        mag: S.weapon.mag | 0,
+        reserve: S.weapon.reserve | 0,
+        magMax: S.weapon.magMax | 0,
+        reserveMax: S.weapon.reserveMax | 0
       } : null;
 
       const ev = this._eventsActive();
@@ -654,16 +664,16 @@
         alpha: a,
         meta: { ...this.meta },
         hud: {
-          timeMs: S.timeMs,
-          wave: S.wave,
-          kills: S.kills,
+          timeMs: S.timeMs | 0,
+          wave: S.wave | 0,
+          kills: S.kills | 0,
 
-          coins: S.coins,
-          xp: S.xp,
-          level: S.level,
+          coins: S.coins | 0,
+          xp: S.xp | 0,
+          level: S.level | 0,
 
-          relics: S.relics,
-          relicNeed: CFG.loot.relicNeed,
+          relics: S.relics | 0,
+          relicNeed: CFG.loot.relicNeed | 0,
           wonderUnlocked: !!S.wonderUnlocked,
 
           events: ev,
@@ -695,7 +705,6 @@
       const critBonus = perks.Crit ? 0.06 : 0.0;
       const lootBonus = perks.Loot ? 0.45 : 0.0;
 
-      // bosses/perks can set slow
       let slowMul = 1.0;
       try {
         const until = this._perkRT?._slowUntil || 0;
@@ -759,13 +768,12 @@
       S.player.x = 0; S.player.y = 0;
       S.player.px = 0; S.player.py = 0;
       S.player.vx = 0; S.player.vy = 0;
-      S.player.hp = st.hpMax;
+      S.player.hp = st.hpMax | 0;
       S.player.armor = 0;
-      S.player.plates = isRogue(this) ? CFG.player.platesStart : 0;
+      S.player.plates = isRogue(this) ? (CFG.player.platesStart | 0) : 0;
       S.player.plating = { active: false, until: 0 };
       S.player.lastHitAt = -99999;
 
-      // weapon (arcade stays simple; roguelike starts clean)
       S.weapon = mkWeapon(this.meta.weaponKey, "common", 0);
       this._clampAmmoToEffective();
 
@@ -784,7 +792,6 @@
       this.input.moveX = 0; this.input.moveY = 0;
       this.input.shooting = false;
 
-      // arcade: no pickups spam; roguelike: yes
       this._spawnWave(S.wave);
     },
 
@@ -1009,7 +1016,6 @@
 
       let dmg = Math.max(1, Math.round(Number(amount) || 0));
 
-      // perk resist scalar (bosses/perks can set CORE._dmgMul)
       try {
         const mul = Number(this._dmgMul || 1.0);
         if (Number.isFinite(mul)) dmg = Math.max(1, Math.round(dmg * mul));
@@ -1042,7 +1048,6 @@
         S.xp -= (S.level * 120 + 60);
         S.level += 1;
 
-        // roguelike level-ups give economy + micro heal (distinct mode feel)
         if (isRogue(this)) {
           S.coins += 4 + Math.floor(S.level * 0.6);
           const st = this._effectiveStats();
@@ -1074,7 +1079,6 @@
 
       S.wonderUnlocked = true;
 
-      // force wonder weapon (legendary, upgrade 5) — big “contract moment”
       S.weapon = mkWeapon("WONDER", "legendary", 5);
       this.meta.weaponKey = "WONDER";
 
@@ -1082,7 +1086,6 @@
       S.weapon.mag = S.weapon.magMax;
       S.weapon.reserve = S.weapon.reserveMax;
 
-      // reward burst
       S.coins += 10 + Math.floor(S.wave * 0.6);
       return true;
     },
@@ -1105,7 +1108,6 @@
 
       const x = z.x, y = z.y;
 
-      // coins pickup (visible + magnet)
       if (Math.random() < coinChance || isBoss) {
         const base = 1 + Math.floor(wave * 0.35);
         const elite = z.elite ? 1.6 : 1.0;
@@ -1124,7 +1126,7 @@
       }
 
       if (Math.random() < weaponChance) {
-        const rarity = rollRarity(wave + (z.elite ? 3 : 0));
+        const rarity = rollRarity(wave + (z.elite ? 3 : 0), lootBoost);
         const keys = Object.keys(CFG.weapons).filter(k => k !== "WONDER");
         const wkey = pick(keys);
         const up = clamp(Math.floor((wave - 1) / 6), 0, 4);
@@ -1136,7 +1138,6 @@
         this._spawnPickup("event", x, y, { event: e });
       }
 
-      // relic quest (elite/boss only)
       const need = CFG.loot.relicNeed | 0;
       if ((S.relics | 0) < need) {
         const chance = isBoss ? CFG.loot.relicChanceBoss : (z.elite ? CFG.loot.relicChanceElite : 0);
@@ -1151,11 +1152,10 @@
       const st = this._effectiveStats();
       if (!pu) return false;
 
-      // IMPORTANT: arcade ignores economy pickups
       const rogue = isRogue(this);
 
       if (pu.kind === "coins") {
-        if (!rogue) return true; // just consume silently
+        if (!rogue) return true;
         const ev = this._eventsActive();
         const amt = Math.max(1, (pu.data?.amount | 0) || 1);
         S.coins += ev.doublePoints ? (amt * 2) : amt;
@@ -1246,7 +1246,6 @@
         const need = CFG.loot.relicNeed | 0;
         S.relics = clamp((S.relics | 0) + amt, 0, need);
 
-        // unlock wonder immediately when complete
         this._maybeUnlockWonder();
 
         try { if (typeof this.hooks.onPickup === "function") this.hooks.onPickup(this, pu); } catch {}
@@ -1281,7 +1280,6 @@
         const dy = py - pu.y;
         const d = len(dx, dy);
 
-        // magnet feel
         if (d < CFG.loot.magnetRadius) {
           const n = norm(dx, dy);
           const pull = (CFG.loot.magnetStrength * (1 - d / CFG.loot.magnetRadius));
@@ -1289,7 +1287,6 @@
           pu.y += n.y * pull;
         }
 
-        // pickup
         if (d < CFG.loot.pickupRadius) {
           if (this._applyPickup(pu)) S.pickups.splice(i, 1);
         }
@@ -1301,13 +1298,10 @@
       const S = this.state;
       const rogue = isRogue(this);
 
-      // previous for interpolation
       S.player.px = S.player.x; S.player.py = S.player.y;
 
-      // run clock
       S.timeMs = Math.max(0, (tms - this.startedAt));
 
-      // perks tick (optional module)
       try {
         const PERKS = window.BCO_ZOMBIES_PERKS;
         if (PERKS?.tick) PERKS.tick(this, dt, tms);
@@ -1315,13 +1309,10 @@
 
       const st = this._effectiveStats();
 
-      // plating finish
       this._applyPlateIfDone(tms);
 
-      // reload finish
       if (S.reload.active && tms >= (S.reload.until || 0)) this._finishReload();
 
-      // movement (with weapon move penalty)
       const mx = this.input.moveX;
       const my = this.input.moveY;
 
@@ -1338,7 +1329,6 @@
 
       this._clampToMapOrArena(S.player);
 
-      // collisions (player)
       try {
         const C = window.BCO_ZOMBIES_COLLISIONS;
         const map = this._mapInfo();
@@ -1350,10 +1340,8 @@
         }
       } catch {}
 
-      // shooting
       if (this.input.shooting) this._shoot(tms);
 
-      // bullets
       for (let i = S.bullets.length - 1; i >= 0; i--) {
         const b = S.bullets[i];
         b.px = b.x; b.py = b.y;
@@ -1377,19 +1365,16 @@
         }
       }
 
-      // bullets vs walls
       try {
         const C = window.BCO_ZOMBIES_COLLISIONS;
         const map = this._mapInfo();
         if (C?.collideBullets && map) C.collideBullets(S.bullets, map);
       } catch {}
 
-      // zombies seek
       for (let i = S.zombies.length - 1; i >= 0; i--) {
         const z = S.zombies[i];
         z.px = z.x; z.py = z.y;
 
-        // bosses are ticked elsewhere
         if (z.kind === "boss_brute" || z.kind === "boss_spitter") continue;
 
         const dx = S.player.x - z.x;
@@ -1416,7 +1401,6 @@
         }
       }
 
-      // world module extra systems (boss spawns/abilities/collisions, etc.)
       if (typeof this._tickWorld === "function") {
         try { this._tickWorld(this, dt, tms); } catch {}
       }
@@ -1450,8 +1434,12 @@
                 S.zombies.splice(zi, 1);
                 S.kills += 1;
 
-                // roguelike baseline coins even without pickup (feel)
-                if (rogue) S.coins += (z.elite ? 2 : 1);
+                // ECONOMY: always progress on kill (rogue) even if renderer doesn’t draw pickups
+                if (rogue) {
+                  const baseCoin = z.elite ? 2 : 1;
+                  const ev = this._eventsActive();
+                  S.coins += ev.doublePoints ? baseCoin * 2 : baseCoin;
+                }
 
                 this._awardXP(CFG.progress.xpKill + (z.elite ? 4 : 0));
                 if (rogue) this._dropOnKill(z, false);
@@ -1463,19 +1451,17 @@
               else consumed = true;
             }
 
-            // boss death rewards
+            // boss death rewards (safe even if bosses module manages removal)
             if (isBoss && z.hp <= 0) {
-              // ensure removed
-              if (S.zombies[zi] === z) S.zombies.splice(zi, 1);
+              // ensure removed if still present
+              const idx = S.zombies.indexOf(z);
+              if (idx >= 0) S.zombies.splice(idx, 1);
 
               S.kills += 3;
               this._awardXP(CFG.progress.xpBoss);
 
               if (rogue) {
-                // boss: guaranteed “real roguelike moment”
                 this._dropOnKill(z, true);
-
-                // high chance relic
                 if ((S.relics | 0) < (CFG.loot.relicNeed | 0) && Math.random() < CFG.loot.relicChanceBoss) {
                   this._spawnPickup("relic", z.x + 10, z.y - 10, { amount: 1 });
                 }
@@ -1491,20 +1477,18 @@
         if (consumed) S.bullets.splice(bi, 1);
       }
 
-      // pickups tick (rogue only; arcade stays clean)
       if (rogue) this._tickPickups(dt, tms);
 
-      // next wave
       if (S.zombies.length === 0 && this.running) {
         S.wave += 1;
 
         this._awardXP(CFG.progress.xpWave + Math.floor(S.wave * 0.6));
 
         if (rogue) {
-          // wave reward
-          S.coins += 2 + Math.floor(S.wave * 0.35);
+          const ev = this._eventsActive();
+          const waveCoins = 2 + Math.floor(S.wave * 0.35);
+          S.coins += ev.doublePoints ? waveCoins * 2 : waveCoins;
 
-          // tiny wave event chance
           if (Math.random() < clamp(0.05 + (S.wave - 1) * 0.003, 0.05, 0.12)) {
             const e = pick(["double_points", "insta_kill"]);
             this._spawnPickup("event", S.player.x + rand(-40, 40), S.player.y + rand(-40, 40), { event: e });
@@ -1514,16 +1498,14 @@
         this._spawnWave(S.wave);
       }
 
-      // clamp vitals/ammo
       this._clampVitals();
       this._clampAmmoToEffective();
 
-      // camera follow
       S.camX = S.player.x;
       S.camY = S.player.y;
     }
   };
 
   window.BCO_ZOMBIES_CORE = CORE;
-  console.log("[Z_CORE] loaded (ULTRA LUX COD-ZOMBIES-2D v1.3 | 3D-READY CORE)");
+  console.log("[Z_CORE] loaded (ULTRA LUX COD-ZOMBIES-2D v1.4 | 3D-READY CORE)");
 })();
