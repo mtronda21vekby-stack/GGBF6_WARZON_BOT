@@ -269,9 +269,6 @@
       const fixed = { ...(payload || {}) };
 
       // ✅ FIX: profile handling
-      // - if profile === true => replace with actual profile object
-      // - if profile is object => keep as-is
-      // - if no profile field => keep none
       if (Object.prototype.hasOwnProperty.call(fixed, "profile")) {
         if (fixed.profile === true) fixed.profile = toRouterProfile();
       }
@@ -361,7 +358,6 @@
       selectTab("home");
     };
 
-    // Some Telegram builds are picky about offClick; we keep it safe.
     try { tg.MainButton.offClick?.(tgMainHandler); } catch {}
     try { tg.MainButton.onClick?.(tgMainHandler); } catch {}
 
@@ -486,7 +482,6 @@
       history: chat.history.slice(-20).map(m => ({ role: m.role, content: m.text }))
     };
 
-    // ✅ FIX: timeout so typing can't hang forever
     const controller = ("AbortController" in window) ? new AbortController() : null;
     const timeoutMs = 12000;
     let timer = 0;
@@ -677,7 +672,6 @@
     const rect = arena.getBoundingClientRect();
     const pad = 14;
 
-    // target size (fallback)
     const tRect = target.getBoundingClientRect();
     const tw = Math.max(30, tRect.width || 44);
     const th = Math.max(30, tRect.height || 44);
@@ -756,14 +750,12 @@
   // 🧟 GAME #2: ZOMBIES SURVIVAL — FULLSCREEN 2D CANVAS
   // =========================================================
   const Z = (() => {
-    // ---------- helpers ----------
     const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
     const dist2 = (ax, ay, bx, by) => {
       const dx = ax - bx, dy = ay - by;
       return dx * dx + dy * dy;
     };
 
-    // ---------- data ----------
     const SKINS = {
       male: [
         { id: "default", name: "Rookie", colors: ["#9ca3af", "#111827"] },
@@ -796,13 +788,13 @@
       { id: "StaminUp",  name: "🏃 Stamin-Up",  desc: "+Move speed",     cost: 14, apply: (run) => { run.moveMul *= 1.16; } },
       { id: "DoubleTap", name: "🔥 Double Tap", desc: "+Damage",         cost: 18, apply: (run) => { run.dmgMul *= 1.16; } },
       { id: "Deadshot",  name: "🎯 Deadshot",   desc: "+Crit chance",    cost: 16, apply: (run) => { run.critChance = Math.min(0.35, run.critChance + 0.08); } },
-      { id: "Armor",     name: "🛡 Armor",      desc: "+Armor",          cost: 14, apply: (run) => { run.armor = Math.min(run.armor + 35, 120); } },
+      // ✅ perk "Armor" оставили, но теперь броня "настоящая" — через plates.
+      { id: "Armor",     name: "🛡 Armor+",     desc: "+Armor points",   cost: 14, apply: (run) => { run.armor = Math.min(run.armor + 35, run.armorMax); run._syncPlates(); } },
       { id: "Mag",       name: "📦 Mag+",       desc: "+Mag size",       cost: 15, apply: (run) => { run.magMul *= 1.18; } },
       { id: "Pierce",    name: "🗡 Pierce",     desc: "Bullets pierce",  cost: 20, apply: (run) => { run.pierceBonus += 1; } },
       { id: "Lucky",     name: "🍀 Lucky",      desc: "+Coins per kill", cost: 15, apply: (run) => { run.coinMul *= 1.15; } }
     ];
 
-    // ---------- runtime ----------
     let overlay = null;
     let canvas = null;
     let ctx = null;
@@ -845,7 +837,14 @@
       r: 14,
       hp: 100,
       maxHp: 100,
-      armor: 0,
+
+      // ✅ REAL ARMOR (plates)
+      armor: 0,           // armor points
+      armorMax: 150,      // 3 plates * 50
+      plates: 0,          // number of plates equipped
+      platesMax: 3,
+      plateValue: 50,
+      plateCostBase: 10,  // base cost; grows with wave a bit
 
       perks: [],
       dmgMul: 1,
@@ -873,7 +872,14 @@
 
       w: 0,
       h: 0,
-      dpr: 1
+      dpr: 1,
+
+      _syncPlates() {
+        // plates reflect armor buckets (ceil), capped
+        const p = Math.ceil((run.armor || 0) / run.plateValue);
+        run.plates = clamp(p, 0, run.platesMax);
+        run.armor = clamp(run.armor, 0, run.armorMax);
+      }
     };
 
     // ✅ FIX: event cleanup (no leaks)
@@ -890,7 +896,6 @@
       }
     };
 
-    // ✅ iOS: lock scroll while overlay open
     let prevOverflow = "";
     let prevTouchAction = "";
     function lockBody(on) {
@@ -1175,6 +1180,7 @@
       zToast(m === "roguelike" ? "Режим: Roguelike 😈" : "Режим: Arcade 💥");
       haptic("impact", "light");
       updateHud();
+      renderPlateShop();
     }
 
     function baseWeapon() {
@@ -1201,7 +1207,11 @@
 
       run.maxHp = 100;
       run.hp = 100;
+
+      // ✅ plates reset
       run.armor = 0;
+      run.plates = 0;
+      run._syncPlates();
 
       run.perks = [];
       run.dmgMul = 1;
@@ -1274,7 +1284,7 @@
         hp,
         maxHp: hp,
         spd: (run.mode === "roguelike" ? 58 : 52) + run.wave * 0.95 + Math.random() * 10,
-        dmg: (run.mode === "roguelike" ? 10 : 8) + run.wave * 0.12,
+        dmg: (run.mode === "roguelike" ? 10 : 8) + run.wave * 0.12, // DPS-ish
         id: Math.random().toString(16).slice(2)
       };
       run.zombies.push(z);
@@ -1294,7 +1304,9 @@
 
         if (run.mode === "arcade") {
           run.hp = Math.min(run.maxHp, run.hp + 12);
-          run.armor = Math.min(120, run.armor + 8);
+          // arcade чуть подливает armor, но честно — как очки
+          run.armor = Math.min(run.armorMax, run.armor + 18);
+          run._syncPlates();
         } else {
           run.hp = Math.min(run.maxHp, run.hp + 6);
         }
@@ -1421,12 +1433,51 @@
       }
     }
 
+    // ✅ REAL ARMOR DAMAGE: armor absorbs same units as HP (no multipliers)
+    function applyPlayerDamage(dmg) {
+      let left = dmg;
+      if (run.armor > 0) {
+        const used = Math.min(run.armor, left);
+        run.armor -= used;
+        left -= used;
+        run._syncPlates();
+      }
+      if (left > 0) run.hp -= left;
+    }
+
+    // ✅ plates shop
+    function plateCost() {
+      // wave scaling: чуть дороже на поздних
+      const extra = Math.floor(run.wave * 0.6);
+      return clamp(run.plateCostBase + extra, 10, 26);
+    }
+
+    function buyPlate() {
+      if (run.mode !== "roguelike") { zToast("Plates: только Roguelike 😈"); return false; }
+      if (!run.running) { zToast("Стартани ран сначала"); return false; }
+      if (run.plates >= run.platesMax) { zToast("Плиты уже MAX"); return false; }
+
+      const cost = plateCost();
+      if (run.coins < cost) { haptic("notif", "warning"); zToast("Не хватает 💰"); return false; }
+
+      run.coins -= cost;
+      run.plates += 1;
+      run.armor = clamp(run.plates * run.plateValue, 0, run.armorMax);
+      run._syncPlates();
+
+      haptic("notif", "success");
+      zToast("Плита установлена 🛡");
+      updateHud();
+      renderPlateShop();
+      return true;
+    }
+
     function tick(dt, t) {
       if (run.reloading && t >= run.reloadAt) finishReload();
 
       const moveSpeed = 220 * run.moveMul;
       run.x = clamp(run.x + input.joyX * moveSpeed * dt, 18, run.w - 18);
-      run.y = clamp(run.y + input.joyY * moveSpeed * dt, 90 + (tg ? 40 : 40), run.h - 24);
+      run.y = clamp(run.y + input.joyY * moveSpeed * dt, 18 + 90, run.h - 24);
 
       if (!input.aimX && !input.aimY) {
         input.aimX = run.x + 80;
@@ -1512,15 +1563,9 @@
 
         const rr = (z.r + run.r + 6) * (z.r + run.r + 6);
         if (dist2(z.x, z.y, run.x, run.y) <= rr) {
+          // ✅ damage per second -> scaled by dt; armor absorbs 1:1
           const dmg = z.dmg * dt;
-          if (run.armor > 0) {
-            const a = Math.min(run.armor, dmg * 14);
-            run.armor -= a;
-            const left = dmg - a / 14;
-            if (left > 0) run.hp -= left * 1.0;
-          } else {
-            run.hp -= dmg * 1.0;
-          }
+          applyPlayerDamage(dmg);
 
           z.x -= (dx / len) * 18 * dt;
           z.y -= (dy / len) * 18 * dt;
@@ -1635,11 +1680,12 @@
       ctx.arc(run.x, run.y, run.r, 0, Math.PI * 2);
       ctx.fill();
 
+      // ✅ armor ring shows fill fraction (0..1), synced to plates/armor
       if (run.armor > 0) {
         ctx.globalAlpha = 0.85;
         ctx.strokeStyle = "rgba(59,130,246,.9)";
         ctx.lineWidth = 3;
-        const k = clamp(run.armor / 120, 0, 1);
+        const k = clamp(run.armor / run.armorMax, 0, 1);
         ctx.beginPath();
         ctx.arc(run.x, run.y, run.r + 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k);
         ctx.stroke();
@@ -1678,7 +1724,6 @@
     }
 
     function loop(tms) {
-      // ✅ hard stop if overlay destroyed
       if (!overlay) { raf = 0; lastT = 0; return; }
 
       raf = requestAnimationFrame(loop);
@@ -1708,6 +1753,7 @@
       zToast(run.mode === "roguelike" ? "ROGUELIKE: выживай 😈" : "ARCADE: мясо пошло 💥");
       haptic("notif", "success");
       updateHud();
+      renderPlateShop();
     }
 
     function endRun(auto = false) {
@@ -1729,18 +1775,25 @@
       input.shootHeld = false;
     }
 
+    function platesText() {
+      const filled = Math.max(0, Math.min(run.plates, run.platesMax));
+      const empty = Math.max(0, run.platesMax - filled);
+      return "🛡".repeat(filled) + "▫️".repeat(empty);
+    }
+
     function updateHud() {
       const l = qs("#bcozHudL");
       const m = qs("#bcozHudM");
       const r = qs("#bcozHudR");
       const w = baseWeapon();
 
-      if (l) l.textContent = `HP ${Math.round(run.hp)}/${run.maxHp} • Armor ${Math.round(run.armor)}`;
+      if (l) l.textContent = `HP ${Math.round(run.hp)}/${run.maxHp} • Armor ${Math.round(run.armor)}/${run.armorMax} ${platesText()}`;
       if (m) m.textContent = `Wave ${run.wave} • Kills ${run.kills} • 💰 ${run.coins}`;
       if (r) r.textContent = `${run.weaponName} • ${run.ammo}/${w.mag}` + (run.reloading ? " • Reload…" : "");
 
       const coins = qs("#bcozCoins");
       if (coins) coins.textContent = `💰 ${run.coins}`;
+      renderPlateShop();
     }
 
     function sendResult(origin = "manual") {
@@ -1772,7 +1825,13 @@
             magMul: +run.magMul.toFixed(3),
             pierce: run.pierceBonus,
             critChance: +run.critChance.toFixed(3),
-            coinMul: +run.coinMul.toFixed(3)
+            coinMul: +run.coinMul.toFixed(3),
+
+            // ✅ armor info
+            armor: Math.round(run.armor),
+            armorMax: run.armorMax,
+            plates: run.plates,
+            platesMax: run.platesMax
           }
         },
         score,
@@ -1798,10 +1857,12 @@
       run.perks.push(perkId);
       try { perk.apply?.(run); } catch {}
 
+      run._syncPlates();
       haptic("notif", "success");
       zToast(`Куплено: ${perk.name}`);
       updateHud();
       renderPerkShop();
+      renderPlateShop();
     }
 
     function buyWeapon(name) {
@@ -1826,6 +1887,39 @@
       zToast(`Оружие: ${name} ✅`);
       updateHud();
       renderWeaponShop();
+      renderPlateShop();
+    }
+
+    function renderPlateShop() {
+      const root = qs("#bcozPlateItem");
+      if (!root) return;
+
+      const cost = plateCost();
+      const can =
+        run.mode === "roguelike" &&
+        run.running &&
+        run.plates < run.platesMax &&
+        run.coins >= cost;
+
+      const status =
+        (run.plates >= run.platesMax) ? "MAX" :
+        (!run.running) ? "START RUN" :
+        (run.mode !== "roguelike") ? "ROGUELIKE ONLY" :
+        (run.coins < cost) ? "NO 💰" : "READY";
+
+      root.innerHTML = `
+        <div class="bcoz-item">
+          <div>
+            <div class="name">🛡 Armor Plate</div>
+            <div class="desc">+1 plate (+${run.plateValue} armor). Max ${run.platesMax}. Сейчас: ${run.plates}/${run.platesMax} ${platesText()}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="cost">💰 ${cost}</div>
+            <div class="owned" style="margin:6px 0 8px 0;">${status}</div>
+            <button class="bcoz-btn small" data-buy-plate="1" type="button" ${can ? "" : "disabled"}>Plate</button>
+          </div>
+        </div>
+      `;
     }
 
     function renderPerkShop() {
@@ -1908,6 +2002,7 @@
       modal.classList.toggle("show", !!open);
       modal.setAttribute("aria-hidden", open ? "false" : "true");
       updateHud();
+      renderPlateShop();
       renderPerkShop();
       renderWeaponShop();
       haptic("impact", "light");
@@ -1981,8 +2076,12 @@
       const shop = qs("#bcozShopModal");
       if (shop) {
         addL(shop, "click", (e) => {
+          const plate = e.target.closest("[data-buy-plate]");
+          if (plate) { buyPlate(); return; }
+
           const pb = e.target.closest("[data-buy-perk]");
           if (pb) { buyPerk(pb.dataset.buyPerk); return; }
+
           const wb = e.target.closest("[data-buy-weapon]");
           if (wb) { buyWeapon(wb.dataset.buyWeapon); return; }
         }, { passive: true });
@@ -2025,8 +2124,6 @@
 
       const onJoyMove = (e) => {
         if (!input.joyActive) return;
-
-        // ✅ FIX: pointerId filter
         if (e.pointerId != null && input.joyId != null && e.pointerId !== input.joyId) return;
 
         const p = pointerToOverlayXY(e);
@@ -2141,6 +2238,12 @@
 
             <div class="bcoz-hr"></div>
 
+            <!-- ✅ Plates block -->
+            <div style="font-weight:1000; margin-bottom:8px;">Armor Plates</div>
+            <div id="bcozPlateItem"></div>
+
+            <div class="bcoz-hr"></div>
+
             <div style="font-weight:1000; margin-bottom:8px;">Perks</div>
             <div class="bcoz-grid" id="bcozPerkList"></div>
 
@@ -2195,13 +2298,13 @@
       ui.hud = qs("#bcozHud");
       ui.toast = qs("#bcozToast");
 
-      // prevent scroll/zoom while in overlay
       addL(overlay, "touchmove", (e) => { e.preventDefault(); }, { passive: false });
 
       lockBody(true);
 
       wireOverlayUI();
       resize();
+      renderPlateShop();
       renderPerkShop();
       renderWeaponShop();
       renderCharSelect();
@@ -2211,15 +2314,11 @@
     function destroyOverlay() {
       stop();
 
-      // ✅ FIX: stop RAF safely
       try { if (raf) cancelAnimationFrame(raf); } catch {}
       raf = 0;
       lastT = 0;
 
-      // ✅ FIX: remove listeners
       removeAllL();
-
-      // ✅ restore body
       lockBody(false);
 
       if (overlay) overlay.remove();
@@ -2234,6 +2333,7 @@
       resetRun(true);
       setMode(run.mode || "arcade");
       updateHud();
+      renderPlateShop();
       zToast("Zombies ready 😈");
       haptic("notif", "success");
       if (!raf) raf = requestAnimationFrame(loop);
@@ -2246,6 +2346,8 @@
       destroy: destroyOverlay,
       setMode,
       sendResult,
+      buyPerk,     // ✅ exposed for main buttons
+      buyPlate,    // ✅ exposed for main buttons
       isOpen: () => !!overlay
     };
   })();
@@ -2363,7 +2465,13 @@
     onTap(btnZStop, () => { Z.open(); Z.stop(); toast("Zombies: стоп"); });
     onTap(btnZSend, () => { Z.open(); Z.sendResult("manual"); });
 
-    // If buttons missing — nothing breaks (onTap ignores null)
+    // ✅ Old home "Shop" buttons now реально покупают (в overlay roguelike)
+    onTap(qs("#btnZBuyJug"), () => { Z.open(); Z.setMode("roguelike"); Z.start(); Z.buyPerk("Jug"); });
+    onTap(qs("#btnZBuySpeed"), () => { Z.open(); Z.setMode("roguelike"); Z.start(); Z.buyPerk("Speed"); });
+    onTap(qs("#btnZBuyAmmo"), () => { Z.open(); Z.setMode("roguelike"); Z.start(); Z.buyPerk("Mag"); });
+
+    // (если хочешь отдельную кнопку Plate — добавим в HTML или повесим на Ammo)
+    // onTap(qs("#btnZBuyAmmo"), () => { Z.open(); Z.setMode("roguelike"); Z.start(); Z.buyPlate(); });
   }
 
   // ---------- Build tag ----------
