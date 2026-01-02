@@ -1,91 +1,68 @@
 /* =========================================================
-   app/webapp/static/zombies.maps.js
-   MAPS: Ashes / Astra + walls + boss spawns
+   BLACK CROWN OPS — ZOMBIES MAPS (Ashes/Astra)
+   File: app/webapp/static/zombies.maps.js
+   Provides: window.BCO_ZOMBIES_MAPS.get(name)
    ========================================================= */
 (() => {
   "use strict";
 
-  function rect(x, y, w, h) { return { x, y, w, h }; }
+  // Super-safe simple maps: world extents + walls for collisions module
+  // coords are in world units (same space as CORE state)
 
-  const ASHES = {
-    name: "Ashes",
-    w: 2200,
-    h: 1400,
+  const MAPS = new Map();
 
-    // простая геометрия для коллизий + визуала
-    walls: [
-      // рамка
-      rect(0, 0, 2200, 40),
-      rect(0, 1360, 2200, 40),
-      rect(0, 0, 40, 1400),
-      rect(2160, 0, 40, 1400),
+  function mkMap(name, w, h, walls, bossSpawns) {
+    return {
+      name, w, h,
+      // wall rects: {x,y,w,h}
+      walls: walls || [],
+      bossSpawns: bossSpawns || []
+    };
+  }
 
-      // центр-обломки
-      rect(860, 520, 480, 70),
-      rect(980, 650, 240, 220),
-
-      // левый двор
-      rect(220, 260, 140, 520),
-      rect(380, 420, 220, 90),
-
-      // правый двор
-      rect(1780, 300, 160, 520),
-      rect(1540, 440, 220, 90)
+  // Ashes: more open, few chunky blocks
+  MAPS.set("Ashes", mkMap(
+    "Ashes",
+    2400, 2400,
+    [
+      { x: -220, y: -520, w: 440, h: 140 },
+      { x: -860, y:  120, w: 420, h: 160 },
+      { x:  440, y:  220, w: 520, h: 180 },
+      { x: -120, y:  640, w: 240, h: 320 }
     ],
-
-    // волны с боссами
-    bossSpawns: [
+    [
       { wave: 5, type: "brute" },
-      { wave: 10, type: "warden" },
-      { wave: 15, type: "necromancer" }
+      { wave: 9, type: "spitter" }
     ]
-  };
+  ));
 
-  const ASTRA = {
-    name: "Astra",
-    w: 2400,
-    h: 1500,
-
-    walls: [
-      // рамка
-      rect(0, 0, 2400, 40),
-      rect(0, 1460, 2400, 40),
-      rect(0, 0, 40, 1500),
-      rect(2360, 0, 40, 1500),
-
-      // "лаборатория" блоки
-      rect(540, 240, 520, 90),
-      rect(540, 330, 90, 520),
-      rect(970, 420, 520, 90),
-
-      rect(1540, 280, 620, 90),
-      rect(1900, 370, 90, 520),
-      rect(1400, 600, 520, 90),
-
-      // центральный круг (квадратно)
-      rect(1070, 760, 260, 260)
+  // Astra: tighter lanes, more cover
+  MAPS.set("Astra", mkMap(
+    "Astra",
+    2400, 2400,
+    [
+      { x: -900, y: -260, w: 560, h: 140 },
+      { x: -240, y: -260, w: 480, h: 140 },
+      { x:  420, y: -260, w: 620, h: 140 },
+      { x: -520, y:  260, w: 1040, h: 160 },
+      { x: -900, y:  720, w: 520, h: 140 },
+      { x:  220, y:  720, w: 820, h: 140 }
     ],
-
-    bossSpawns: [
-      { wave: 6, type: "brute" },
-      { wave: 12, type: "warden" },
-      { wave: 18, type: "necromancer" }
+    [
+      { wave: 4, type: "spitter" },
+      { wave: 8, type: "brute" },
+      { wave: 12, type: "brute" }
     ]
-  };
-
-  const byName = new Map([
-    ["Ashes", ASHES],
-    ["Astra", ASTRA]
-  ]);
+  ));
 
   window.BCO_ZOMBIES_MAPS = {
     get(name) {
-      return byName.get(String(name || "Ashes")) || ASHES;
+      return MAPS.get(String(name || "")) || MAPS.get("Ashes");
     },
     list() {
-      return ["Ashes", "Astra"];
+      return Array.from(MAPS.keys());
     }
   };
 
-  console.log("[BCO_ZOMBIES_MAPS] loaded");
+  console.log("[Z_MAPS] loaded");
 })();
