@@ -1,7 +1,7 @@
 /* app/webapp/static/style.css */
 /* BLACK CROWN OPS — Mini App (Premium iOS glass + nebula) */
-/* v1.4.0 LUX — +Game Takeover (Zombies full takeover) +3D-ready layers */
-/* НИЧЕГО НЕ УРЕЗАНО — только добавлено/усилено/починено (клики, слои, safe-area, full takeover). */
+/* v1.4.0 LUX MAX — Game Takeover (Zombies full takeover) +3D-ready layers */
+/* НИЧЕГО НЕ УРЕЗАНО — только добавлено/усилено/починено (клики, слои, safe-area, full takeover, 3D hooks). */
 
 :root{
   --bg0:#07070b;
@@ -39,8 +39,23 @@
   --game-ui-z: 1100;      /* hud/controls */
   --game-modal-z: 1300;   /* modals */
   --touch-ring: 0 0 0 3px rgba(139,92,246,.22), 0 0 0 1px rgba(34,211,238,.18);
+
+  /* ---------- 3D forward: quality + perf knobs ---------- */
+  --hud-blur: 14px;
+  --ui-blur: 12px;
+  --glass: rgba(255,255,255,.055);
+  --glass-strong: rgba(255,255,255,.075);
+  --glass-stroke: rgba(255,255,255,.12);
+  --glass-stroke2: rgba(255,255,255,.16);
+
+  /* If later you want “console” performance mode: just toggle .bco-perf on html */
+  --perf-blur: 0px;
+  --perf-shadows: none;
 }
 
+/* =========================
+   BASE
+========================= */
 *{ box-sizing:border-box; }
 html, body{
   height:100%;
@@ -67,16 +82,40 @@ a{ color: var(--accent2); }
 /* =========================
    iOS / WebView HARDENING (tap reliability)
 ========================= */
-button, .btn, .chip, .seg-btn, .nav-btn, .tab, .bco-z-mini, .bco-shopbtn, .bco-fire{
+button, .btn, .chip, .seg-btn, .nav-btn, .tab,
+.bco-z-mini, .bco-shopbtn, .bco-fire, .bco-joy{
   -webkit-tap-highlight-color: rgba(0,0,0,0);
   touch-action: manipulation;
   user-select:none;
 }
-button:focus-visible, .btn:focus-visible, .seg-btn:focus-visible, .nav-btn:focus-visible, .tab:focus-visible{
+button:focus-visible, .btn:focus-visible, .seg-btn:focus-visible,
+.nav-btn:focus-visible, .tab:focus-visible, .bco-shopbtn:focus-visible, .bco-z-mini:focus-visible{
   box-shadow: var(--touch-ring);
 }
-*{
-  -webkit-user-drag: none;
+*{ -webkit-user-drag: none; }
+
+html{ -webkit-text-size-adjust: 100%; }
+
+/* Remove “rubber band” on iOS inside overlays */
+body, .bco-z-overlay{ overscroll-behavior: none; }
+
+/* =========================
+   OPTIONAL PERF MODE (3D heavy scenes)
+   Add: <html class="bco-perf"> to disable expensive blur/shadows
+========================= */
+html.bco-perf *{
+  box-shadow: var(--perf-shadows) !important;
+}
+html.bco-perf .card,
+html.bco-perf .app-header,
+html.bco-perf .top-tabs,
+html.bco-perf .bottom-nav,
+html.bco-perf .bco-z-overlay,
+html.bco-perf .bco-joy,
+html.bco-perf .bco-fire,
+html.bco-perf .bco-z-card{
+  backdrop-filter: blur(var(--perf-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--perf-blur)) !important;
 }
 
 /* =========================
@@ -120,8 +159,8 @@ body::after{
     10px
     calc(14px + var(--safe-left));
   background: rgba(7,7,11,.62);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(var(--hud-blur));
+  -webkit-backdrop-filter: blur(var(--hud-blur));
   border-bottom: 1px solid rgba(255,255,255,.06);
 }
 
@@ -484,7 +523,9 @@ body::after{
 }
 
 /* =========================
-   CHAT
+   CHAT (support app.js chat bubbles)
+   - твой HTML использует свои классы, но app.js рисует: .chat-row .bubble .chat-meta
+   - добавляем стили (НЕ ломая твоё)
 ========================= */
 .chat-log{
   margin-top: 10px;
@@ -519,7 +560,62 @@ body::after{
   margin-bottom: 10px;
 }
 
-/* Debug */
+/* chat bubbles (added) */
+.chat-row{
+  display:flex;
+  gap: 10px;
+  margin: 10px 0;
+}
+.chat-row.me{ justify-content: flex-end; }
+.chat-row.bot{ justify-content: flex-start; }
+
+.bubble{
+  max-width: min(78%, 560px);
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.05);
+  line-height: 1.35;
+  font-size: 12.5px;
+  font-weight: 750;
+  word-break: break-word;
+  box-shadow: 0 10px 26px rgba(0,0,0,.26);
+}
+.chat-row.me .bubble{
+  background: linear-gradient(135deg, rgba(139,92,246,.22), rgba(34,211,238,.12));
+  border-color: rgba(139,92,246,.22);
+}
+.chat-row.bot .bubble{
+  background: rgba(0,0,0,.18);
+  border-color: rgba(255,255,255,.10);
+}
+
+.chat-meta{
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 850;
+  color: rgba(255,255,255,.55);
+  padding-left: 2px;
+}
+
+/* typing dots (added) */
+.typing{ display:inline-flex; gap: 6px; align-items:center; }
+.typing .dot{
+  width: 6px; height: 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.62);
+  animation: bcoDot 1.1s infinite ease-in-out;
+}
+.typing .dot:nth-child(2){ animation-delay: .12s; }
+.typing .dot:nth-child(3){ animation-delay: .24s; }
+@keyframes bcoDot{
+  0%, 80%, 100%{ transform: translateY(0); opacity:.55; }
+  40%{ transform: translateY(-4px); opacity:.95; }
+}
+
+/* =========================
+   Debug (existing)
+========================= */
 .debug .debug-grid{
   display:grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -601,8 +697,7 @@ body::after{
 .toast.show{ opacity: 1; transform: translateX(-50%) translateY(0px); }
 
 /* =========================
-   FULLSCREEN ZOMBIES OVERLAY (для app.js)
-   (JS создаст overlay элементы сам, но CSS уже готов)
+   FULLSCREEN ZOMBIES OVERLAY (for app.js)
 ========================= */
 .bco-z-overlay{
   position: fixed;
@@ -616,11 +711,13 @@ body::after{
   -webkit-backdrop-filter: blur(10px);
   overflow: hidden;
 
-  /* critical for controls */
   touch-action: none;
   overscroll-behavior: none;
   -webkit-overflow-scrolling: auto;
   transform: translateZ(0);
+
+  /* future 3D renderer stability */
+  contain: layout paint size style;
 }
 
 /* Game topbar */
@@ -640,7 +737,6 @@ body::after{
   background: rgba(0,0,0,.25);
   border-bottom: 1px solid rgba(255,255,255,.06);
 
-  /* makes tap reliable */
   pointer-events: auto;
 }
 
@@ -658,8 +754,9 @@ body::after{
 }
 
 .bco-z-topbar .left{ display:flex; flex-direction: column; }
-.bco-z-topbar .right{ display:flex; gap: 8px; }
+.bco-z-topbar .right{ display:flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
+/* topbar buttons */
 .bco-z-mini{
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.12);
@@ -685,12 +782,19 @@ body::after{
   z-index: var(--game-z);
   display:block;
 
-  /* renderer-friendly */
   transform: translateZ(0);
   will-change: transform;
 }
 
-/* HUD layer (info only) */
+/* If later you mount a WebGL canvas, add this class */
+.bco-z-canvas-3d{
+  image-rendering: auto;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+  will-change: transform, opacity;
+}
+
+/* HUD layer */
 .bco-z-hud{
   position: absolute;
   left: 0; right: 0;
@@ -703,7 +807,7 @@ body::after{
   align-items: center;
   justify-content: space-between;
 
-  pointer-events: none; /* чтобы не мешать управлению */
+  pointer-events: none;
 }
 .bco-z-pill{
   pointer-events:none;
@@ -731,7 +835,7 @@ body::after{
   align-items:flex-end;
   justify-content: space-between;
 
-  pointer-events: none; /* кнопки внутри включим */
+  pointer-events: none;
 }
 
 /* Bigger touch zones on iOS */
@@ -748,8 +852,8 @@ body::after{
   background: rgba(255,255,255,.05);
   border: 1px solid rgba(255,255,255,.12);
   box-shadow: 0 18px 50px rgba(0,0,0,.35);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(var(--ui-blur));
+  -webkit-backdrop-filter: blur(var(--ui-blur));
   position: relative;
 
   pointer-events: auto;
@@ -779,7 +883,7 @@ body::after{
   will-change: transform;
 }
 
-/* FIRE (aim-stick ready) */
+/* FIRE */
 .bco-fire{
   width: 140px;
   height: 140px;
@@ -787,8 +891,8 @@ body::after{
   background: linear-gradient(135deg, rgba(139,92,246,.28), rgba(34,211,238,.14));
   border: 1px solid rgba(255,255,255,.14);
   box-shadow: 0 18px 50px rgba(0,0,0,.35);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(var(--ui-blur));
+  -webkit-backdrop-filter: blur(var(--ui-blur));
   display:grid;
   place-items:center;
   font-weight: 1100;
@@ -814,9 +918,11 @@ body::after{
   flex-wrap: wrap;
   justify-content: center;
 
-  /* clickable */
   pointer-events: auto;
   touch-action: manipulation;
+
+  /* avoid UI stealing touches from joysticks on small screens */
+  max-width: 100%;
 }
 .bco-shopbtn{
   border-radius: 999px;
@@ -850,7 +956,6 @@ body::after{
   -webkit-backdrop-filter: blur(10px);
   z-index: var(--game-modal-z);
 
-  /* click safe */
   pointer-events: auto;
   touch-action: none;
 }
@@ -910,7 +1015,6 @@ body::after{
 
 /* =========================
    GAME TAKEOVER MODE (driven by app.js: .bco-game on html/body)
-   — убираем всё, что мешает фуллскрину и тапам
 ========================= */
 html.bco-game, body.bco-game{
   height: 100%;
@@ -928,23 +1032,17 @@ html.bco-game .app-main{
   max-width: none !important;
   margin: 0 !important;
 }
-html.bco-game .tabpane{
-  /* игра должна жить отдельно (overlay). Тут ничего не ломаем, просто не мешаем. */
-}
 html.bco-game .toast{
   bottom: calc(16px + var(--safe-bottom));
 }
 
-/* =========================
-   3D readiness helpers (optional)
-   - если позже подключишь WebGL canvas для 3D, просто повесь класс .bco-z-canvas-3d
-========================= */
-.bco-z-canvas-3d{
-  /* webgl-friendly */
-  image-rendering: auto;
-  backface-visibility: hidden;
-  transform: translateZ(0);
-  will-change: transform, opacity;
+/* If you later add a 3D “renderer” toggle, you can set: html.bco-3d */
+html.bco-3d .bco-z-overlay{
+  /* a bit darker for 3D contrast */
+  background:
+    radial-gradient(900px 600px at 20% 10%, rgba(139,92,246,.16), transparent 60%),
+    radial-gradient(900px 600px at 90% 30%, rgba(34,211,238,.12), transparent 60%),
+    linear-gradient(180deg, rgba(0,0,0,.94), rgba(10,10,18,.96));
 }
 
 /* =========================
@@ -959,6 +1057,3 @@ html.bco-game .toast{
 .bco-fire:active{
   filter: brightness(1.06) saturate(1.06);
 }
-
-/* Prevent weird text zoom on iOS */
-html{ -webkit-text-size-adjust: 100%; }
