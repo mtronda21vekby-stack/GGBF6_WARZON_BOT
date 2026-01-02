@@ -29,8 +29,8 @@
   <!-- PREMIUM: disable pinch/double-tap zoom (iOS WebView hardening) -->
   <script>
     (function () {
-      // Guard: prevent zoom gestures in iOS Safari/WebView
       function prevent(e) { try { e.preventDefault(); } catch(_) {} }
+
       // gesture* fires on iOS for pinch
       window.addEventListener("gesturestart", prevent, { passive: false });
       window.addEventListener("gesturechange", prevent, { passive: false });
@@ -44,13 +44,13 @@
 
       window.addEventListener("touchend", function (e) {
         var now = Date.now();
-        if (now - lastTouchEnd <= 300) prevent(e); // double-tap
+        if (now - lastTouchEnd <= 300) prevent(e); // double-tap zoom
         lastTouchEnd = now;
       }, { passive: false });
 
-      // If user uses ctrl/cmd + wheel (desktop), block zoom
+      // Desktop ctrl/cmd + wheel zoom
       window.addEventListener("wheel", function (e) {
-        if (e.ctrlKey) prevent(e);
+        if (e.ctrlKey || e.metaKey) prevent(e);
       }, { passive: false });
     })();
   </script>
@@ -68,7 +68,6 @@
       css.href = "/webapp/style.css?build=" + encodeURIComponent(build);
       document.head.appendChild(css);
 
-      // Fallback for very early paint
       var nos = document.createElement("noscript");
       nos.innerHTML = '<link rel="stylesheet" href="/webapp/style.css?build=' + encodeURIComponent(build) + '">';
       document.head.appendChild(nos);
@@ -91,7 +90,11 @@
 
         // Optional polish (safe-guards)
         safe(function(){ wa.enableClosingConfirmation && wa.enableClosingConfirmation(); });
+
+        // Small iOS polish: keep webview responsive
+        safe(function(){ wa.disableVerticalSwipes && wa.disableVerticalSwipes(); });
       }
+
       if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", initTG, { once: true });
       } else {
@@ -394,7 +397,6 @@
 
     <!-- =========================
          GAME (ZOMBIES FULLSCREEN)
-         ВОТ ТА САМАЯ ОТДЕЛЬНАЯ ВКЛАДКА
     ========================== -->
     <section class="grid tabpane" id="tab-game">
       <div class="card">
@@ -428,7 +430,6 @@
         </div>
       </div>
 
-      <!-- оставляем богатый функционал HQ (ничего не режем), просто НЕ мешаем игре -->
       <div class="card">
         <div class="card-title">🧟 Zombies: штаб (команды боту)</div>
         <div class="actions">
@@ -478,9 +479,13 @@
     (function () {
       var build = window.__BCO_BUILD__ || String(Date.now());
       var health = document.getElementById("jsHealth");
+      var buildTag = document.getElementById("buildTag");
 
       function setHealth(msg) {
         if (health) health.textContent = msg;
+      }
+      function setBuildTag() {
+        if (buildTag) buildTag.textContent = "build: " + build;
       }
 
       function load(src) {
@@ -505,9 +510,12 @@
         });
       }
 
+      setBuildTag();
       setHealth("js: boot…");
 
-      loadOptional("/webapp/zombies.assets.js")
+      // ✅ важное: zombies.js первым (база/неймспейс/модульная шина). Если нет — будет BOOT ERROR и ты сразу увидишь.
+      load("/webapp/zombies.js")
+        .then(function () { return loadOptional("/webapp/zombies.assets.js"); })
         .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.assets.js not loaded (optional)"); return loadOptional("/webapp/zombies.perks.js"); })
         .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.perks.js not loaded (optional)"); return loadOptional("/webapp/zombies.maps.js"); })
         .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.maps.js not loaded (optional)"); return loadOptional("/webapp/zombies.collisions.js"); })
