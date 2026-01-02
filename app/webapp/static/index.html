@@ -30,13 +30,10 @@
   <script>
     (function () {
       function prevent(e) { try { e.preventDefault(); } catch(_) {} }
-
-      // gesture* fires on iOS for pinch
       window.addEventListener("gesturestart", prevent, { passive: false });
       window.addEventListener("gesturechange", prevent, { passive: false });
       window.addEventListener("gestureend", prevent, { passive: false });
 
-      // Prevent pinch (multi-touch) + prevent double-tap zoom
       var lastTouchEnd = 0;
       window.addEventListener("touchstart", function (e) {
         if (e.touches && e.touches.length > 1) prevent(e);
@@ -44,13 +41,12 @@
 
       window.addEventListener("touchend", function (e) {
         var now = Date.now();
-        if (now - lastTouchEnd <= 300) prevent(e); // double-tap zoom
+        if (now - lastTouchEnd <= 300) prevent(e);
         lastTouchEnd = now;
       }, { passive: false });
 
-      // Desktop ctrl/cmd + wheel zoom
       window.addEventListener("wheel", function (e) {
-        if (e.ctrlKey || e.metaKey) prevent(e);
+        if (e.ctrlKey) prevent(e);
       }, { passive: false });
     })();
   </script>
@@ -74,25 +70,86 @@
     })();
   </script>
 
-  <!-- Telegram WebApp bootstrap: fullscreen/expand + colors -->
+  <!-- Telegram WebApp bootstrap -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <!-- TG HARDENING: set CSS insets + hide TG chrome in takeover -->
   <script>
     (function () {
       function safe(fn){ try{ fn(); }catch(_){ } }
+
+      function setVar(name, px){
+        try{ document.documentElement.style.setProperty(name, String(px || 0) + "px"); }catch(_){}
+      }
+
+      function readInsets(wa){
+        // Prefer explicit safe area insets if available
+        var inset = wa && (wa.safeAreaInset || wa.contentSafeAreaInset);
+        if (inset && (typeof inset.top !== "undefined" || typeof inset.bottom !== "undefined")) {
+          return {
+            top: Number(inset.top || 0),
+            bottom: Number(inset.bottom || 0)
+          };
+        }
+        // Fallback: on iOS Telegram sometimes overlays its own top UI; give a conservative top padding
+        var isIOS = wa && String(wa.platform || "").toLowerCase() === "ios";
+        return { top: isIOS ? 48 : 0, bottom: 0 };
+      }
+
+      function applyInsets(){
+        if (!window.Telegram || !Telegram.WebApp) return;
+        var wa = Telegram.WebApp;
+        var ins = readInsets(wa);
+        setVar("--tg-top", ins.top);
+        setVar("--tg-bottom", ins.bottom);
+      }
+
+      function hideChrome(){
+        if (!window.Telegram || !Telegram.WebApp) return;
+        var wa = Telegram.WebApp;
+        safe(function(){ wa.ready(); });
+        safe(function(){ wa.expand(); });
+        safe(function(){ wa.MainButton && wa.MainButton.hide && wa.MainButton.hide(); });
+        safe(function(){ wa.BackButton && wa.BackButton.hide && wa.BackButton.hide(); });
+        safe(function(){ wa.enableClosingConfirmation && wa.enableClosingConfirmation(); });
+        applyInsets();
+      }
+
+      function showChrome(){
+        if (!window.Telegram || !Telegram.WebApp) return;
+        var wa = Telegram.WebApp;
+        safe(function(){ wa.ready(); });
+        // We still keep TG chrome minimal; if you want to show later, do it in app.js explicitly.
+        applyInsets();
+      }
+
+      window.BCO_TG = {
+        applyInsets: applyInsets,
+        hideChrome: hideChrome,
+        showChrome: showChrome
+      };
+
       function initTG(){
         if (!window.Telegram || !Telegram.WebApp) return;
         var wa = Telegram.WebApp;
 
         safe(function(){ wa.ready(); });
-        safe(function(){ wa.expand(); }); // best-effort "fullscreen" inside Telegram
+        safe(function(){ wa.expand(); });
         safe(function(){ wa.setHeaderColor && wa.setHeaderColor("#07070b"); });
         safe(function(){ wa.setBackgroundColor && wa.setBackgroundColor("#07070b"); });
 
-        // Optional polish (safe-guards)
-        safe(function(){ wa.enableClosingConfirmation && wa.enableClosingConfirmation(); });
+        // IMPORTANT: prevent TG buttons from covering our game UI by default
+        safe(function(){ wa.MainButton && wa.MainButton.hide && wa.MainButton.hide(); });
+        safe(function(){ wa.BackButton && wa.BackButton.hide && wa.BackButton.hide(); });
 
-        // Small iOS polish: keep webview responsive
-        safe(function(){ wa.disableVerticalSwipes && wa.disableVerticalSwipes(); });
+        applyInsets();
+
+        // Track viewport changes (iOS rotation / top bars)
+        safe(function(){
+          wa.onEvent && wa.onEvent("viewportChanged", function(){
+            applyInsets();
+          });
+        });
       }
 
       if (document.readyState === "loading") {
@@ -127,7 +184,6 @@
     </div>
   </header>
 
-  <!-- оставляем, но сейчас скрыто (будем использовать позже под расширение) -->
   <div class="top-tabs" style="display:none;"></div>
 
   <main class="wrap app-main" role="main">
@@ -166,9 +222,7 @@
       </div>
     </section>
 
-    <!-- =========================
-         HOME
-    ========================== -->
+    <!-- ========================= HOME ========================== -->
     <section class="grid tabpane active" id="tab-home">
       <div class="card">
         <div class="card-title">🚀 Быстрые действия</div>
@@ -176,8 +230,6 @@
           <button class="btn primary" id="btnOpenBot" type="button">Открыть меню бота</button>
           <button class="btn" id="btnSync" type="button">Синхронизировать профиль</button>
           <button class="btn" id="btnPremium" type="button">Premium Hub</button>
-
-          <!-- NEW: быстрый вход в игру (full takeover) -->
           <button class="btn primary" id="btnPlayZombies" type="button">🧟 Play Zombies (Fullscreen)</button>
         </div>
         <div class="hint">
@@ -222,8 +274,6 @@
         </div>
       </div>
 
-      <!-- НЕ УРЕЗАЕМ: mini-games остаются, но Zombies здесь = витрина/триггеры.
-           Реальная игра теперь в отдельной вкладке GAME (tab-game) + fullscreen takeover. -->
       <div class="card">
         <div class="card-title">🎮 Mini Games (2 режима)</div>
         <div class="hint">
@@ -277,9 +327,7 @@
       </div>
     </section>
 
-    <!-- =========================
-         COACH
-    ========================== -->
+    <!-- ========================= COACH ========================== -->
     <section class="grid tabpane" id="tab-coach">
       <div class="card">
         <div class="card-title">🎯 План тренировки (20 минут)</div>
@@ -313,9 +361,7 @@
       </div>
     </section>
 
-    <!-- =========================
-         VOD
-    ========================== -->
+    <!-- ========================= VOD ========================== -->
     <section class="grid tabpane" id="tab-vod">
       <div class="card">
         <div class="card-title">🎬 VOD: разбор без видео</div>
@@ -333,9 +379,7 @@
       </div>
     </section>
 
-    <!-- =========================
-         SETTINGS
-    ========================== -->
+    <!-- ========================= SETTINGS ========================== -->
     <section class="grid tabpane" id="tab-settings">
       <div class="card">
         <div class="card-title">⚙️ Профиль</div>
@@ -395,9 +439,7 @@
       </div>
     </section>
 
-    <!-- =========================
-         GAME (ZOMBIES FULLSCREEN)
-    ========================== -->
+    <!-- ========================= GAME (ZOMBIES FULLSCREEN) ========================== -->
     <section class="grid tabpane" id="tab-game">
       <div class="card">
         <div class="card-title">🧟 Game: Zombies Survival</div>
@@ -450,7 +492,6 @@
     </footer>
   </main>
 
-  <!-- NAV: 5 вкладок, Game вместо старого "Zombies" -->
   <nav class="bottombar bottom-nav" aria-label="Навигация">
     <button class="nav-btn active" data-tab="home" type="button" aria-selected="true">
       <span class="nav-ico">⭐</span><span class="nav-txt">Главная</span>
@@ -471,7 +512,6 @@
 
   <div class="toast" id="toast">OK</div>
 
-  <!-- mount под fullscreen overlay/канвас -->
   <div id="zOverlayMount" aria-hidden="true"></div>
 
   <!-- BOOT LOADER (order preserved; async=false) -->
@@ -479,14 +519,8 @@
     (function () {
       var build = window.__BCO_BUILD__ || String(Date.now());
       var health = document.getElementById("jsHealth");
-      var buildTag = document.getElementById("buildTag");
 
-      function setHealth(msg) {
-        if (health) health.textContent = msg;
-      }
-      function setBuildTag() {
-        if (buildTag) buildTag.textContent = "build: " + build;
-      }
+      function setHealth(msg) { if (health) health.textContent = msg; }
 
       function load(src) {
         return new Promise(function (resolve, reject) {
@@ -510,12 +544,9 @@
         });
       }
 
-      setBuildTag();
       setHealth("js: boot…");
 
-      // ✅ важное: zombies.js первым (база/неймспейс/модульная шина). Если нет — будет BOOT ERROR и ты сразу увидишь.
-      load("/webapp/zombies.js")
-        .then(function () { return loadOptional("/webapp/zombies.assets.js"); })
+      loadOptional("/webapp/zombies.assets.js")
         .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.assets.js not loaded (optional)"); return loadOptional("/webapp/zombies.perks.js"); })
         .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.perks.js not loaded (optional)"); return loadOptional("/webapp/zombies.maps.js"); })
         .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.maps.js not loaded (optional)"); return loadOptional("/webapp/zombies.collisions.js"); })
