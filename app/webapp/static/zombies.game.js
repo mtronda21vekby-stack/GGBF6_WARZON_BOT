@@ -9,13 +9,15 @@
    Provides:
      - window.BCO_ZOMBIES_GAME
 
-   LUX upgrades:
-     - iOS-friendly landscape: dynamic safe-area + viewport tracking
-     - Dual-stick always works (Pointer Events)
-     - Roguelike HUD shows: HP + ARMOR + PLATES + COINS + KILLS + WAVE + AMMO
-     - Action buttons: Reload + Plate + Shop (buy perks) + Upgrade + Reroll
-     - Shop fully usable (pointer-events, not blocked by overlay)
-     - No code cuts; backwards compatible with old CORE (will soft-disable missing features)
+   LUX upgrades (NO UI redesign, only behavior/system fixes):
+     ✅ iOS WebView hardening: no dead taps, stable pointer capture, no scroll/zoom/pinch
+     ✅ Fullscreen Takeover helpers (best-effort): Telegram expand + scroll lock + viewport fit
+     ✅ Dual-stick true: right stick = aim; FIRE = hold-to-shoot handled by stick; no “position bug”
+     ✅ Roguelike actually works: uses CORE.setMode() if exists; start() uses CORE.start(mode,..) which sets mode
+     ✅ Shop + upgrades always clickable (z-order/pointer-events fix), overlay never blocks
+     ✅ HUD richer + 3D-ready snapshots access (CORE.getFrameData if exists)
+     ✅ Backwards compatible: if CORE missing methods, soft fallback
+     ✅ 3D-ready: exposes getSnapshot(), getInput(), setInput(), onSnapshot(cb), can be used by 3D renderer later
    ========================================================= */
 (() => {
   "use strict";
@@ -41,11 +43,20 @@
   let raf = 0;
   let dpr = 1;
 
+  // internal snapshot bus (3D-ready)
+  let _snapCb = null;
+  let _lastSnap = null;
+
+  // input mirror (renderer/controls + 3D)
   const input = {
     moveX: 0, moveY: 0,
-    aimX: 1, aimY: 0
+    aimX: 1, aimY: 0,
+    firing: false
   };
 
+  // ---------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------
   function haptic(type = "impact", style = "light") {
     try {
       if (!tg?.HapticFeedback) return;
@@ -65,12 +76,82 @@
   }
 
   function cssSafe() {
-    // robust safe-area fallback for older webviews
     const top = `max(env(safe-area-inset-top), 0px)`;
     const bot = `max(env(safe-area-inset-bottom), 0px)`;
     const left = `max(env(safe-area-inset-left), 0px)`;
     const right = `max(env(safe-area-inset-right), 0px)`;
     return { top, bot, left, right };
+  }
+
+  // Prevent document scroll / overscroll (iOS dead taps fix)
+  let _scrollLocked = false;
+  let _prevOverflow = "";
+  let _prevOverscroll = "";
+  let _prevTouchAction = "";
+  let _prevScrollY = 0;
+
+  function lockScroll() {
+    if (_scrollLocked) return;
+    _scrollLocked = true;
+
+    try {
+      _prevOverflow = document.documentElement.style.overflow;
+      _prevOverscroll = document.documentElement.style.overscrollBehavior;
+      _prevTouchAction = document.documentElement.style.touchAction;
+      _prevScrollY = window.scrollY || 0;
+
+      document.documentElement.style.overflow = "hidden";
+      document.documentElement.style.overscrollBehavior = "none";
+      document.documentElement.style.touchAction = "none";
+
+      document.body.style.overflow = "hidden";
+      document.body.style.overscrollBehavior = "none";
+      document.body.style.touchAction = "none";
+
+      // keep page at top to avoid rubber band
+      window.scrollTo(0, _prevScrollY);
+    } catch {}
+  }
+
+  function unlockScroll() {
+    if (!_scrollLocked) return;
+    _scrollLocked = false;
+
+    try {
+      document.documentElement.style.overflow = _prevOverflow || "";
+      document.documentElement.style.overscrollBehavior = _prevOverscroll || "";
+      document.documentElement.style.touchAction = _prevTouchAction || "";
+
+      document.body.style.overflow = "";
+      document.body.style.overscrollBehavior = "";
+      document.body.style.touchAction = "";
+
+      window.scrollTo(0, _prevScrollY || 0);
+    } catch {}
+  }
+
+  // Best-effort Telegram UI hide (no UI change; behavior only)
+  function tgTakeoverOn() {
+    try { tg?.ready?.(); } catch {}
+    try { tg?.expand?.(); } catch {}
+    try { tg?.setHeaderColor?.("#000000"); } catch {}
+    try { tg?.setBackgroundColor?.("#000000"); } catch {}
+    try { tg?.MainButton?.hide?.(); } catch {}
+    try { tg?.BackButton?.show?.(); } catch {}
+    try {
+      tg?.BackButton?.onClick?.(() => {
+        if (overlay) API.close();
+      });
+    } catch {}
+
+    // try fullscreen on mobile
+    try { tg?.requestFullscreen?.(); } catch {}
+  }
+
+  function tgTakeoverOff() {
+    try { tg?.BackButton?.hide?.(); } catch {}
+    // do NOT show MainButton here; app-level decides. We only hide in takeover.
+    try { tg?.exitFullscreen?.(); } catch {}
   }
 
   // ---------------------------------------------------------
@@ -95,12 +176,17 @@
       padding-bottom:${safe.bot};
       padding-left:${safe.left};
       padding-right:${safe.right};
+      -webkit-tap-highlight-color: transparent;
+      pointer-events:auto;
     `;
 
     // Canvas
     canvas = document.createElement("canvas");
     canvas.id = "bco-z-canvas";
-    canvas.style.cssText = `position:absolute; inset:0; width:100%; height:100%;`;
+    canvas.style.cssText = `
+      position:absolute; inset:0; width:100%; height:100%;
+      pointer-events:none; /* ✅ canvas never blocks UI taps */
+    `;
     overlay.appendChild(canvas);
     ctx = canvas.getContext("2d", { alpha: true });
 
@@ -111,6 +197,7 @@
       height:68px; display:flex; align-items:center; justify-content:space-between;
       padding:10px 12px; box-sizing:border-box;
       pointer-events:auto;
+      z-index:10;
       backdrop-filter: blur(14px);
       background: linear-gradient(180deg, rgba(0,0,0,.55), rgba(0,0,0,0));
       border-bottom:1px solid rgba(255,255,255,.08);
@@ -155,6 +242,25 @@
     `;
     pill.textContent = `❤️ 100 • ☠️ 0 • 💰 0 • 🔫 SMG`;
 
+    const btnSend = document.createElement("button");
+    btnSend.type = "button";
+    btnSend.textContent = "Send";
+    btnSend.style.cssText = `
+      padding:12px 14px; border-radius:16px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.08);
+      color: rgba(255,255,255,.92);
+      font:900 12px/1 Inter,system-ui;
+      letter-spacing:.2px;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    `;
+    btnSend.addEventListener("click", (e) => {
+      e.preventDefault();
+      sendResult("manual");
+      haptic("notif", "success");
+    }, { passive: false });
+
     const btnClose = document.createElement("button");
     btnClose.type = "button";
     btnClose.textContent = "✖";
@@ -165,10 +271,15 @@
       color: rgba(255,255,255,.92);
       font:900 16px/1 Inter,system-ui;
       touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     `;
-    btnClose.addEventListener("click", () => API.close(), { passive: true });
+    btnClose.addEventListener("click", (e) => {
+      e.preventDefault();
+      API.close();
+    }, { passive: false });
 
     right.appendChild(pill);
+    right.appendChild(btnSend);
     right.appendChild(btnClose);
 
     top.appendChild(left);
@@ -183,6 +294,7 @@
       padding:10px 12px calc(10px + env(safe-area-inset-bottom));
       box-sizing:border-box;
       pointer-events:none;
+      z-index:9;
       background: linear-gradient(0deg, rgba(0,0,0,.62), rgba(0,0,0,0));
     `;
     overlay.appendChild(bottom);
@@ -204,7 +316,7 @@
       flex-direction:column;
       gap:10px;
       pointer-events:auto;
-      z-index:2;
+      z-index:30; /* ✅ above everything */
     `;
     bottom.appendChild(action);
 
@@ -240,7 +352,7 @@
       pointer-events:auto;
       opacity:0;
       transition: opacity .18s ease, transform .18s ease;
-      z-index:3;
+      z-index:40; /* ✅ above sticks too */
     `;
     bottom.appendChild(shop);
 
@@ -255,16 +367,18 @@
       pointer-events:auto;
       opacity:0;
       transition: opacity .18s ease, transform .18s ease;
-      z-index:3;
+      z-index:40;
     `;
     bottom.appendChild(upgrades);
 
     const btnUpg = mkBtn("⬆️ Upgrade", () => {
-      // soft-compat: if CORE has weapon upgrade mechanics, call it; else buy Mag as placeholder
+      // 3D-ready: upgrade belongs in CORE; here we keep compatibility helper
       let ok = false;
       try {
-        if (CORE?.state?.weapon && typeof CORE?.state?.weapon?.upgrade === "number") {
-          // cheap upgrade cost curve (UI-side helper), CORE can ignore if it wants
+        // Prefer a proper API if core supports it
+        if (typeof CORE.upgradeWeapon === "function") {
+          ok = !!CORE.upgradeWeapon();
+        } else if (CORE?.state?.weapon && typeof CORE?.state?.weapon?.upgrade === "number") {
           const S = CORE.state;
           const w = S.weapon;
           const cost = 8 + (w.upgrade | 0) * 6;
@@ -272,7 +386,6 @@
           else if ((S.coins | 0) >= cost) {
             S.coins -= cost;
             w.upgrade = Math.min(9, (w.upgrade | 0) + 1);
-            // rebuild effective maxima if core supports mkWeapon; many cores do internally
             if (typeof CORE.setWeapon === "function") CORE.setWeapon(CORE.meta.weaponKey);
             ok = true;
           }
@@ -283,10 +396,12 @@
     }, { w: 126 });
 
     const btnReroll = mkBtn("🎲 Reroll", () => {
-      // UI-only reroll: gives random weapon via setWeapon if available
+      // Prefer core reroll if exists
       let ok = false;
       try {
-        if (CORE.meta.mode === "roguelike" && CORE?.cfg?.weapons && typeof CORE.setWeapon === "function") {
+        if (typeof CORE.rerollWeapon === "function") {
+          ok = !!CORE.rerollWeapon();
+        } else if (CORE.meta.mode === "roguelike" && CORE?.cfg?.weapons && typeof CORE.setWeapon === "function") {
           const keys = Object.keys(CORE.cfg.weapons);
           if (keys.length) {
             const key = keys[(Math.random() * keys.length) | 0];
@@ -327,9 +442,11 @@
         letter-spacing:.2px;
         touch-action: manipulation;
         -webkit-tap-highlight-color: transparent;
+        pointer-events:auto;
       `;
       b.addEventListener("click", (e) => {
         e.preventDefault();
+        e.stopPropagation();
         try { on?.(e); } catch {}
       }, { passive: false });
       return b;
@@ -349,6 +466,7 @@
         pointer-events:auto;
         touch-action:none;
         -webkit-tap-highlight-color: transparent;
+        z-index:20;
       `;
 
       const knob = document.createElement("div");
@@ -360,16 +478,18 @@
         background: rgba(255,255,255,.18);
         border: 1px solid rgba(255,255,255,.16);
         box-shadow: 0 16px 44px rgba(0,0,0,.45);
+        pointer-events:none;
       `;
       base.appendChild(knob);
 
-      return { base, knob, id: null, side };
+      return { base, knob, id: null, side, lastNX: 0, lastNY: 0 };
     }
 
-    // Prevent scroll/pinch
+    // Prevent scroll/pinch (overlay level)
     overlay.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
     overlay.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
     overlay.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false });
+    overlay.addEventListener("gestureend", (e) => e.preventDefault(), { passive: false });
 
     // Attach
     mount().appendChild(overlay);
@@ -378,32 +498,42 @@
     resize();
 
     // Sticks
-    wireStick(joyL, (x, y) => {
+    wireStick(joyL, (x, y, active) => {
       input.moveX = x; input.moveY = y;
-      CORE.setMove(x, y);
+      if (typeof CORE.setMove === "function") CORE.setMove(x, y);
+      // keep for 3D
     });
 
-    wireStick(joyR, (x, y) => {
+    // Right stick = aim + fire (hold-to-shoot)
+    wireStick(joyR, (x, y, active) => {
+      input.aimX = x || input.aimX;
+      input.aimY = y || input.aimY;
+
       if (x || y) {
-        input.aimX = x; input.aimY = y;
-        CORE.setAim(x, y);
-        CORE.setShooting(true);
-      } else {
-        CORE.setShooting(false);
+        if (typeof CORE.setAim === "function") CORE.setAim(x, y);
       }
+
+      // fire only while active touch AND vector non-zero (prevents accidental firing)
+      const firing = !!active && (Math.abs(x) + Math.abs(y) > 0.01);
+      input.firing = firing;
+
+      // Core compatibility:
+      // - prefer setShooting
+      // - else setFire
+      // - else write to CORE.input.shooting
+      try {
+        if (typeof CORE.setShooting === "function") CORE.setShooting(firing);
+        else if (typeof CORE.setFire === "function") CORE.setFire(firing);
+        else if (CORE.input) CORE.input.shooting = firing;
+      } catch {}
     });
 
-    // Telegram buttons
-    try { tg?.expand?.(); } catch {}
-    try { tg?.BackButton?.show?.(); } catch {}
-    try {
-      tg?.BackButton?.onClick?.(() => {
-        if (overlay) API.close();
-      });
-    } catch {}
+    // Telegram takeover best-effort + scroll lock
+    lockScroll();
+    tgTakeoverOn();
 
     // show shop depending on mode
-    setRogueUI(CORE.meta.mode === "roguelike");
+    setRogueUI((CORE.meta?.mode || "arcade") === "roguelike");
 
     // local refs
     overlay._bco = { shop, upgrades, action, joyL, joyR };
@@ -417,7 +547,6 @@
     shop.style.opacity = on;
     upgrades.style.opacity = on;
 
-    // tiny lift when visible
     shop.style.transform = `translateX(-50%) translateY(${isRogue ? "0px" : "10px"})`;
     upgrades.style.transform = `translateX(-50%) translateY(${isRogue ? "0px" : "10px"})`;
   }
@@ -444,17 +573,7 @@
         `translate(calc(-50% + ${nx * maxR}px), calc(-50% + ${ny * maxR}px))`;
     }
 
-    function down(e) {
-      e.preventDefault();
-      stick.id = e.pointerId;
-      try { stick.base.setPointerCapture?.(e.pointerId); } catch {}
-      move(e);
-      haptic("impact", "light");
-    }
-
-    function move(e) {
-      if (stick.id !== e.pointerId) return;
-
+    function compute(e) {
       const r = rect();
       const cx = r.left + r.width / 2;
       const cy = r.top + r.height / 2;
@@ -472,21 +591,48 @@
       nx *= m;
       ny *= m;
 
+      // cache
+      stick.lastNX = nx;
+      stick.lastNY = ny;
+
       setKnob(nx, ny);
-      onMove(nx, ny);
+      return { nx, ny };
+    }
+
+    function down(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      stick.id = e.pointerId;
+      try { stick.base.setPointerCapture?.(e.pointerId); } catch {}
+      const { nx, ny } = compute(e);
+      onMove(nx, ny, true);
+      haptic("impact", "light");
+    }
+
+    function move(e) {
+      if (stick.id !== e.pointerId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const { nx, ny } = compute(e);
+      onMove(nx, ny, true);
     }
 
     function up(e) {
       if (stick.id !== e.pointerId) return;
+      e.preventDefault();
+      e.stopPropagation();
       stick.id = null;
+      stick.lastNX = 0;
+      stick.lastNY = 0;
       setKnob(0, 0);
-      onMove(0, 0);
+      onMove(0, 0, false);
     }
 
     stick.base.addEventListener("pointerdown", down, { passive: false });
     stick.base.addEventListener("pointermove", move, { passive: false });
     stick.base.addEventListener("pointerup", up, { passive: false });
     stick.base.addEventListener("pointercancel", up, { passive: false });
+    stick.base.addEventListener("lostpointercapture", up, { passive: false });
   }
 
   // ---------------------------------------------------------
@@ -503,11 +649,10 @@
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    CORE.resize(r.width, r.height);
+    try { if (typeof CORE.resize === "function") CORE.resize(r.width, r.height); } catch {}
   }
 
   function scheduleResize() {
-    // iOS sometimes reports stale sizes; do a quick two-step
     resize();
     setTimeout(resize, 50);
     setTimeout(resize, 180);
@@ -527,13 +672,28 @@
     raf = requestAnimationFrame(loop);
     if (!overlay || !ctx) return;
 
-    if (CORE.running) CORE.updateFrame(t);
+    try {
+      if (CORE.running && typeof CORE.updateFrame === "function") CORE.updateFrame(t);
+      else if (CORE.running && typeof CORE.step === "function") CORE.step(t);
+    } catch {}
 
     const r = overlay.getBoundingClientRect();
     const view = { w: r.width, h: r.height };
 
     // render
-    RENDER.render(ctx, CORE, CORE.input, view);
+    try {
+      RENDER.render(ctx, CORE, CORE.input || CORE?.input || input, view);
+    } catch (e) {
+      // fail-safe: don't kill controls on renderer errors
+      // eslint-disable-next-line no-console
+      console.warn("[Z_GAME] render err", e);
+    }
+
+    // snapshot (3D-ready)
+    try {
+      _lastSnap = (typeof CORE.getFrameData === "function") ? CORE.getFrameData() : null;
+      if (_lastSnap && typeof _snapCb === "function") _snapCb(_lastSnap);
+    } catch {}
 
     updateHud();
     checkDeathAutoSend();
@@ -555,28 +715,44 @@
     const sub = document.getElementById("bco-z-sub");
     const hud = document.getElementById("bco-z-hud");
 
-    const S = CORE.state;
-    const st = (typeof CORE._effectiveStats === "function") ? CORE._effectiveStats() : { hpMax: 100, armorMax: 0, platesMax: 0 };
+    const S = CORE.state || {};
+    const P = S.player || { hp: 0, armor: 0, plates: 0 };
 
-    const hp = Math.max(0, Math.min(S.player.hp, st.hpMax || 100));
-    const armor = Math.max(0, Math.min(S.player.armor || 0, st.armorMax || 0));
-    const plates = Math.max(0, Math.min(S.player.plates || 0, st.platesMax || 0));
+    // Prefer public snapshot for 3D readiness (consistent)
+    const snap = (typeof CORE.getFrameData === "function") ? _lastSnap : null;
+    const hudData = snap?.hud || null;
 
-    const W = (typeof CORE._weaponEffective === "function")
-      ? CORE._weaponEffective()
-      : (S.weapon ? S.weapon : (CORE._weapon ? CORE._weapon() : { name: "SMG" }));
+    // effective stats (if exposed)
+    const st = (typeof CORE._effectiveStats === "function")
+      ? CORE._effectiveStats()
+      : { hpMax: 100, armorMax: 0, platesMax: 0 };
 
-    const mag = (S.weapon && typeof S.weapon.mag === "number") ? (S.weapon.mag | 0) : null;
-    const magMax = (typeof W.magMax === "number") ? (W.magMax | 0) : null;
-    const reserve = (S.weapon && typeof S.weapon.reserve === "number") ? (S.weapon.reserve | 0) : null;
+    const hp = Math.max(0, Math.min(P.hp | 0, st.hpMax | 0 || 100));
+    const armor = Math.max(0, Math.min((P.armor | 0) || 0, (st.armorMax | 0) || 0));
+    const plates = Math.max(0, Math.min((P.plates | 0) || 0, (st.platesMax | 0) || 0));
 
-    if (sub) sub.textContent = `${String(CORE.meta.mode || "arcade").toUpperCase()} • ${String(CORE.meta.map || "Ashes")}`;
+    const mode = String(CORE.meta?.mode || "arcade");
+    const map = String(CORE.meta?.map || "Ashes");
 
-    // build HUD string with armor/ammo if exists
+    // weapon display
+    const wName = hudData?.weapon?.name || S.weapon?.name || (CORE._weapon?.()?.name) || (CORE.cfg?.weapons?.[CORE.meta?.weaponKey]?.name) || "SMG";
+    const mag = hudData?.weapon?.mag ?? (S.weapon && typeof S.weapon.mag === "number" ? (S.weapon.mag | 0) : null);
+    const magMax = hudData?.weapon?.magMax ?? (S.weapon && typeof S.weapon.magMax === "number" ? (S.weapon.magMax | 0) : null);
+    const reserve = hudData?.weapon?.reserve ?? (S.weapon && typeof S.weapon.reserve === "number" ? (S.weapon.reserve | 0) : null);
+
+    const kills = hudData?.kills ?? (S.kills | 0);
+    const wave = hudData?.wave ?? (S.wave | 0);
+    const coins = hudData?.coins ?? (S.coins | 0);
+    const lvl = hudData?.level ?? (S.level | 0);
+
+    if (sub) sub.textContent = `${mode.toUpperCase()} • ${map}`;
+
     let s = `❤️ ${hp|0}/${(st.hpMax|0) || 100}`;
     if ((st.armorMax|0) > 0 || armor > 0) s += ` • 🛡 ${armor|0}/${(st.armorMax|0) || 0}`;
     if ((st.platesMax|0) > 0 || plates > 0) s += ` • 🧩 ${plates|0}`;
-    s += ` • ☠️ ${(S.kills|0)} • 🌊 ${(S.wave|0)} • 💰 ${(S.coins|0)} • 🔫 ${W.name || "SMG"}`;
+    s += ` • ☠️ ${kills|0} • 🌊 ${wave|0}`;
+    if (mode === "roguelike") s += ` • 💰 ${coins|0} • 🧬 L${Math.max(1, lvl|0)}`;
+    s += ` • 🔫 ${wName}`;
     if (mag !== null && magMax !== null) {
       s += ` • ${mag}/${magMax}`;
       if (reserve !== null) s += ` (${reserve})`;
@@ -584,7 +760,7 @@
     if (hud) hud.textContent = s;
 
     // roguelike UI toggles
-    setRogueUI(CORE.meta.mode === "roguelike");
+    setRogueUI(mode === "roguelike");
 
     // button hint state (plate/reload)
     try {
@@ -592,12 +768,21 @@
       if (a) {
         const btns = a.querySelectorAll("button");
         if (btns?.length >= 2) {
-          // reload
-          const canReload = (typeof CORE.reload === "function") && (S.weapon && (S.weapon.mag|0) < ((W.magMax|0) || 999)) && ((S.weapon.reserve|0) > 0) && !(S.reload?.active);
+          const canReload =
+            (typeof CORE.reload === "function") &&
+            (S.weapon && (S.weapon.mag|0) < ((magMax|0) || 999)) &&
+            ((S.weapon.reserve|0) > 0) &&
+            !(S.reload?.active);
+
           btns[0].style.opacity = canReload ? "1" : "0.55";
 
-          // plate
-          const canPlate = (typeof CORE.usePlate === "function") && (CORE.meta.mode === "roguelike") && ((plates|0) > 0) && ((armor|0) < ((st.armorMax|0) || 0)) && !(S.player?.plating?.active);
+          const canPlate =
+            (typeof CORE.usePlate === "function") &&
+            (mode === "roguelike") &&
+            ((plates|0) > 0) &&
+            ((armor|0) < ((st.armorMax|0) || 0)) &&
+            !(P?.plating?.active);
+
           btns[1].style.opacity = canPlate ? "1" : "0.55";
         }
       }
@@ -608,11 +793,12 @@
   // Result payload
   // ---------------------------------------------------------
   function score() {
-    const S = CORE.state;
+    const S = CORE.state || {};
+    const P = S.player || {};
     const base = (S.kills | 0) * 100;
     const waveBonus = Math.max(0, (S.wave - 1) | 0) * 250;
-    const timeSec = Math.max(1, (S.timeMs / 1000));
-    const pace = (S.kills / timeSec) * 100;
+    const timeSec = Math.max(1, ((S.timeMs || 0) / 1000));
+    const pace = ((S.kills || 0) / timeSec) * 100;
 
     const perks = S.perks || {};
     const perkScore =
@@ -625,40 +811,41 @@
       (perks.Loot ? 120 : 0) +
       (perks.Sprint ? 90 : 0);
 
-    const armorBonus = Math.min(180, Math.max(0, (S.player.armor | 0)));
-    const lvl = Math.max(1, (S.level | 0));
+    const armorBonus = Math.min(180, Math.max(0, (P.armor | 0) || 0));
+    const lvl = Math.max(1, (S.level | 0) || 1);
     const lvlBonus = Math.min(800, (lvl - 1) * 40);
 
     return Math.round(base + waveBonus + pace + perkScore + armorBonus + lvlBonus);
   }
 
   function sendResult(reason = "manual") {
-    const S = CORE.state;
+    const S = CORE.state || {};
+    const P = S.player || {};
 
     const payload = {
       action: "game_result",
       game: "zombies",
-      mode: CORE.meta.mode,
+      mode: CORE.meta?.mode || "arcade",
       reason,
 
-      map: CORE.meta.map,
-      wave: S.wave,
-      kills: S.kills,
-      coins: S.coins,
-      duration_ms: Math.round(S.timeMs),
+      map: CORE.meta?.map || "Ashes",
+      wave: S.wave ?? null,
+      kills: S.kills ?? null,
+      coins: S.coins ?? null,
+      duration_ms: Math.round(S.timeMs || 0),
       score: score(),
 
-      character: CORE.meta.character,
-      skin: CORE.meta.skin,
-      loadout: { weapon: CORE.meta.weaponKey },
+      character: CORE.meta?.character || null,
+      skin: CORE.meta?.skin || null,
+      loadout: { weapon: CORE.meta?.weaponKey || null },
       perks: { ...(S.perks || {}) },
 
-      // LUX extras (safe)
-      hp: S.player?.hp ?? null,
-      armor: S.player?.armor ?? null,
-      plates: S.player?.plates ?? null,
-      xp: S.xp ?? null,
-      level: S.level ?? null,
+      // extras
+      hp: (P.hp ?? null),
+      armor: (P.armor ?? null),
+      plates: (P.plates ?? null),
+      xp: (S.xp ?? null),
+      level: (S.level ?? null),
       ammo: (S.weapon && typeof S.weapon.mag === "number") ? { mag: S.weapon.mag, reserve: S.weapon.reserve } : null
     };
 
@@ -666,7 +853,7 @@
   }
 
   // ---------------------------------------------------------
-  // Public API
+  // Public API (3D-ready)
   // ---------------------------------------------------------
   const API = {
     open() {
@@ -680,10 +867,12 @@
     close() {
       if (raf) cancelAnimationFrame(raf);
       raf = 0;
-      CORE.stop();
+
+      try { if (typeof CORE.stop === "function") CORE.stop(); } catch {}
       _sentDeath = false;
 
-      try { tg?.BackButton?.hide?.(); } catch {}
+      tgTakeoverOff();
+      unlockScroll();
       destroyOverlay();
       return true;
     },
@@ -694,25 +883,40 @@
       _sentDeath = false;
 
       const r = overlay.getBoundingClientRect();
-      CORE.start(mode, r.width, r.height, opts);
+
+      // ✅ IMPORTANT: Let CORE start decide mode (roguelike must be set inside core)
+      // Prefer CORE.setMode if exists, then start
+      try {
+        if (typeof CORE.setMode === "function") CORE.setMode(mode);
+      } catch {}
+
+      try {
+        CORE.start(mode, r.width, r.height, opts);
+      } catch (e) {
+        console.warn("[Z_GAME] CORE.start failed", e);
+        return false;
+      }
 
       if (!raf) raf = requestAnimationFrame(loop);
 
-      // ensure UI toggles
-      setRogueUI(CORE.meta.mode === "roguelike");
+      setRogueUI((CORE.meta?.mode || "arcade") === "roguelike");
 
       haptic("notif", "success");
       return true;
     },
 
     stop(reason = "manual") {
-      CORE.stop();
+      try { if (typeof CORE.stop === "function") CORE.stop(); } catch {}
       sendResult(reason);
       haptic("notif", "warning");
       return true;
     },
 
     setMode(mode) {
+      // ✅ Prefer CORE.setMode (real rules), fallback to meta
+      try {
+        if (typeof CORE.setMode === "function") return CORE.setMode(mode);
+      } catch {}
       const m = String(mode || "").toLowerCase();
       CORE.meta.mode = (m.includes("rogue")) ? "roguelike" : "arcade";
       setRogueUI(CORE.meta.mode === "roguelike");
@@ -740,10 +944,13 @@
     },
 
     setWeapon(key) {
-      return CORE.setWeapon(key);
+      if (typeof CORE.setWeapon === "function") return CORE.setWeapon(key);
+      CORE.meta.weaponKey = String(key || CORE.meta.weaponKey || "SMG");
+      return CORE.meta.weaponKey;
     },
 
     buyPerk(id) {
+      if (typeof CORE.buyPerk !== "function") return false;
       const ok = CORE.buyPerk(id);
       if (ok) haptic("notif", "success");
       else haptic("notif", "warning");
@@ -769,9 +976,41 @@
     sendResult(reason) {
       sendResult(reason || "manual");
       return true;
+    },
+
+    // -------- 3D-ready extras --------
+    getSnapshot() {
+      try {
+        if (typeof CORE.getFrameData === "function") return CORE.getFrameData();
+      } catch {}
+      return _lastSnap;
+    },
+    onSnapshot(cb) {
+      _snapCb = (typeof cb === "function") ? cb : null;
+      return true;
+    },
+    getInput() {
+      return { ...input };
+    },
+    setInput(obj) {
+      const o = obj || {};
+      if (typeof o.moveX === "number") input.moveX = clamp(o.moveX, -1, 1);
+      if (typeof o.moveY === "number") input.moveY = clamp(o.moveY, -1, 1);
+      if (typeof o.aimX === "number") input.aimX = clamp(o.aimX, -1, 1);
+      if (typeof o.aimY === "number") input.aimY = clamp(o.aimY, -1, 1);
+      if (typeof o.firing === "boolean") input.firing = o.firing;
+
+      try { if (typeof CORE.setMove === "function") CORE.setMove(input.moveX, input.moveY); } catch {}
+      try { if (typeof CORE.setAim === "function") CORE.setAim(input.aimX, input.aimY); } catch {}
+      try {
+        if (typeof CORE.setShooting === "function") CORE.setShooting(!!input.firing);
+        else if (typeof CORE.setFire === "function") CORE.setFire(!!input.firing);
+        else if (CORE.input) CORE.input.shooting = !!input.firing;
+      } catch {}
+      return true;
     }
   };
 
   window.BCO_ZOMBIES_GAME = API;
-  console.log("[Z_GAME] ready (LUX)");
+  console.log("[Z_GAME] ready (LUX | iOS hardened | 3D-ready)");
 })();
