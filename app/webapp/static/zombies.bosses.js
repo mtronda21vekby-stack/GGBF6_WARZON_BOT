@@ -1,51 +1,39 @@
-// =========================================================
-// ZOMBIES BOSSES
-// =========================================================
+/* =========================================================
+   app/webapp/static/zombies.bosses.js
+   ========================================================= */
 (() => {
-  function spawnBoss(run, type = "brute") {
-    const base = {
-      brute: {
-        hp: 1200,
-        r: 34,
-        spd: 45,
-        dmg: 22,
-        color: "rgba(34,197,94,.9)"
-      },
-      elite: {
-        hp: 2200,
-        r: 42,
-        spd: 52,
-        dmg: 28,
-        color: "rgba(139,92,246,.95)"
-      }
-    }[type];
+  "use strict";
 
-    const z = {
-      boss: true,
-      type,
-      x: Math.random() * run.w,
-      y: -60,
-      r: base.r,
-      hp: base.hp,
-      maxHp: base.hp,
-      spd: base.spd,
-      dmg: base.dmg,
-      color: base.color
-    };
-
-    run.zombies.push(z);
-  }
-
-  function bossLogic(run) {
-    if (run.wave > 0 && run.wave % 5 === 0 && !run._bossSpawned) {
-      spawnBoss(run, run.wave >= 15 ? "elite" : "brute");
-      run._bossSpawned = true;
+  const BOSSES = {
+    brute: {
+      hp: 600,
+      r: 28,
+      speed: 55,
+      dmg: 18
+    },
+    tank: {
+      hp: 1400,
+      r: 36,
+      speed: 38,
+      dmg: 28
     }
-    if (run.wave % 5 !== 0) run._bossSpawned = false;
-  }
+  };
 
   window.BCO_ZOMBIES_BOSSES = {
-    spawnBoss,
-    bossLogic
+    create(type, x, y) {
+      const b = BOSSES[type];
+      if (!b) return null;
+      return {
+        type,
+        x,
+        y,
+        r: b.r,
+        hp: b.hp,
+        maxHp: b.hp,
+        spd: b.speed,
+        dmg: b.dmg,
+        boss: true
+      };
+    }
   };
 })();
