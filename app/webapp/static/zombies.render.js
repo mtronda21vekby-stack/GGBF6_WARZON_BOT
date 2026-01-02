@@ -10,6 +10,10 @@
          • Boss HP bars + elite styling
          • Optional pickups/loot draw if CORE.state.pickups exists (future-proof)
      - Uses sprites if BCO_ZOMBIES_ASSETS is present; otherwise premium vector fallback
+
+   LUX PATCH:
+     ✅ Player render scale = 1/1.5 (smaller)
+     ❌ Speed NOT changed (per your request)
    ========================================================= */
 (() => {
   "use strict";
@@ -18,6 +22,11 @@
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const len = (x, y) => Math.hypot(x, y) || 0;
+
+  // =========================
+  // LUX: player scale (smaller)
+  // =========================
+  const PLAYER_SCALE = 1 / 1.5; // ~0.6667
 
   const RENDER = {
     render(ctx, CORE, input, view) {
@@ -65,7 +74,7 @@
       // zombies (includes bosses inside S.zombies)
       drawZombies(ctx, CORE, S.zombies);
 
-      // player
+      // player (SCALE PATCH here)
       drawPlayer(ctx, CORE, input);
 
       ctx.restore();
@@ -292,16 +301,32 @@
     const S = CORE.state;
     const A = ASSETS();
 
+    const x = S.player.x;
+    const y = S.player.y;
+
+    // === SCALE PATCH (safe): scale around player pivot ===
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(PLAYER_SCALE, PLAYER_SCALE);
+    ctx.translate(-x, -y);
+
     if (A?.drawPlayer) {
       try {
-        A.drawPlayer(ctx, S.player.x, S.player.y, input.aimX, input.aimY, {
+        // Try common signature; scaling transform will shrink visuals regardless
+        A.drawPlayer(ctx, x, y, input.aimX, input.aimY, {
           player: CORE.meta.character,
-          skin: CORE.meta.skin
+          skin: CORE.meta.skin,
+          scale: PLAYER_SCALE
         });
+        ctx.restore();
         return;
       } catch {}
     }
-    fallbackPlayer(ctx, S.player.x, S.player.y, input.aimX, input.aimY);
+
+    // fallback (also scaled by transform)
+    fallbackPlayer(ctx, x, y, input.aimX, input.aimY);
+
+    ctx.restore();
   }
 
   // =========================================================
@@ -474,8 +499,6 @@
   // SCREEN SPACE: arena hint + reticle
   // =========================================================
   function drawArenaHint(ctx, w, h, CORE, map) {
-    // Keep the old ring vibe but make it smarter:
-    // If map exists, show a subtle "compass ring" around player.
     ctx.save();
     ctx.translate(w / 2, h / 2);
 
@@ -492,7 +515,6 @@
     ctx.arc(0, 0, 372, 0, Math.PI * 2);
     ctx.stroke();
 
-    // map badge tiny
     if (map?.name) {
       ctx.globalAlpha = 0.55;
       ctx.fillStyle = "rgba(255,255,255,.75)";
@@ -515,7 +537,6 @@
     ctx.save();
     ctx.translate(sx, sy);
 
-    // line
     ctx.globalAlpha = 0.55;
     ctx.strokeStyle = "rgba(255,255,255,.80)";
     ctx.lineWidth = 2;
@@ -524,13 +545,11 @@
     ctx.lineTo(ax * r2, ay * r2);
     ctx.stroke();
 
-    // dot
     ctx.globalAlpha = 0.22;
     ctx.beginPath();
     ctx.arc(ax * r2, ay * r2, 9, 0, Math.PI * 2);
     ctx.stroke();
 
-    // tiny crosshair
     ctx.globalAlpha = 0.28;
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -550,7 +569,7 @@
     ctx.save();
     ctx.translate(x, y);
 
-    // body
+    // body (scaled by global transform; keep base values)
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "rgba(255,255,255,.92)";
     ctx.beginPath();
@@ -602,7 +621,6 @@
 
     const isSpitter = String(kind || "").includes("spitter");
 
-    // outer aura
     ctx.globalAlpha = 0.14;
     ctx.strokeStyle = isSpitter ? "rgba(180,220,255,.85)" : "rgba(220,255,200,.85)";
     ctx.lineWidth = 10;
@@ -610,14 +628,12 @@
     ctx.arc(0, 0, r + 14, 0, Math.PI * 2);
     ctx.stroke();
 
-    // core
     ctx.globalAlpha = 0.86;
     ctx.fillStyle = isSpitter ? "rgba(190,220,255,.70)" : "rgba(200,255,200,.70)";
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
 
-    // face
     ctx.globalAlpha = 0.30;
     ctx.fillStyle = "rgba(0,0,0,.65)";
     ctx.beginPath();
@@ -632,5 +648,5 @@
   // EXPORT
   // =========================================================
   window.BCO_ZOMBIES_RENDER = RENDER;
-  console.log("[Z_RENDER] loaded (LUX)");
+  console.log("[Z_RENDER] loaded (LUX) | playerScale:", PLAYER_SCALE);
 })();
