@@ -189,7 +189,7 @@
               <button class="btn" id="btnZBuyAmmo" type="button">🔫 Ammo (8)</button>
             </div>
 
-            <div class="hint">Подсказка: тап в пустоту арены = “промах” (HP вниз). Тап по 🧟 = kill.</div>
+            <div class="hint">Подсказка: дальше мы перевяжем эти кнопки на новый движок.</div>
           </div>
         </div>
       </div>
@@ -355,14 +355,19 @@
   <script>
     (function () {
       var build = window.__BCO_BUILD__ || String(Date.now());
+      var health = document.getElementById("jsHealth");
+
+      function setHealth(msg) {
+        if (health) health.textContent = msg;
+      }
 
       function load(src) {
         return new Promise(function (resolve, reject) {
           var s = document.createElement("script");
           s.src = src + "?build=" + encodeURIComponent(build);
           s.async = false;
-          s.onload = resolve;
-          s.onerror = reject;
+          s.onload = function () { resolve(true); };
+          s.onerror = function () { reject(new Error("Failed: " + src)); };
           document.body.appendChild(s);
         });
       }
@@ -372,23 +377,37 @@
           var s = document.createElement("script");
           s.src = src + "?build=" + encodeURIComponent(build);
           s.async = false;
-          s.onload = function(){ resolve(true); };
-          s.onerror = function(){ resolve(false); };
+          s.onload = function () { resolve(true); };
+          s.onerror = function () { resolve(false); };
           document.body.appendChild(s);
         });
       }
 
-      load("/webapp/zombies.js")
-        .then(function () { return loadOptional("/webapp/zombies.assets.js"); })
-        .then(function () { return loadOptional("/webapp/zombies.perks.js"); })
-        .then(function () { return loadOptional("/webapp/zombies.maps.js"); })
-        .then(function () { return loadOptional("/webapp/zombies.collisions.js"); })
-        .then(function () { return loadOptional("/webapp/zombies.bosses.js"); })
+      // IMPORTANT:
+      // We do NOT load legacy /webapp/zombies.js here anymore.
+      // New engine stack:
+      // assets -> perks/maps/collisions/bosses -> core -> render -> world -> game -> init -> app
+
+      setHealth("js: boot…");
+
+      loadOptional("/webapp/zombies.assets.js")
+        .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.assets.js not loaded (optional)"); return loadOptional("/webapp/zombies.perks.js"); })
+        .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.perks.js not loaded (optional)"); return loadOptional("/webapp/zombies.maps.js"); })
+        .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.maps.js not loaded (optional)"); return loadOptional("/webapp/zombies.collisions.js"); })
+        .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.collisions.js not loaded (optional)"); return loadOptional("/webapp/zombies.bosses.js"); })
+        .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.bosses.js not loaded (optional)"); return load("/webapp/zombies.core.js"); })
+        .then(function () { return load("/webapp/zombies.render.js"); })
+        .then(function () { return loadOptional("/webapp/zombies.world.js"); })
+        .then(function () { return load("/webapp/zombies.game.js"); })
+        .then(function () { return load("/webapp/zombies.init.js"); })
         .then(function () { return load("/webapp/app.js"); })
+        .then(function () {
+          // app.js должен выставить window.__BCO_JS_OK__ = true
+          setHealth("js: OK (booted)");
+        })
         .catch(function (e) {
           console.error("BCO boot load error:", e);
-          var el = document.getElementById("jsHealth");
-          if (el) el.textContent = "js: BOOT ERROR (check console)";
+          setHealth("js: BOOT ERROR (check console)");
         });
     })();
   </script>
