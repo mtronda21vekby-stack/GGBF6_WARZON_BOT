@@ -8,7 +8,7 @@
   // =========================
   // VERSION / STORAGE
   // =========================
-  const VERSION = "1.4.1"; // ✅ bump (no breaking)
+  const VERSION = "1.4.2"; // ✅ bump (no breaking)
   const STORAGE_KEY = "bco_state_v1";
   const CHAT_KEY = "bco_chat_v1";
 
@@ -36,11 +36,11 @@
     // ✅ Future: 3D readiness flag
     render: "2d", // "2d" | "3d"
 
-    // ✅ NEW: Roguelike economy fallback (if engine bugs)
+    // ✅ Roguelike economy fallback (if engine bugs)
     z_coins: 0,
     z_best: { arcade: 0, roguelike: 0 },
 
-    // ✅ NEW: Wonder weapon quest
+    // ✅ Wonder weapon quest
     z_relics: 0,              // 0..5
     z_wonder_unlocked: false, // true after 5 relics
     z_wonder_weapon: "CROWN_RAY", // name/id placeholder
@@ -87,10 +87,6 @@
   // =========================================================
   // ✅ ULTRA TAP (iOS SAFE) — no dead clicks, no double fires
   // =========================================================
-  // Upgrades vs your old onTap:
-  // - pointerdown + pointerup (capture) to avoid lost events under overlays
-  // - preventDefault on touchstart/touchend (non-passive) to kill ghost taps/scroll
-  // - stronger target normalization + lock
   function onTap(el, handler, opts = {}) {
     if (!el) return;
     const lockMs = Math.max(120, opts.lockMs ?? 220);
@@ -107,14 +103,11 @@
       try { handler(e); } catch {}
     };
 
-    // Pointer path (best)
     if (window.PointerEvent) {
-      // prevent text selection / click-through
       el.style.touchAction = el.style.touchAction || "manipulation";
 
       el.addEventListener("pointerdown", (e) => {
         if (typeof e.button === "number" && e.button !== 0) return;
-        // capture helps when finger drifts
         try { el.setPointerCapture?.(e.pointerId); } catch {}
       }, { capture: true, passive: true });
 
@@ -123,12 +116,10 @@
         fire(e);
       }, { capture: true, passive: true });
 
-      // safety fallback
       el.addEventListener("click", (e) => fire(e), { capture: true, passive: true });
       return;
     }
 
-    // Touch fallback (must be non-passive to preventDefault)
     el.addEventListener("touchstart", (e) => {
       try { e.preventDefault?.(); } catch {}
     }, { capture: true, passive: false });
@@ -138,7 +129,6 @@
       fire(e);
     }, { capture: true, passive: false });
 
-    // Click fallback
     el.addEventListener("click", (e) => fire(e), { capture: true, passive: true });
   }
 
@@ -193,7 +183,6 @@
     const parsedCloud = fromCloud ? safeJsonParse(fromCloud) : null;
     if (parsedCloud && typeof parsedCloud === "object") {
       Object.assign(state, defaults, parsedCloud);
-      // clamp new fields
       state.z_relics = clampInt(state.z_relics, 0, 5);
       state.z_coins = clampInt(state.z_coins, 0, 999999);
       state.acc_level = clampInt(state.acc_level, 1, 999999);
@@ -409,7 +398,6 @@
   // ✅ STOP ZOOM (premium): kill pinch/double-tap zoom in GAME
   // =========================================================
   function installNoZoomGuards() {
-    // iOS Safari / WebView: prevent pinch + dbltap zoom while game active
     let lastTouchEnd = 0;
 
     document.addEventListener("gesturestart", (e) => {
@@ -616,7 +604,7 @@
   }
 
   // =========================================================
-  // 🎯 GAME #1: AIM TRIAL (kept)
+  // 🎯 GAME #1: AIM TRIAL
   // =========================================================
   const aim = {
     running: false,
@@ -729,53 +717,76 @@
   }
 
   // =========================================================
-  // 🧟 ZOMBIES ENGINE BRIDGE (BCO_ZOMBIES)
+  // 🧟 ZOMBIES ENGINE BRIDGE (BCO_ZOMBIES + CORE)
   // =========================================================
   function ZB() { return window.BCO_ZOMBIES || null; }
+  function ZCORE() { return window.BCO_ZOMBIES_CORE || null; }
 
   function zombiesEnsureLoaded() {
     const z = ZB();
-    if (!z) {
+    const c = ZCORE();
+    if (!z && !c) {
       toast("Zombies engine not loaded");
       haptic("notif", "error");
       return null;
     }
-    return z;
+    return z || c;
   }
 
   function zombiesOpenCore() {
-    const z = zombiesEnsureLoaded();
-    if (!z) return false;
-    try { z.open?.({ map: state.zombies_map, character: state.character, skin: state.skin }); } catch {}
+    const z = ZB();
+    if (z) {
+      try { z.open?.({ map: state.zombies_map, character: state.character, skin: state.skin }); } catch {}
+      return true;
+    }
     return true;
   }
 
   function zombiesSetMode(mode) {
     state.zombies_mode = (mode === "roguelike") ? "roguelike" : "arcade";
     const z = ZB();
-    if (!z) return;
-    try { z.setMode?.(state.zombies_mode); } catch {}
-    try { z.mode?.(state.zombies_mode); } catch {}
+    if (z) {
+      try { z.setMode?.(state.zombies_mode); } catch {}
+      try { z.mode?.(state.zombies_mode); } catch {}
+    }
   }
 
   function zombiesStartRun() {
-    const z = zombiesEnsureLoaded();
-    if (!z) return false;
-    try { z.start?.({ map: state.zombies_map, mode: state.zombies_mode, character: state.character, skin: state.skin }); return true; } catch {}
-    try { z.start?.(); return true; } catch {}
+    const z = ZB();
+    if (z) {
+      try { z.start?.({ map: state.zombies_map, mode: state.zombies_mode, character: state.character, skin: state.skin }); return true; } catch {}
+      try { z.start?.(); return true; } catch {}
+      return false;
+    }
+    // CORE fallback: start simulation (renderer may be elsewhere; fine)
+    const c = ZCORE();
+    if (c?.start) {
+      try {
+        c.start(state.zombies_mode, (GAME.canvas?.width || 1), (GAME.canvas?.height || 1), {
+          map: state.zombies_map,
+          character: state.character,
+          skin: state.skin,
+          weaponKey: "SMG"
+        });
+        return true;
+      } catch {}
+    }
     return false;
   }
 
   function zombiesStopRun(reason = "manual") {
     const z = ZB();
-    if (!z) return;
-    try { z.stop?.(reason); } catch {}
-    try { z.stop?.(); } catch {}
+    if (z) {
+      try { z.stop?.(reason); } catch {}
+      try { z.stop?.(); } catch {}
+      return;
+    }
+    const c = ZCORE();
+    try { c?.stop?.(); } catch {}
   }
 
   function zombiesSendResult(reason = "manual") {
     const z = ZB();
-    // include premium extras (economy + quest)
     const extra = {
       coins: GAME?.econ?.coins ?? state.z_coins ?? 0,
       relics: state.z_relics ?? 0,
@@ -801,45 +812,79 @@
 
   function zombiesBuyPerk(id) {
     const z = ZB();
-    if (!z) return false;
-    try { z.buyPerk?.(id); return true; } catch {}
-    try { z.buy?.(id); return true; } catch {}
-    try { z.perk?.(id); return true; } catch {}
+    if (z) {
+      try { z.buyPerk?.(id); return true; } catch {}
+      try { z.buy?.(id); return true; } catch {}
+      try { z.perk?.(id); return true; } catch {}
+    }
+    const c = ZCORE();
+    if (c?.buyPerk) {
+      try { return !!c.buyPerk(id); } catch {}
+    }
     return false;
   }
 
   function zombiesUpgrade() {
     const z = ZB();
-    if (!z) return false;
-    try { z.upgrade?.(); return true; } catch {}
-    try { z.shop?.("upgrade"); return true; } catch {}
+    if (z) {
+      try { z.upgrade?.(); return true; } catch {}
+      try { z.shop?.("upgrade"); return true; } catch {}
+    }
+    const c = ZCORE();
+    if (c?.buyUpgrade) {
+      try { return !!c.buyUpgrade(); } catch {}
+    }
     return false;
   }
 
   function zombiesReroll() {
     const z = ZB();
-    if (!z) return false;
-    try { z.reroll?.(); return true; } catch {}
-    try { z.roll?.(); return true; } catch {}
-    try { z.shop?.("reroll"); return true; } catch {}
+    if (z) {
+      try { z.reroll?.(); return true; } catch {}
+      try { z.roll?.(); return true; } catch {}
+      try { z.shop?.("reroll"); return true; } catch {}
+    }
+    const c = ZCORE();
+    if (c?.rerollWeapon) {
+      try { return !!c.rerollWeapon(); } catch {}
+    }
     return false;
   }
 
   function zombiesReload() {
     const z = ZB();
-    if (!z) return false;
-    try { z.reload?.(); return true; } catch {}
-    try { z.shop?.("reload"); return true; } catch {}
+    if (z) {
+      try { z.reload?.(); return true; } catch {}
+      try { z.shop?.("reload"); return true; } catch {}
+    }
+    const c = ZCORE();
+    if (c?.buyReload) {
+      try { return !!c.buyReload(); } catch {}
+    }
+    // as fallback: normal reload
+    if (c?.reload) {
+      try { return !!c.reload(); } catch {}
+    }
     return false;
   }
 
   function zombiesTryUnlockWonder() {
     const z = ZB();
-    if (!z) return false;
-    const id = state.z_wonder_weapon || "CROWN_RAY";
-    try { z.unlockWeapon?.(id); return true; } catch {}
-    try { z.unlock?.({ weapon: id }); return true; } catch {}
-    try { z.grantWeapon?.(id); return true; } catch {}
+    if (z) {
+      const id = state.z_wonder_weapon || "CROWN_RAY";
+      try { z.unlockWeapon?.(id); return true; } catch {}
+      try { z.unlock?.({ weapon: id }); return true; } catch {}
+      try { z.grantWeapon?.(id); return true; } catch {}
+    }
+    // CORE handles wonder by relics automatically; if forced:
+    const c = ZCORE();
+    if (c?.state && c?.cfg) {
+      try {
+        c.state.relics = 5;
+        c.state.wonderUnlocked = true;
+        return true;
+      } catch {}
+    }
     return false;
   }
 
@@ -857,7 +902,7 @@
     modalTitle: null,
     modalBody: null,
 
-    // ✅ NEW: economy + quest runtime
+    // ✅ economy + quest runtime
     econ: {
       enabled: true,
       coins: 0,
@@ -865,9 +910,7 @@
       lastWave: 0,
       coinsPerKill: 1,
       coinsPerWave: 3,
-      // relics: rare drops from kills (roguelike only)
-      relicChancePerKill: 0.04, // 4% per kill (tunable)
-      // shop prices fallback (if engine doesn't enforce)
+      relicChancePerKill: 0.04,
       prices: {
         upgrade: 8,
         reroll: 4,
@@ -875,7 +918,7 @@
         Jug: 12,
         Speed: 10,
         Mag: 8,
-        Armor: 10
+        Armor: 14 // ✅ match CORE perk cost
       }
     }
   };
@@ -885,7 +928,7 @@
     const topTabs = qs(".top-tabs");
     const bottom = qs(".bottom-nav");
     if (header) header.style.display = hidden ? "none" : "";
-    if (topTabs) topTabs.style.display = hidden ? "none" : "none";
+    if (topTabs) topTabs.style.display = hidden ? "none" : ""; // ✅ FIX (was always none)
     if (bottom) bottom.style.display = hidden ? "none" : "";
 
     document.documentElement.classList.toggle("bco-game", !!hidden);
@@ -899,7 +942,6 @@
     try { if (on) tg.setBackgroundColor?.("#07070b"); } catch {}
   }
 
-  // Browser fullscreen helper (Telegram may ignore, but harmless)
   async function tryBrowserFullscreen(el) {
     try {
       if (!el) return false;
@@ -980,13 +1022,10 @@
 
     _wire() {
       const el = this.root;
-
-      // Make joysticks totally scroll-proof
       el.style.touchAction = "none";
 
       if (window.PointerEvent) {
         el.addEventListener("pointerdown", (e) => {
-          // iOS: stop page gestures
           try { e.preventDefault?.(); } catch {}
           this._onDown(e);
         }, { passive: false });
@@ -1019,7 +1058,7 @@
     }
   }
 
-  // Expose input for engine polling (non-breaking)
+  // Expose input for engine polling
   window.BCO_ZOMBIES_INPUT = window.BCO_ZOMBIES_INPUT || {
     move: { x: 0, y: 0 },
     aim: { x: 0, y: 0 },
@@ -1029,13 +1068,22 @@
 
   function pushZInput() {
     const z = ZB();
+    const c = ZCORE();
     const inp = window.BCO_ZOMBIES_INPUT;
     inp.updatedAt = now();
 
+    // wrapper engine
     try { z?.setMove?.(inp.move.x, inp.move.y); } catch {}
     try { z?.setAim?.(inp.aim.x, inp.aim.y); } catch {}
     try { z?.setFire?.(!!inp.firing); } catch {}
     try { z?.input?.(inp); } catch {}
+
+    // core fallback
+    if (c) {
+      try { c.setMove?.(inp.move.x, inp.move.y); } catch {}
+      try { c.setAim?.(inp.aim.x, inp.aim.y); } catch {}
+      try { c.setShooting?.(!!inp.firing); } catch {}
+    }
   }
 
   let inputTimer = 0;
@@ -1050,12 +1098,16 @@
   }
 
   // =========================================================
-  // ✅ ROGUELIKE ECONOMY FALLBACK (coins + relics) — premium fix
+  // ✅ ROGUELIKE ECONOMY FALLBACK (coins + relics)
   // =========================================================
   function econResetForRun() {
     GAME.econ.coins = clampInt(state.z_coins ?? 0, 0, 999999);
     GAME.econ.lastKills = 0;
     GAME.econ.lastWave = 0;
+
+    // also sync CORE if present
+    const c = ZCORE();
+    try { if (c?.state) c.state.coins = GAME.econ.coins; } catch {}
   }
 
   function econAddCoins(n, why = "") {
@@ -1063,26 +1115,33 @@
     if (!add) return;
     GAME.econ.coins = clampInt((GAME.econ.coins || 0) + add, 0, 999999);
     state.z_coins = GAME.econ.coins;
-    // best effort: tell engine too
+
     const z = ZB();
     try { z?.addCoins?.(add); } catch {}
     try { z?.coins?.(GAME.econ.coins); } catch {}
     try { z?.setCoins?.(GAME.econ.coins); } catch {}
     try { z?.awardCoins?.(add); } catch {}
-    // small feedback
+
+    const c = ZCORE();
+    try { if (c?.state) c.state.coins = GAME.econ.coins; } catch {}
+
     if (why) toast(`+${add} 💰 ${why}`);
     saveState().catch(() => {});
   }
 
   function econSpend(cost) {
-    const c = clampInt(cost, 0, 999999);
-    if (GAME.econ.coins < c) return false;
-    GAME.econ.coins -= c;
+    const cst = clampInt(cost, 0, 999999);
+    if (GAME.econ.coins < cst) return false;
+    GAME.econ.coins -= cst;
     state.z_coins = GAME.econ.coins;
-    // best effort engine sync
+
     const z = ZB();
     try { z?.coins?.(GAME.econ.coins); } catch {}
     try { z?.setCoins?.(GAME.econ.coins); } catch {}
+
+    const c = ZCORE();
+    try { if (c?.state) c.state.coins = GAME.econ.coins; } catch {}
+
     saveState().catch(() => {});
     return true;
   }
@@ -1098,36 +1157,30 @@
       saveState().catch(() => {});
       toast(`Реликвия найдена 🗿 (${state.z_relics}/5)`);
 
-      // unlock at 5
       if (state.z_relics >= 5) {
         state.z_wonder_unlocked = true;
         saveState().catch(() => {});
         haptic("notif", "success");
         toast("ЧУДО-ОРУЖИЕ ОТКРЫТО 👑⚡");
-        // try to unlock in engine
         zombiesTryUnlockWonder();
       }
     }
   }
 
   function econOnHud(h) {
-    // If engine emits kills/wave — we patch coins + relics for roguelike
     const kills = clampInt(h?.kills ?? h?.frags ?? 0, 0, 999999);
     const wave = clampInt(h?.wave ?? h?.round ?? 0, 0, 999999);
 
-    // coins by kills
     if (kills > GAME.econ.lastKills) {
       const dk = kills - GAME.econ.lastKills;
       GAME.econ.lastKills = kills;
 
       if (state.zombies_mode === "roguelike") {
         econAddCoins(dk * GAME.econ.coinsPerKill, "");
-        // relic chance per kill
         for (let i = 0; i < dk; i++) tryDropRelicFromKill();
       }
     }
 
-    // coins by waves
     if (wave > GAME.econ.lastWave) {
       const dw = wave - GAME.econ.lastWave;
       GAME.econ.lastWave = wave;
@@ -1141,6 +1194,17 @@
   // =========================================================
   // ✅ OVERLAY DOM (fullscreen + shop clarity + modals)
   // =========================================================
+  function isModalOpen() {
+    return !!(GAME.modal && GAME.modal.classList.contains("show"));
+  }
+
+  function allowScrollInModal(target) {
+    if (!isModalOpen()) return false;
+    if (!target) return false;
+    // allow scroll if inside card or body
+    return !!target.closest?.(".bco-z-card, #bcoZModalBody");
+  }
+
   function buildOverlayDOM() {
     if (GAME.overlay) return GAME.overlay;
 
@@ -1151,13 +1215,11 @@
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-label", "Zombies Fullscreen");
 
-    // canvas
     const canvas = document.createElement("canvas");
     canvas.className = "bco-z-canvas";
     canvas.width = 1;
     canvas.height = 1;
 
-    // topbar
     const topbar = document.createElement("div");
     topbar.className = "bco-z-topbar";
 
@@ -1199,7 +1261,6 @@
     topbar.appendChild(left);
     topbar.appendChild(right);
 
-    // HUD
     const hud = document.createElement("div");
     hud.className = "bco-z-hud";
 
@@ -1216,26 +1277,21 @@
     hud.appendChild(pill);
     hud.appendChild(pill2);
 
-    // controls (dual-stick)
     const controls = document.createElement("div");
     controls.className = "bco-z-controls";
 
-    // left stick
     const joyL = document.createElement("div");
     joyL.className = "bco-joy";
     joyL.innerHTML = `<div class="bco-joy-knob"></div>`;
 
-    // right stick (aim)
     const joyR = document.createElement("div");
     joyR.className = "bco-joy";
     joyR.innerHTML = `<div class="bco-joy-knob"></div>`;
 
-    // fire button (keep)
     const fire = document.createElement("div");
     fire.className = "bco-fire";
     fire.textContent = "FIRE";
 
-    // layout
     const leftWrap = document.createElement("div");
     leftWrap.style.display = "flex";
     leftWrap.style.gap = "12px";
@@ -1250,7 +1306,6 @@
     controls.appendChild(leftWrap);
     controls.appendChild(rightWrap);
 
-    // shop bar (quick)
     const shop = document.createElement("div");
     shop.className = "bco-z-shop";
     shop.innerHTML = `
@@ -1263,7 +1318,6 @@
       <button class="bco-shopbtn" type="button" data-perk="Armor">🛡 Armor</button>
     `;
 
-    // modal
     const modal = document.createElement("div");
     modal.className = "bco-z-modal";
     modal.id = "bcoZModal";
@@ -1297,13 +1351,28 @@
     GAME.modalTitle = modal.querySelector("#bcoZModalTitle");
     GAME.modalBody = modal.querySelector("#bcoZModalBody");
 
-    // ===== wire topbar buttons (tap-safe)
+    // ✅ iOS scrollable modal (force, even if CSS misses)
+    try {
+      modal.style.overflow = "auto";
+      modal.style.webkitOverflowScrolling = "touch";
+      const card = modal.querySelector(".bco-z-card");
+      if (card) {
+        card.style.maxHeight = "82vh";
+        card.style.overflow = "auto";
+        card.style.webkitOverflowScrolling = "touch";
+        card.style.pointerEvents = "auto";
+      }
+      modal.style.pointerEvents = "auto";
+      modal.style.touchAction = "pan-y";
+    } catch {}
+
+    // wire topbar buttons
     onTap(btnExit, () => { haptic("impact", "medium"); exitGame(); });
     onTap(btnSend, () => { haptic("impact", "light"); zombiesSendResult("manual"); });
     onTap(btnShop, () => { haptic("impact", "light"); openShopModal(); });
     onTap(btnCharacter, () => { haptic("impact", "light"); openCharacterModal(); });
 
-    // ===== shop quick actions (with economy guard in roguelike)
+    // shop quick actions
     onTap(shop, (e) => {
       const btn = e?.target?.closest?.(".bco-shopbtn");
       if (!btn) return;
@@ -1318,16 +1387,18 @@
     // modal close
     onTap(modal.querySelector("#bcoZModalClose"), () => { haptic("impact", "light"); closeModal(); });
 
-    // click outside card closes
-    onTap(modal, (e) => { if (e?.target === modal) closeModal(); });
+    // click outside card closes (but don't eat scroll)
+    onTap(modal, (e) => {
+      if (e?.target === modal) closeModal();
+    }, { lockMs: 120 });
 
-    // ===== Dual-stick
+    // Dual-stick
     const knobL = joyL.querySelector(".bco-joy-knob");
     const knobR = joyR.querySelector(".bco-joy-knob");
     const JL = new Joy(joyL, knobL);
     const JR = new Joy(joyR, knobR);
 
-    // FIRE button (hold)
+    // FIRE (hold)
     let firing = false;
     const fireDown = () => {
       firing = true;
@@ -1366,10 +1437,18 @@
     };
     requestAnimationFrame(pump);
 
-    // disable scroll inside overlay
+    // ✅ Scroll lock for overlay (but allow modal scroll!)
     overlay.addEventListener("touchmove", (ev) => {
+      if (!GAME.active) return;
+      if (allowScrollInModal(ev.target)) return; // ✅ allow
       try { ev.preventDefault?.(); } catch {}
     }, { passive: false });
+
+    // ✅ Make overlay clicks always register above canvas (if CSS misses)
+    try {
+      overlay.style.pointerEvents = "auto";
+      canvas.style.pointerEvents = "none"; // canvas visuals; UI above
+    } catch {}
 
     return overlay;
   }
@@ -1380,7 +1459,7 @@
   }
 
   function shopAffordOrWarn(cost) {
-    if (state.zombies_mode !== "roguelike") return true; // arcade: no guard
+    if (state.zombies_mode !== "roguelike") return true;
     const c = clampInt(cost, 0, 999999);
     if (GAME.econ.coins >= c) return true;
     haptic("notif", "error");
@@ -1396,13 +1475,18 @@
       if (!econSpend(price)) return;
     }
 
-    if (act === "upgrade") zombiesUpgrade();
-    if (act === "reroll") zombiesReroll();
-    if (act === "reload") zombiesReload();
+    let ok = false;
+    if (act === "upgrade") ok = zombiesUpgrade();
+    if (act === "reroll") ok = zombiesReroll();
+    if (act === "reload") ok = zombiesReload();
 
-    // small feedback
-    if (state.zombies_mode === "roguelike" && price) toast(`-${price} 💰 ${act}`);
-    updateOverlayLabels();
+    if (!ok) {
+      haptic("notif", "error");
+      toast("Действие недоступно (engine)");
+    } else {
+      if (state.zombies_mode === "roguelike" && price) toast(`-${price} 💰 ${act}`);
+      updateOverlayLabels();
+    }
   }
 
   function shopPerk(perk) {
@@ -1415,12 +1499,26 @@
 
     const ok = zombiesBuyPerk(perk);
     if (!ok) {
-      // if engine missing, still keep UI consistent
-      toast(`Perk: ${perk}`);
+      haptic("notif", "error");
+      toast(`Perk недоступен: ${perk}`);
+    } else {
+      if (state.zombies_mode === "roguelike" && price) toast(`-${price} 💰 ${perk}`);
+      updateOverlayLabels();
     }
+  }
 
-    if (state.zombies_mode === "roguelike" && price) toast(`-${price} 💰 ${perk}`);
-    updateOverlayLabels();
+  // ✅ Modal body replacement to kill stacked listeners (iOS “dead buttons” fix)
+  function replaceModalBody(html) {
+    if (!GAME.modal) return null;
+    const old = GAME.modal.querySelector("#bcoZModalBody");
+    if (!old) return null;
+    const fresh = document.createElement("div");
+    fresh.id = "bcoZModalBody";
+    fresh.innerHTML = html;
+    old.replaceWith(fresh);
+    GAME.modalBody = fresh;
+    try { fresh.style.pointerEvents = "auto"; fresh.style.touchAction = "pan-y"; } catch {}
+    return fresh;
   }
 
   function openShopModal() {
@@ -1429,7 +1527,7 @@
 
     GAME.modal.classList.add("show");
     if (GAME.modalTitle) GAME.modalTitle.textContent = "🛒 Shop";
-    const body = GAME.modal.querySelector("#bcoZModalBody");
+
     const desc = GAME.modal.querySelector("#bcoZModalDesc");
 
     const coins = GAME.econ.coins ?? 0;
@@ -1445,69 +1543,69 @@
           : `Arcade • Быстрые действия и перки. (Экономика активна в Roguelike.)`;
     }
 
-    if (body) {
-      const p = GAME.econ.prices;
-      body.innerHTML = `
-        <div class="bco-z-grid">
-          <div class="bco-z-choice">
-            <div class="ttl">⬆️ Upgrade</div>
-            <div class="sub">Апгрейд оружия/урона/скорости.</div>
-            <button class="bco-shopbtn primary" type="button" data-act="upgrade">Buy ${state.zombies_mode==="roguelike" ? `• ${p.upgrade}💰` : ""}</button>
-          </div>
-          <div class="bco-z-choice">
-            <div class="ttl">🎲 Reroll</div>
-            <div class="sub">Переброс предложений.</div>
-            <button class="bco-shopbtn" type="button" data-act="reroll">Roll ${state.zombies_mode==="roguelike" ? `• ${p.reroll}💰` : ""}</button>
-          </div>
-          <div class="bco-z-choice">
-            <div class="ttl">🔄 Reload</div>
-            <div class="sub">Патроны/перезарядка.</div>
-            <button class="bco-shopbtn" type="button" data-act="reload">Reload ${state.zombies_mode==="roguelike" ? `• ${p.reload}💰` : ""}</button>
-          </div>
+    const p = GAME.econ.prices;
+    const body = replaceModalBody(`
+      <div class="bco-z-grid">
+        <div class="bco-z-choice">
+          <div class="ttl">⬆️ Upgrade</div>
+          <div class="sub">Апгрейд оружия/урона/скорости.</div>
+          <button class="bco-shopbtn primary" type="button" data-act="upgrade">Buy ${state.zombies_mode==="roguelike" ? `• ${p.upgrade}💰` : ""}</button>
+        </div>
+        <div class="bco-z-choice">
+          <div class="ttl">🎲 Reroll</div>
+          <div class="sub">Переброс предложений.</div>
+          <button class="bco-shopbtn" type="button" data-act="reroll">Roll ${state.zombies_mode==="roguelike" ? `• ${p.reroll}💰` : ""}</button>
+        </div>
+        <div class="bco-z-choice">
+          <div class="ttl">🔄 Reload</div>
+          <div class="sub">Патроны/перезарядка.</div>
+          <button class="bco-shopbtn" type="button" data-act="reload">Reload ${state.zombies_mode==="roguelike" ? `• ${p.reload}💰` : ""}</button>
+        </div>
 
-          <div class="bco-z-choice">
-            <div class="ttl">🧪 Jug</div>
-            <div class="sub">Выживаемость.</div>
-            <button class="bco-shopbtn" type="button" data-perk="Jug">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Jug}💰` : ""}</button>
-          </div>
-          <div class="bco-z-choice">
-            <div class="ttl">⚡ Speed</div>
-            <div class="sub">Скорость/мувмент.</div>
-            <button class="bco-shopbtn" type="button" data-perk="Speed">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Speed}💰` : ""}</button>
-          </div>
-          <div class="bco-z-choice">
-            <div class="ttl">📦 Mag</div>
-            <div class="sub">Боезапас/магазин.</div>
-            <button class="bco-shopbtn" type="button" data-perk="Mag">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Mag}💰` : ""}</button>
-          </div>
-          <div class="bco-z-choice">
-            <div class="ttl">🛡 Armor</div>
-            <div class="sub">Снижение урона.</div>
-            <button class="bco-shopbtn" type="button" data-perk="Armor">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Armor}💰` : ""}</button>
-          </div>
+        <div class="bco-z-choice">
+          <div class="ttl">🧪 Jug</div>
+          <div class="sub">Выживаемость.</div>
+          <button class="bco-shopbtn" type="button" data-perk="Jug">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Jug}💰` : ""}</button>
+        </div>
+        <div class="bco-z-choice">
+          <div class="ttl">⚡ Speed</div>
+          <div class="sub">Скорость/мувмент.</div>
+          <button class="bco-shopbtn" type="button" data-perk="Speed">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Speed}💰` : ""}</button>
+        </div>
+        <div class="bco-z-choice">
+          <div class="ttl">📦 Mag</div>
+          <div class="sub">Боезапас/магазин.</div>
+          <button class="bco-shopbtn" type="button" data-perk="Mag">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Mag}💰` : ""}</button>
+        </div>
+        <div class="bco-z-choice">
+          <div class="ttl">🛡 Armor</div>
+          <div class="sub">Снижение урона.</div>
+          <button class="bco-shopbtn" type="button" data-perk="Armor">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Armor}💰` : ""}</button>
+        </div>
 
-          <div class="bco-z-choice">
-            <div class="ttl">🎮 Mode</div>
-            <div class="sub">Arcade / Roguelike</div>
-            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-              <button class="bco-shopbtn" type="button" data-mode="arcade">Arcade</button>
-              <button class="bco-shopbtn" type="button" data-mode="roguelike">Roguelike</button>
-            </div>
-          </div>
-
-          <div class="bco-z-choice">
-            <div class="ttl">👑 Wonder Quest</div>
-            <div class="sub">${state.z_wonder_unlocked ? "Открыто ✅" : `Реликвии: ${relics}/5`}</div>
-            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-              <button class="bco-shopbtn ${state.z_wonder_unlocked ? "primary" : ""}" type="button" data-wonder="status">
-                ${state.z_wonder_unlocked ? "Equip/Grant" : "How to get"}
-              </button>
-              <button class="bco-shopbtn" type="button" data-wonder="reset">Reset quest</button>
-            </div>
+        <div class="bco-z-choice">
+          <div class="ttl">🎮 Mode</div>
+          <div class="sub">Arcade / Roguelike</div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <button class="bco-shopbtn" type="button" data-mode="arcade">Arcade</button>
+            <button class="bco-shopbtn" type="button" data-mode="roguelike">Roguelike</button>
           </div>
         </div>
-      `;
 
+        <div class="bco-z-choice">
+          <div class="ttl">👑 Wonder Quest</div>
+          <div class="sub">${state.z_wonder_unlocked ? "Открыто ✅" : `Реликвии: ${relics}/5`}</div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+            <button class="bco-shopbtn ${state.z_wonder_unlocked ? "primary" : ""}" type="button" data-wonder="status">
+              ${state.z_wonder_unlocked ? "Equip/Grant" : "How to get"}
+            </button>
+            <button class="bco-shopbtn" type="button" data-wonder="reset">Reset quest</button>
+          </div>
+        </div>
+      </div>
+    `);
+
+    if (body) {
       onTap(body, async (e) => {
         const b = e?.target?.closest?.(".bco-shopbtn");
         if (!b) return;
@@ -1551,18 +1649,17 @@
   function openCharacterModal() {
     buildOverlayDOM();
     if (!GAME.modal) return;
+
     GAME.modal.classList.add("show");
     if (GAME.modalTitle) GAME.modalTitle.textContent = "🎭 Character";
+
     const desc = GAME.modal.querySelector("#bcoZModalDesc");
     if (desc) desc.textContent = "Выбор персонажа/скина сохраняется (state + CloudStorage).";
-
-    const body = GAME.modal.querySelector("#bcoZModalBody");
-    if (!body) return;
 
     const maleOn = state.character === "male";
     const femaleOn = state.character === "female";
 
-    body.innerHTML = `
+    const body = replaceModalBody(`
       <div class="bco-z-grid">
         <div class="bco-z-choice">
           <div class="ttl">👨 Male</div>
@@ -1595,43 +1692,45 @@
           </div>
         </div>
       </div>
-    `;
+    `);
 
-    onTap(body, async (e) => {
-      const b = e?.target?.closest?.(".bco-shopbtn");
-      if (!b) return;
+    if (body) {
+      onTap(body, async (e) => {
+        const b = e?.target?.closest?.(".bco-shopbtn");
+        if (!b) return;
 
-      const c = b.getAttribute("data-char");
-      const s = b.getAttribute("data-skin");
-      const r = b.getAttribute("data-render");
+        const c = b.getAttribute("data-char");
+        const s = b.getAttribute("data-skin");
+        const r = b.getAttribute("data-render");
 
-      if (c) {
-        state.character = c;
-        await saveState();
-        toast(`Character: ${c}`);
-        try { ZB()?.setPlayerSkin?.(state.character, state.skin); } catch {}
-        try { ZB()?.open?.({ map: state.zombies_map, character: state.character, skin: state.skin }); } catch {}
-        openCharacterModal();
-      }
+        if (c) {
+          state.character = c;
+          await saveState();
+          toast(`Character: ${c}`);
+          try { ZB()?.setPlayerSkin?.(state.character, state.skin); } catch {}
+          try { ZB()?.open?.({ map: state.zombies_map, character: state.character, skin: state.skin }); } catch {}
+          openCharacterModal();
+        }
 
-      if (s) {
-        state.skin = s;
-        await saveState();
-        toast(`Skin: ${s}`);
-        try { ZB()?.setPlayerSkin?.(state.character, state.skin); } catch {}
-        try { ZB()?.open?.({ map: state.zombies_map, character: state.character, skin: state.skin }); } catch {}
-        openCharacterModal();
-      }
+        if (s) {
+          state.skin = s;
+          await saveState();
+          toast(`Skin: ${s}`);
+          try { ZB()?.setPlayerSkin?.(state.character, state.skin); } catch {}
+          try { ZB()?.open?.({ map: state.zombies_map, character: state.character, skin: state.skin }); } catch {}
+          openCharacterModal();
+        }
 
-      if (r) {
-        state.render = (r === "3d") ? "3d" : "2d";
-        await saveState();
-        toast(`Render: ${state.render}`);
-        try { ZB()?.setRenderMode?.(state.render); } catch {}
-        try { ZB()?.renderer?.(state.render); } catch {}
-        openCharacterModal();
-      }
-    }, { lockMs: 120 });
+        if (r) {
+          state.render = (r === "3d") ? "3d" : "2d";
+          await saveState();
+          toast(`Render: ${state.render}`);
+          try { ZB()?.setRenderMode?.(state.render); } catch {}
+          try { ZB()?.renderer?.(state.render); } catch {}
+          openCharacterModal();
+        }
+      }, { lockMs: 120 });
+    }
   }
 
   function updateOverlayLabels(hudLike = null) {
@@ -1642,13 +1741,12 @@
 
     if (GAME.shop) GAME.shop.style.opacity = (state.zombies_mode === "roguelike") ? "1" : "0.85";
 
-    // HUD text: prefer engine values, but merge our economy + quest
     const h = hudLike || {};
     const hp = (h.hp ?? h.health ?? "—");
     const ammo = (h.ammo ?? "—");
     const gun = (h.weapon ?? h.gun ?? "—");
-    const wave = clampInt(h.wave ?? "—", 0, 999999);
-    const kills = clampInt(h.kills ?? "—", 0, 999999);
+    const wave = Number.isFinite(+h.wave) ? clampInt(h.wave, 0, 999999) : (h.wave ?? "—");
+    const kills = Number.isFinite(+h.kills) ? clampInt(h.kills, 0, 999999) : (h.kills ?? "—");
 
     const coinsEngine = (h.coins ?? h.money ?? null);
     const coins = (coinsEngine != null) ? coinsEngine : (GAME.econ.coins ?? state.z_coins ?? 0);
@@ -1662,15 +1760,23 @@
   }
 
   function attachEngineToOverlay() {
-    const z = zombiesEnsureLoaded();
-    if (!z || !GAME.canvas) return;
+    const z = ZB();
+    const c = ZCORE();
+    if (!GAME.canvas) return;
 
-    try { z.setCanvas?.(GAME.canvas); } catch {}
-    try { z.canvas?.(GAME.canvas); } catch {}
-    try { z.attach?.(GAME.canvas); } catch {}
-    try { z.mount?.(GAME.canvas); } catch {}
+    if (z) {
+      try { z.setCanvas?.(GAME.canvas); } catch {}
+      try { z.canvas?.(GAME.canvas); } catch {}
+      try { z.attach?.(GAME.canvas); } catch {}
+      try { z.mount?.(GAME.canvas); } catch {}
+      zombiesOpenCore();
+    }
 
-    zombiesOpenCore();
+    // CORE: no renderer required here; but we can keep canvas sized correctly
+    if (c) {
+      try { c.resize?.(GAME.canvas.width || 1, GAME.canvas.height || 1); } catch {}
+    }
+
     startInputPump();
   }
 
@@ -1681,23 +1787,18 @@
     GAME.active = true;
     GAME.overlay.style.display = "block";
 
-    // full takeover
     setAppChromeHidden(true);
     tgFullscreenHints(true);
 
-    // enforce no-zoom in game
     document.body.style.overflow = "hidden";
     await tryBrowserFullscreen(GAME.overlay);
 
-    // economy reset
     econResetForRun();
 
-    // attach engine + run
     attachEngineToOverlay();
     zombiesSetMode(state.zombies_mode);
     zombiesStartRun();
 
-    // ensure overlays are actually tappable on iOS
     installNoZoomGuards();
 
     haptic("notif", "success");
@@ -1718,7 +1819,6 @@
 
     document.body.style.overflow = "";
 
-    // leave fullscreen if browser allowed it
     try { if (document.fullscreenElement) document.exitFullscreen?.(); } catch {}
 
     selectTab("game");
@@ -1728,7 +1828,7 @@
   }
 
   // =========================================================
-  // ENGINE HUD / RESULT HOOKS (fix roguelike “coins don’t drop” + quest)
+  // ENGINE HUD / RESULT HOOKS
   // =========================================================
   function hookEngineHud() {
     const z = ZB();
@@ -1740,9 +1840,7 @@
     try {
       on.call(z, "hud", (hud) => {
         const h = hud || {};
-        // patch economy + relic quest from kills/wave
         econOnHud(h);
-        // render merged hud
         updateOverlayLabels(h);
       });
     } catch {}
@@ -1750,16 +1848,14 @@
     try {
       on.call(z, "result", async (res) => {
         const r = res || {};
-        // sync best scores
         const modeKey = state.zombies_mode === "roguelike" ? "roguelike" : "arcade";
         const score = clampInt(r.score ?? r.points ?? 0, 0, 999999999);
         if (!state.z_best) state.z_best = { arcade: 0, roguelike: 0 };
         state.z_best[modeKey] = Math.max(clampInt(state.z_best[modeKey] ?? 0, 0, 999999999), score);
-        // persist coins snapshot
+
         state.z_coins = clampInt(GAME.econ.coins ?? state.z_coins ?? 0, 0, 999999);
         await saveState();
 
-        // auto-send to bot (keep manual button too)
         try {
           sendToBot({
             action: "game_result",
@@ -1987,16 +2083,13 @@
       tryShare(text);
     });
 
-    // premium
     onTap(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month", profile: true }));
     onTap(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime", profile: true }));
 
-    // home
     onTap(qs("#btnOpenBot"), () => openBotMenuHint("main"));
     onTap(qs("#btnPremium"), () => openBotMenuHint("premium"));
     onTap(qs("#btnSync"), () => sendToBot({ type: "sync_request", profile: true }));
 
-    // coach / vod / settings
     onTap(qs("#btnOpenTraining"), () => openBotMenuHint("training"));
     onTap(qs("#btnSendPlan"), () => sendToBot({ type: "training_plan", focus: state.focus, profile: true }));
 
@@ -2012,7 +2105,6 @@
     onTap(qs("#btnOpenSettings"), () => openBotMenuHint("settings"));
     onTap(qs("#btnApplyProfile"), () => sendToBot({ type: "set_profile", profile: true }));
 
-    // chat
     onTap(qs("#btnChatSend"), () => sendChatFromUI());
     onTap(qs("#btnChatClear"), async () => {
       haptic("impact", "light");
@@ -2135,13 +2227,10 @@
     renderChat();
     aimReset();
 
-    // Engine hooks
     hookEngineHud();
 
-    // start at home
     selectTab("home");
 
-    // deep-link support
     try {
       const hash = String(location.hash || "").replace("#", "").trim();
       if (hash) selectTab(hash);
@@ -2149,7 +2238,6 @@
 
     updateTelegramButtons();
 
-    // install zoom guards (they only fully apply when GAME.active)
     installNoZoomGuards();
   }
 
