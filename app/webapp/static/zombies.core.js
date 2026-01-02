@@ -1,7 +1,7 @@
-// app/webapp/static/zombies.core.js  [LUX COD-ZOMBIES-2D v1]
+// app/webapp/static/zombies.core.js  [LUX COD-ZOMBIES-2D v1.1]
 // - Armor/plates, reload + ammo reserve
 // - Weapon pool + rarities + upgrades
-// - Loot drops/pickups + auto-pickup
+// - Loot drops/pickups + auto-pickup + magnet
 // - Events (Max Ammo / Double Points / Insta-Kill)
 // - Roguelike economy + progression (xp/level) inside run
 // - Boss hook compatible with zombies.bosses.js [LUX] via CORE._onBulletHit
@@ -10,13 +10,18 @@
   "use strict";
 
   // -------------------------
+  // Tiny runtime helpers
+  // -------------------------
+  const now = () => (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+
+  // -------------------------
   // Math utils
   // -------------------------
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const len = (x, y) => Math.hypot(x, y) || 0;
   const norm = (x, y) => {
     const L = len(x, y);
-    if (!L) return { x: 0, y: 0, L: 0 };
+    if (!L || !Number.isFinite(L)) return { x: 0, y: 0, L: 0 };
     return { x: x / L, y: y / L, L };
   };
   const rand = (a, b) => a + Math.random() * (b - a);
@@ -35,7 +40,6 @@
   };
 
   function rollRarity(wave) {
-    // Wave-weighted roll: higher waves -> more rare drops
     const w = Math.max(1, wave | 0);
     const t = Math.random();
     const bonus = clamp((w - 1) / 18, 0, 0.35); // up to +35% to high tiers
@@ -108,12 +112,12 @@
     // Weapons base templates (stats are further modified by rarity, upgrades, perks, events)
     weapons: {
       // key: {name, type, rpm, dmg, spread, bullets, mag, reserve, reloadMs, movePenalty, crit, pierce}
-      SMG:   { name: "SMG",   type: "smg",   rpm: 820, dmg: 10, spread: 0.080, bullets: 1, mag: 32, reserve: 160, reloadMs: 980,  movePenalty: 0.00, crit: 0.06, pierce: 0 },
-      AR:    { name: "AR",    type: "ar",    rpm: 640, dmg: 14, spread: 0.050, bullets: 1, mag: 30, reserve: 180, reloadMs: 1100, movePenalty: 0.02, crit: 0.08, pierce: 0 },
-      SG:    { name: "SG",    type: "sg",    rpm: 140, dmg: 8,  spread: 0.220, bullets: 7, mag: 7,  reserve: 56,  reloadMs: 1250, movePenalty: 0.05, crit: 0.03, pierce: 0 },
-      LMG:   { name: "LMG",   type: "lmg",   rpm: 520, dmg: 15, spread: 0.065, bullets: 1, mag: 60, reserve: 240, reloadMs: 1650, movePenalty: 0.08, crit: 0.06, pierce: 0 },
-      MARK:  { name: "DMR",   type: "dmr",   rpm: 310, dmg: 36, spread: 0.020, bullets: 1, mag: 12, reserve: 72,  reloadMs: 1350, movePenalty: 0.06, crit: 0.14, pierce: 1 },
-      PIST:  { name: "Pistol",type: "pist",  rpm: 420, dmg: 12, spread: 0.060, bullets: 1, mag: 15, reserve: 90,  reloadMs: 880,  movePenalty: 0.00, crit: 0.06, pierce: 0 }
+      SMG:   { name: "SMG",    type: "smg",  rpm: 820, dmg: 10, spread: 0.080, bullets: 1, mag: 32, reserve: 160, reloadMs: 980,  movePenalty: 0.00, crit: 0.06, pierce: 0 },
+      AR:    { name: "AR",     type: "ar",   rpm: 640, dmg: 14, spread: 0.050, bullets: 1, mag: 30, reserve: 180, reloadMs: 1100, movePenalty: 0.02, crit: 0.08, pierce: 0 },
+      SG:    { name: "SG",     type: "sg",   rpm: 140, dmg: 8,  spread: 0.220, bullets: 7, mag: 7,  reserve: 56,  reloadMs: 1250, movePenalty: 0.05, crit: 0.03, pierce: 0 },
+      LMG:   { name: "LMG",    type: "lmg",  rpm: 520, dmg: 15, spread: 0.065, bullets: 1, mag: 60, reserve: 240, reloadMs: 1650, movePenalty: 0.08, crit: 0.06, pierce: 0 },
+      MARK:  { name: "DMR",    type: "dmr",  rpm: 310, dmg: 36, spread: 0.020, bullets: 1, mag: 12, reserve: 72,  reloadMs: 1350, movePenalty: 0.06, crit: 0.14, pierce: 1 },
+      PIST:  { name: "Pistol", type: "pist", rpm: 420, dmg: 12, spread: 0.060, bullets: 1, mag: 15, reserve: 90,  reloadMs: 880,  movePenalty: 0.00, crit: 0.06, pierce: 0 }
     },
 
     // Perks (keep old IDs for UI buttons; add more for depth)
@@ -122,7 +126,6 @@
       Speed:   { id: "Speed",   cost: 10, name: "Speed",   desc: "+Move speed" },
       Mag:     { id: "Mag",     cost: 8,  name: "Mag",     desc: "+Mag size +reserve +pierce" },
 
-      // extra perks for future UI
       Armor:   { id: "Armor",   cost: 14, name: "Armor",   desc: "Start with plates + faster plating" },
       Reload:  { id: "Reload",  cost: 11, name: "Reload",  desc: "Faster reload" },
       Crit:    { id: "Crit",    cost: 13, name: "Crit",    desc: "Higher crit chance/dmg" },
@@ -177,6 +180,10 @@
     const upMag = 1.0 + up * 0.07;
     const upReload = 1.0 - Math.min(0.22, up * 0.035);
 
+    const magMax = Math.max(1, Math.round(base.mag * rar.mag * upMag));
+    const reserveMax = Math.max(0, Math.round(base.reserve * rar.mag * upMag));
+    const reloadMs = Math.max(200, Math.round(base.reloadMs * rar.reload * upReload));
+
     return {
       key,
       name: base.name,
@@ -187,22 +194,22 @@
       rarityColor: rar.color,
 
       // computed stats
-      rpm: base.rpm * rar.rpm,
-      dmg: base.dmg * rar.dmg * upDmg,
-      spread: base.spread * rar.spread,
-      bullets: base.bullets | 0,
+      rpm: Math.max(60, base.rpm * rar.rpm),
+      dmg: Math.max(1, base.dmg * rar.dmg * upDmg),
+      spread: Math.max(0.0001, base.spread * rar.spread),
+      bullets: Math.max(1, base.bullets | 0),
 
-      magMax: Math.round(base.mag * rar.mag * upMag),
-      reserveMax: Math.round(base.reserve * rar.mag * upMag), // reserve scales a bit too
-      reloadMs: Math.round(base.reloadMs * rar.reload * upReload),
+      magMax,
+      reserveMax,
+      reloadMs,
 
       movePenalty: base.movePenalty,
       crit: base.crit,
       pierce: base.pierce | 0,
 
       // runtime ammo
-      mag: Math.round(base.mag * rar.mag * upMag),
-      reserve: Math.round(base.reserve * rar.mag * upMag),
+      mag: magMax,
+      reserve: reserveMax,
 
       upgrade: up
     };
@@ -216,8 +223,8 @@
 
     // runtime
     running: false,
-    startedAt: 0,   // ms (perf)
-    lastT: 0,       // ms (perf)
+    startedAt: 0,   // ms
+    lastT: 0,       // ms
 
     // input
     input: {
@@ -232,8 +239,6 @@
       map: "Ashes",
       character: "male",
       skin: "default",
-
-      // weapon selection (key only; actual weapon instance is state.weapon)
       weaponKey: "SMG"
     },
 
@@ -251,13 +256,11 @@
       xp: 0,
       level: 1,
 
-      // perks flags
       perks: {
         Jug: 0, Speed: 0, Mag: 0,
         Armor: 0, Reload: 0, Crit: 0, Loot: 0, Sprint: 0
       },
 
-      // player stats runtime
       player: {
         x: 0, y: 0, vx: 0, vy: 0,
         hp: CFG.player.hpMax,
@@ -267,27 +270,22 @@
         lastHitAt: -99999
       },
 
-      // weapon runtime
       weapon: null,
       reload: { active: false, until: 0, startedAt: 0 },
 
       bullets: [],
       zombies: [],
 
-      // loot/pickups
       pickups: [],
 
-      // events (timed)
       events: {
         maxAmmoUntil: 0,
         doublePointsUntil: 0,
         instaKillUntil: 0
       },
 
-      // shooting control
       shoot: { lastShotAt: 0 },
 
-      // boss spawn state used by bosses module
       _bossSpawned: {}
     },
 
@@ -301,7 +299,7 @@
     // -------------------------------------------------------
     // Public control
     // -------------------------------------------------------
-    start(mode, w, h, opts = {}, tms = performance.now()) {
+    start(mode, w, h, opts = {}, tms = now()) {
       this.meta.mode = (String(mode || "").toLowerCase().includes("rogue")) ? "roguelike" : "arcade";
       this.state.w = Math.max(1, w | 0);
       this.state.h = Math.max(1, h | 0);
@@ -313,7 +311,7 @@
 
       this._resetRun();
 
-      // If bosses module exists and exposes install, attach once per core instance (safe)
+      // bosses module install (safe)
       try {
         const B = window.BCO_ZOMBIES_BOSSES;
         if (B?.install && !this._bossInstalled) {
@@ -323,7 +321,7 @@
       } catch {}
 
       this.running = true;
-      this.startedAt = Number(tms) || performance.now();
+      this.startedAt = Number(tms) || now();
       this.lastT = 0;
 
       return true;
@@ -372,6 +370,15 @@
           const rar = S.weapon.rarity || "common";
           const up = S.weapon.upgrade || 0;
           S.weapon = mkWeapon(this.meta.weaponKey, rar, up);
+
+          // keep ammo feel sane
+          const W = this._weaponEffective();
+          S.weapon.mag = clamp(S.weapon.mag, 0, W.magMax);
+          S.weapon.reserve = clamp(S.weapon.reserve, 0, W.reserveMax);
+
+          // cancel reload on hard swap
+          S.reload.active = false;
+          S.reload.until = 0;
         }
       } catch {}
 
@@ -383,26 +390,28 @@
       const S = this.state;
       if (!S.weapon) return false;
       if (S.reload.active) return false;
+
       const W = this._weaponEffective();
       if (S.weapon.mag >= W.magMax) return false;
       if (S.weapon.reserve <= 0) return false;
 
-      this._startReload(performance.now());
+      this._startReload(now());
       return true;
     },
 
     // apply armor plate (optional)
     usePlate() {
       if (this.meta.mode !== "roguelike") return false;
+
       const S = this.state;
       const P = S.player;
       const st = this._effectiveStats();
 
-      if (P.plates <= 0) return false;
+      if ((P.plates | 0) <= 0) return false;
       if (P.plating.active) return false;
       if (P.armor >= st.armorMax) return false;
 
-      const tms = performance.now();
+      const tms = now();
       P.plating.active = true;
       P.plating.until = tms + st.plateUseMs;
 
@@ -425,24 +434,25 @@
       if (typeof this._buyPerk === "function") {
         try { this._buyPerk(this, id); } catch {}
       } else {
-        // fallback: apply immediate feel-good effects
+        // fallback: immediate “feel-good”
         if (id === "Jug") {
           const st = this._effectiveStats();
           this.state.player.hp = Math.min(this.state.player.hp + 40, st.hpMax);
         }
         if (id === "Armor") {
           const st = this._effectiveStats();
-          this.state.player.plates = Math.min(st.platesMax, this.state.player.plates + 1);
-          this.state.player.armor = Math.min(st.armorMax, this.state.player.armor + st.plateValue);
+          this.state.player.plates = Math.min(st.platesMax, (this.state.player.plates | 0) + 1);
+          this.state.player.armor = Math.min(st.armorMax, (this.state.player.armor | 0) + st.plateValue);
         }
         if (id === "Mag") {
-          // slight pierce feels premium
+          // slight pierce feels premium (but keep per-weapon effective too)
           try { this.cfg.bullet.pierce = 1; } catch {}
         }
       }
 
-      // after any perk, re-clamp hp/armor to new maxima
+      // after any perk, re-clamp hp/armor/ammo to new maxima
       this._clampVitals();
+      this._clampAmmoToEffective();
 
       return true;
     },
@@ -450,12 +460,13 @@
     updateFrame(tms) {
       if (!this.running) return false;
 
-      const t = Number(tms) || performance.now();
+      const t = Number(tms) || now();
 
       if (!this.lastT) this.lastT = t;
       let dt = (t - this.lastT) / 1000;
       this.lastT = t;
 
+      if (!Number.isFinite(dt)) dt = 0;
       dt = Math.min(CFG.dtMax, Math.max(0, dt));
 
       this._tick(dt, t);
@@ -517,6 +528,17 @@
       S.player.plates = Math.max(0, Math.min(S.player.plates, st.platesMax));
     },
 
+    _clampAmmoToEffective() {
+      const S = this.state;
+      if (!S.weapon) return;
+      const W = this._weaponEffective();
+      S.weapon.mag = clamp(S.weapon.mag | 0, 0, W.magMax | 0);
+      S.weapon.reserve = clamp(S.weapon.reserve | 0, 0, W.reserveMax | 0);
+      // keep cached maxima aligned (prevents UI desync in some renderers)
+      S.weapon.magMax = W.magMax | 0;
+      S.weapon.reserveMax = W.reserveMax | 0;
+    },
+
     _resetRun() {
       const S = this.state;
       const st = this._effectiveStats();
@@ -529,7 +551,6 @@
       S.xp = 0;
       S.level = 1;
 
-      // reset perks to baseline set (keep extra perks keys)
       S.perks = {
         Jug: 0, Speed: 0, Mag: 0,
         Armor: 0, Reload: 0, Crit: 0, Loot: 0, Sprint: 0
@@ -539,9 +560,12 @@
       const startRarity = "common";
       S.weapon = mkWeapon(this.meta.weaponKey, startRarity, 0);
 
-      // start full ammo
-      S.weapon.mag = S.weapon.magMax;
-      S.weapon.reserve = S.weapon.reserveMax;
+      // start full ammo (effective clamp)
+      const W = this._weaponEffective();
+      S.weapon.magMax = W.magMax;
+      S.weapon.reserveMax = W.reserveMax;
+      S.weapon.mag = W.magMax;
+      S.weapon.reserve = W.reserveMax;
 
       S.reload = { active: false, until: 0, startedAt: 0 };
 
@@ -581,7 +605,6 @@
     },
 
     _mapInfo() {
-      // returns {name,w,h,walls,bossSpawns} or null
       try {
         const M = window.BCO_ZOMBIES_MAPS;
         return M?.get?.(this.meta.map) || null;
@@ -617,14 +640,13 @@
       const hpMul = Math.pow(CFG.wave.hpGrowth, (wave - 1));
       const spMul = Math.pow(CFG.wave.speedGrowth, (wave - 1));
 
-      // small elite chance on higher waves
       const eliteChance = clamp(0.02 + (wave - 1) * 0.004, 0.02, 0.12);
 
       for (let i = 0; i < count; i++) {
         const ang = rand(0, Math.PI * 2);
-        const r = rand(CFG.wave.spawnRingMin, CFG.wave.spawnRingMax);
-        const x = S.player.x + Math.cos(ang) * r;
-        const y = S.player.y + Math.sin(ang) * r;
+        const rr = rand(CFG.wave.spawnRingMin, CFG.wave.spawnRingMax);
+        const x = S.player.x + Math.cos(ang) * rr;
+        const y = S.player.y + Math.sin(ang) * rr;
 
         const elite = (Math.random() < eliteChance);
 
@@ -642,7 +664,7 @@
 
     _eventsActive() {
       const e = this.state.events;
-      const t = performance.now();
+      const t = now();
       return {
         maxAmmo: t < (e.maxAmmoUntil || 0),
         doublePoints: t < (e.doublePointsUntil || 0),
@@ -651,7 +673,6 @@
     },
 
     _weaponEffective() {
-      // Apply perks/events modifiers on top of state.weapon
       const S = this.state;
       const st = this._effectiveStats();
       const ev = this._eventsActive();
@@ -662,25 +683,20 @@
       const perkPierce = S.perks.Mag ? 1 : 0;
       const perkReload = st.reloadMul;
 
-      const rpm = w.rpm;
-      const dmg = w.dmg;
-      const spread = w.spread;
-      const bullets = w.bullets;
-
-      const magMax = Math.round(w.magMax * perkMag);
-      const reserveMax = Math.round(w.reserveMax * perkMag);
-
-      const reloadMs = Math.round(w.reloadMs * perkReload);
+      const magMax = Math.max(1, Math.round((w.magMax || 1) * perkMag));
+      const reserveMax = Math.max(0, Math.round((w.reserveMax || 0) * perkMag));
+      const reloadMs = Math.max(200, Math.round((w.reloadMs || 900) * perkReload));
 
       const critChance = clamp((w.crit || 0) + st.critBonus, 0, 0.35);
       const pierce = Math.max(w.pierce | 0, perkPierce);
 
       return {
         ...w,
-        rpm,
-        dmg,
-        spread,
-        bullets,
+        rpm: Math.max(60, w.rpm || 60),
+        dmg: Math.max(1, w.dmg || 1),
+        spread: Math.max(0.0001, w.spread || 0.02),
+        bullets: Math.max(1, w.bullets | 0),
+
         magMax,
         reserveMax,
         reloadMs,
@@ -718,15 +734,17 @@
 
       const W = this._weaponEffective();
 
-      const need = Math.max(0, W.magMax - S.weapon.mag);
-      const take = Math.min(need, S.weapon.reserve);
+      const need = Math.max(0, W.magMax - (S.weapon.mag | 0));
+      const take = Math.min(need, (S.weapon.reserve | 0));
 
-      S.weapon.mag += take;
-      S.weapon.reserve -= take;
+      S.weapon.mag = (S.weapon.mag | 0) + take;
+      S.weapon.reserve = (S.weapon.reserve | 0) - take;
 
-      // clamp to maxima
+      // align maxima
       S.weapon.magMax = W.magMax;
       S.weapon.reserveMax = W.reserveMax;
+
+      // clamp
       S.weapon.mag = clamp(S.weapon.mag, 0, W.magMax);
       S.weapon.reserve = clamp(S.weapon.reserve, 0, W.reserveMax);
 
@@ -740,7 +758,6 @@
       const S = this.state;
       const W = this._weaponEffective();
 
-      // if reloading -> block
       if (S.reload.active) return;
 
       // if empty -> auto reload
@@ -751,14 +768,12 @@
 
       // ammo consumption
       S.weapon.mag = Math.max(0, (S.weapon.mag | 0) - 1);
-
       S.shoot.lastShotAt = tms;
 
       const sp = CFG.bullet.speed;
       const ax = this.input.aimX;
       const ay = this.input.aimY;
 
-      // crit roll per shot group
       const isCrit = (Math.random() < (W.critChance || 0));
       const critMul = isCrit ? 1.45 : 1.0;
 
@@ -782,7 +797,7 @@
       }
 
       // if mag hits 0 -> auto reload
-      if ((S.weapon.mag | 0) <= 0 && S.weapon.reserve > 0) {
+      if ((S.weapon.mag | 0) <= 0 && (S.weapon.reserve | 0) > 0) {
         this._startReload(tms);
       }
     },
@@ -791,13 +806,12 @@
       const S = this.state;
       const P = S.player;
       if (!P.plating.active) return;
-
       if (tms < (P.plating.until || 0)) return;
 
       const st = this._effectiveStats();
-      if (P.plates > 0 && P.armor < st.armorMax) {
+      if ((P.plates | 0) > 0 && (P.armor | 0) < st.armorMax) {
         P.plates -= 1;
-        P.armor = Math.min(st.armorMax, P.armor + st.plateValue);
+        P.armor = Math.min(st.armorMax, (P.armor | 0) + st.plateValue);
       }
 
       P.plating.active = false;
@@ -809,7 +823,6 @@
       const st = this._effectiveStats();
 
       if (tms - S.player.lastHitAt < st.iFramesMs) return;
-
       S.player.lastHitAt = tms;
 
       let dmg = Math.max(1, Math.round(Number(amount) || 0));
@@ -821,14 +834,13 @@
       }
 
       // armor absorbs a chunk if available
-      if (S.player.armor > 0) {
-        const toArmor = Math.min(S.player.armor, Math.round(dmg * CFG.player.armorDmgAbsorb));
-        S.player.armor -= toArmor;
+      if ((S.player.armor | 0) > 0) {
+        const toArmor = Math.min((S.player.armor | 0), Math.round(dmg * CFG.player.armorDmgAbsorb));
+        S.player.armor = (S.player.armor | 0) - toArmor;
         dmg -= toArmor;
       }
 
-      S.player.hp = Math.max(0, S.player.hp - dmg);
-
+      S.player.hp = Math.max(0, (S.player.hp | 0) - dmg);
       if (S.player.hp <= 0) this.running = false;
     },
 
@@ -837,17 +849,14 @@
       const add = Math.max(0, xp | 0);
       S.xp += add;
 
-      // simple level curve
       while (S.xp >= (S.level * 120 + 60)) {
         S.xp -= (S.level * 120 + 60);
         S.level += 1;
 
-        // tiny level-up rewards (roguelike only)
         if (this.meta.mode === "roguelike") {
           S.coins += 4 + Math.floor(S.level * 0.6);
-          // small heal
           const st = this._effectiveStats();
-          S.player.hp = Math.min(st.hpMax, S.player.hp + 12);
+          S.player.hp = Math.min(st.hpMax, (S.player.hp | 0) + 12);
         }
       }
     },
@@ -859,7 +868,7 @@
         x, y,
         vx: rand(-18, 18),
         vy: rand(-18, 18),
-        born: performance.now(),
+        born: now(),
         life: CFG.loot.pickupLifeMs,
         data: data || null,
         r: 10
@@ -873,19 +882,17 @@
       const st = this._effectiveStats();
       const wave = S.wave | 0;
 
-      // perk boosts
       const lootBoost = st.lootBonus || 0;
 
-      const coinChance = clamp(CFG.loot.coinChance + lootBoost * 0.12, 0, 0.95);
-      const ammoChance = clamp(CFG.loot.ammoChance + lootBoost * 0.07, 0, 0.50);
+      const coinChance  = clamp(CFG.loot.coinChance  + lootBoost * 0.12, 0, 0.95);
+      const ammoChance  = clamp(CFG.loot.ammoChance  + lootBoost * 0.07, 0, 0.50);
       const plateChance = clamp(CFG.loot.plateChance + lootBoost * 0.05, 0, 0.40);
 
       const weaponChance = clamp(CFG.loot.weaponChance + (wave - 1) * CFG.loot.weaponChanceWaveBonus + lootBoost * 0.08, 0, 0.22);
-      const eventChance = clamp(CFG.loot.eventChance + (wave - 1) * CFG.loot.eventChanceWaveBonus + lootBoost * 0.06, 0, 0.16);
+      const eventChance  = clamp(CFG.loot.eventChance  + (wave - 1) * CFG.loot.eventChanceWaveBonus  + lootBoost * 0.06, 0, 0.16);
 
       const x = z.x, y = z.y;
 
-      // coins
       if (Math.random() < coinChance) {
         const base = 1 + Math.floor(wave * 0.35);
         const elite = z.elite ? 1.6 : 1.0;
@@ -893,18 +900,15 @@
         this._spawnPickup("coins", x, y, { amount: amt });
       }
 
-      // ammo
       if (Math.random() < ammoChance) {
         const amt = 10 + Math.floor(wave * 1.2);
         this._spawnPickup("ammo", x, y, { amount: amt });
       }
 
-      // plate
       if (Math.random() < plateChance) {
         this._spawnPickup("plate", x, y, { amount: 1 });
       }
 
-      // weapon drop
       if (Math.random() < weaponChance) {
         const rarity = rollRarity(wave + (z.elite ? 3 : 0));
         const keys = Object.keys(CFG.weapons);
@@ -913,7 +917,6 @@
         this._spawnPickup("weapon", x, y, { weaponKey: wkey, rarity, upgrade: up });
       }
 
-      // event drop
       if (Math.random() < eventChance) {
         const e = pick(["max_ammo", "double_points", "insta_kill"]);
         this._spawnPickup("event", x, y, { event: e });
@@ -939,7 +942,10 @@
         const W = this._weaponEffective();
         if (S.weapon) {
           S.weapon.reserve = Math.min(W.reserveMax, (S.weapon.reserve | 0) + amt);
-          if (S.weapon.mag < W.magMax && Math.random() < 0.35) S.weapon.mag = Math.min(W.magMax, S.weapon.mag + 2);
+          if ((S.weapon.mag | 0) < W.magMax && Math.random() < 0.35) {
+            S.weapon.mag = Math.min(W.magMax, (S.weapon.mag | 0) + 2);
+          }
+          this._clampAmmoToEffective();
         }
         return true;
       }
@@ -959,8 +965,11 @@
           S.weapon = mkWeapon(wkey, rarity, up);
           this.meta.weaponKey = wkey;
 
-          S.weapon.mag = S.weapon.magMax;
-          S.weapon.reserve = S.weapon.reserveMax;
+          const W = this._weaponEffective();
+          S.weapon.magMax = W.magMax;
+          S.weapon.reserveMax = W.reserveMax;
+          S.weapon.mag = W.magMax;
+          S.weapon.reserve = W.reserveMax;
 
           S.reload.active = false;
           S.reload.until = 0;
@@ -970,27 +979,28 @@
       }
 
       if (pu.kind === "event") {
-        const now = performance.now();
+        const t = now();
         const e = String(pu.data?.event || "");
 
         if (e === "max_ammo") {
-          S.events.maxAmmoUntil = now + CFG.events.maxAmmoMs;
+          S.events.maxAmmoUntil = t + CFG.events.maxAmmoMs;
 
           const W = this._weaponEffective();
           if (S.weapon) {
             S.weapon.mag = W.magMax;
             S.weapon.reserve = W.reserveMax;
+            this._clampAmmoToEffective();
           }
           return true;
         }
 
         if (e === "double_points") {
-          S.events.doublePointsUntil = now + CFG.events.doublePointsMs;
+          S.events.doublePointsUntil = t + CFG.events.doublePointsMs;
           return true;
         }
 
         if (e === "insta_kill") {
-          S.events.instaKillUntil = now + CFG.events.instaKillMs;
+          S.events.instaKillUntil = t + CFG.events.instaKillMs;
           return true;
         }
 
@@ -1073,7 +1083,7 @@
       // clamp to map/arena
       this._clampToMapOrArena(S.player);
 
-      // world/map collisions module can refine player entity collisions
+      // world/map collisions for player
       try {
         const C = window.BCO_ZOMBIES_COLLISIONS;
         const map = this._mapInfo();
@@ -1121,10 +1131,8 @@
       for (let i = S.zombies.length - 1; i >= 0; i--) {
         const z = S.zombies[i];
 
-        // bosses are ticked by bosses module; we still want them to exist here
-        if (z.kind === "boss_brute" || z.kind === "boss_spitter") {
-          continue;
-        }
+        // bosses are ticked by bosses module; keep them here but don't overwrite movement
+        if (z.kind === "boss_brute" || z.kind === "boss_spitter") continue;
 
         const dx = S.player.x - z.x;
         const dy = S.player.y - z.y;
@@ -1151,7 +1159,7 @@
         }
       }
 
-      // allow world module to apply map collisions + bosses + extra systems
+      // allow world module to apply extra systems (boss tick etc)
       if (typeof this._tickWorld === "function") {
         try { this._tickWorld(this, dt, tms); } catch {}
       }
@@ -1173,10 +1181,8 @@
             // ---- Boss hook path (NO double damage / NO double pierce) ----
             if (isBoss && typeof this._onBulletHit === "function") {
               try {
-                // _onBulletHit decides boss hp + pierce consumption, returns true if bullet consumed
                 consumed = !!this._onBulletHit(this, z, b);
               } catch {
-                // fallback if hook crashes
                 z.hp -= b.dmg;
                 if (b.pierce > 0) b.pierce -= 1;
                 else consumed = true;
@@ -1201,8 +1207,9 @@
               else consumed = true;
             }
 
-            // If boss died (hook or fallback), remove + reward + drops (SAFE remove)
+            // If boss died (hook or fallback), remove + reward + drops (SAFE)
             if (isBoss && z.hp <= 0) {
+              // remove only if still same object at index
               if (S.zombies[zi] === z) S.zombies.splice(zi, 1);
 
               S.kills += 3;
@@ -1244,8 +1251,9 @@
         this._spawnWave(S.wave);
       }
 
-      // clamp vitals
+      // clamp vitals/ammo
       this._clampVitals();
+      this._clampAmmoToEffective();
 
       // camera follow
       S.camX = S.player.x;
@@ -1254,5 +1262,5 @@
   };
 
   window.BCO_ZOMBIES_CORE = CORE;
-  console.log("[Z_CORE] loaded (LUX COD-ZOMBIES-2D v1)");
+  console.log("[Z_CORE] loaded (LUX COD-ZOMBIES-2D v1.1)");
 })();
