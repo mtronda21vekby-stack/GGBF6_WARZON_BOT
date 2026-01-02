@@ -1,5 +1,5 @@
 /* =========================================================
-   BLACK CROWN OPS — ZOMBIES GAME (UI + RENDER + INPUT) [LUX FIX]
+   BLACK CROWN OPS — ZOMBIES GAME (UI + RENDER + INPUT) [LUX + ROGUE FIX]
    File: app/webapp/static/zombies.game.js
    Requires:
      - zombies.core.js
@@ -314,7 +314,6 @@
     // IMPORTANT: hide Telegram MainButton so it doesn't block controls
     hideTelegramMainButton();
 
-    // show shop depending on mode
     syncShopUI();
   }
 
@@ -394,26 +393,28 @@
   // Shop UI sync (coins + costs + mode)
   // ---------------------------------------------------------
   function perkCost(id) {
-    // CORE cfg is source of truth if present
     try {
       const c = CORE?.cfg?.perks?.[id]?.cost;
       if (Number.isFinite(c)) return c;
     } catch {}
-    // fallback
     if (id === "Jug") return 12;
     if (id === "Speed") return 10;
     if (id === "Mag") return 8;
     return 999;
   }
 
+  function isRogueMode() {
+    const m = String(CORE?.meta?.mode || "");
+    return (m === "roguelike" || m === "rogue" || m === "rl");
+  }
+
   function syncShopUI() {
     if (!overlay || !shop) return;
 
-    const isRogue = (String(CORE?.meta?.mode || "") === "roguelike");
-    shop.style.opacity = isRogue ? "1" : "0";
-    shop.style.pointerEvents = isRogue ? "auto" : "none";
+    const rogue = isRogueMode();
+    shop.style.opacity = rogue ? "1" : "0";
+    shop.style.pointerEvents = rogue ? "auto" : "none";
 
-    // update labels + enabled state
     const coins = Number(CORE?.state?.coins || 0);
 
     for (const id of ["Jug", "Speed", "Mag"]) {
@@ -422,7 +423,7 @@
 
       const cost = perkCost(id);
       const owned = !!CORE?.state?.perks?.[id];
-      const can = (!owned && coins >= cost && isRogue);
+      const can = (!owned && coins >= cost && rogue);
 
       const base =
         id === "Jug" ? "🧪 Jug" :
@@ -452,7 +453,6 @@
 
     CORE.resize(w, h);
 
-    // adaptive sticks sizing
     const portrait = h > w;
     const stickSize = portrait ? 148 : 170;
     const knobSize  = portrait ? 58  : 66;
@@ -467,7 +467,6 @@
       joyL.base.style.left = pad + "px";
       joyR.base.style.right = pad + "px";
 
-      // raise sticks a bit in portrait (avoid bottom overlays)
       const bottomY = portrait ? 22 : 12;
       joyL.base.style.bottom = `calc(${bottomY}px + env(safe-area-inset-bottom))`;
       joyR.base.style.bottom = `calc(${bottomY}px + env(safe-area-inset-bottom))`;
@@ -530,7 +529,7 @@
     const st = CORE._effectiveStats ? CORE._effectiveStats() : { hpMax: 100 };
     const hp = Math.max(0, Math.min(CORE.state.player.hp, st.hpMax));
 
-    if (sub) sub.textContent = `${CORE.meta.mode.toUpperCase()} • ${CORE.meta.map}`;
+    if (sub) sub.textContent = `${String(CORE.meta.mode || "arcade").toUpperCase()} • ${CORE.meta.map}`;
     if (hud) {
       const weap = CORE._weapon ? CORE._weapon().name : (CORE.meta.weaponKey || "SMG");
       hud.textContent = `❤️ ${hp|0}/${st.hpMax|0} • ☠️ ${CORE.state.kills|0} • 💰 ${CORE.state.coins|0} • 🔫 ${weap}`;
@@ -576,6 +575,38 @@
   }
 
   // ---------------------------------------------------------
+  // Mode start compatibility (THIS FIXES YOUR "ROGUE NOT PLAYING")
+  // ---------------------------------------------------------
+  function startCompat(mode, w, h, opts) {
+    const want = String(mode || "arcade").toLowerCase();
+
+    // candidates: try until CORE.running === true
+    const candidates = want.includes("rogue")
+      ? ["roguelike", "rogue", "rl", "roguelite", "r"]
+      : ["arcade", "a"];
+
+    for (const m of candidates) {
+      try {
+        CORE.start(m, w, h, opts);
+      } catch (e) {
+        console.warn("[Z_GAME] CORE.start failed for mode:", m, e);
+      }
+
+      // some cores start next tick; but usually running becomes true immediately
+      if (CORE.running) {
+        // force meta flag for UI/shop
+        CORE.meta.mode = want.includes("rogue") ? "roguelike" : "arcade";
+        return true;
+      }
+    }
+
+    // if still not running -> core doesn't support roguelike
+    CORE.meta.mode = want.includes("rogue") ? "roguelike" : "arcade";
+    console.error("[Z_GAME] mode start failed. CORE likely has no roguelike support yet. Need patch zombies.core.js");
+    return false;
+  }
+
+  // ---------------------------------------------------------
   // Public API
   // ---------------------------------------------------------
   const API = {
@@ -584,10 +615,7 @@
       resize();
       if (!raf) raf = requestAnimationFrame(loop);
 
-      // best effort lock landscape
       tryLockLandscape();
-
-      // critical: keep MainButton hidden
       hideTelegramMainButton();
 
       haptic("impact", "medium");
@@ -603,8 +631,6 @@
       try { tg?.BackButton?.hide?.(); } catch {}
 
       destroyOverlay();
-
-      // restore MainButton (your app decides later if it needs it)
       showTelegramMainButton();
 
       return true;
@@ -615,21 +641,20 @@
       resize();
       _sentDeath = false;
 
-      // critical: hide MainButton so it doesn't cover controls
       hideTelegramMainButton();
-
-      // best effort lock landscape
       tryLockLandscape();
 
-      CORE.start(mode, overlay.getBoundingClientRect().width, overlay.getBoundingClientRect().height, opts);
+      const r = overlay.getBoundingClientRect();
+      const ok = startCompat(mode, r.width, r.height, opts);
 
-      // ensure shop state reflects mode immediately
       syncShopUI();
 
       if (!raf) raf = requestAnimationFrame(loop);
 
-      haptic("notif", "success");
-      return true;
+      if (ok) haptic("notif", "success");
+      else haptic("notif", "warning");
+
+      return ok;
     },
 
     stop(reason = "manual") {
@@ -685,5 +710,5 @@
   };
 
   window.BCO_ZOMBIES_GAME = API;
-  console.log("[Z_GAME] ready (LUX FIX)");
+  console.log("[Z_GAME] ready (LUX + ROGUE FIX)");
 })();
