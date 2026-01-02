@@ -1,228 +1,441 @@
 /* =========================================================
-   BLACK CROWN OPS — ZOMBIES vNEXT (CORE SPLIT)
-   COPY–PASTE ALL FILES AS-IS
-   ========================================================= */
-
-/* =========================================================
-   FILE: app/webapp/static/zombies.core.js
+   BLACK CROWN OPS — ZOMBIES CORE (Engine)
+   File: app/webapp/static/zombies.core.js
+   Provides: window.BCO_ZOMBIES_CORE
    ========================================================= */
 (() => {
   "use strict";
 
-  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-  const dist2=(ax,ay,bx,by)=>{const dx=ax-bx,dy=ay-by;return dx*dx+dy*dy};
+  const now = () => performance.now();
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const len = (x, y) => Math.hypot(x, y) || 0;
+  const norm = (x, y) => {
+    const L = len(x, y);
+    if (!L) return { x: 0, y: 0, L: 0 };
+    return { x: x / L, y: y / L, L };
+  };
+  const rand = (a, b) => a + Math.random() * (b - a);
 
-  const WEAPONS = {
-    SMG:{dmg:13,rpm:720,speed:980,spread:.09,mag:30,reload:1.35,crit:1.6},
-    AR:{dmg:17,rpm:600,speed:1050,spread:.07,mag:30,reload:1.55,crit:1.75},
-    Shotgun:{dmg:8,rpm:110,speed:920,spread:.25,mag:6,reload:1.9,crit:1.5,pellets:8}
+  const CFG = {
+    tickHz: 60,
+    dtMax: 1 / 20,
+
+    arenaRadius: 780, // fallback arena if map not loaded
+
+    player: {
+      speed: 320,
+      hpMax: 100,
+      hitbox: 16,
+      iFramesMs: 230
+    },
+
+    bullet: {
+      speed: 980,
+      lifeMs: 900,
+      radius: 3,
+      pierce: 0
+    },
+
+    zombie: {
+      baseSpeed: 150,
+      baseHp: 34,
+      radius: 16,
+      damage: 10,
+      touchDpsMs: 340
+    },
+
+    wave: {
+      baseCount: 7,
+      countGrowth: 2,
+      hpGrowth: 1.08,
+      speedGrowth: 1.03
+    },
+
+    weapons: {
+      SMG: { name: "SMG", rpm: 820, dmg: 10, spread: 0.08, bullets: 1 },
+      AR:  { name: "AR",  rpm: 640, dmg: 14, spread: 0.05, bullets: 1 },
+      SG:  { name: "SG",  rpm: 140, dmg: 8,  spread: 0.22, bullets: 6 }
+    },
+
+    perks: {
+      Jug:   { id: "Jug",   cost: 12, name: "Jug"   },
+      Speed: { id: "Speed", cost: 10, name: "Speed" },
+      Mag:   { id: "Mag",   cost: 8,  name: "Mag"   }
+    }
   };
 
-  const RUN = {
-    running:false, mode:"arcade",
-    x:0,y:0,r:14,
-    hp:100,maxHp:100,
-    armor:0,armorMax:150,plates:0,platesMax:3,plateValue:50,
-    wave:1,kills:0,coins:0,
-    weapon:"SMG",ammo:30,lastShot:0,reloading:false,reloadAt:0,
-    zombies:[],bullets:[],
-    joyX:0,joyY:0,
-    aimX:0,aimY:0,shoot:false,
-    w:0,h:0
-  };
+  const CORE = {
+    cfg: CFG,
 
-  function reset(w,h){
-    RUN.running=false;
-    RUN.x=w*.5; RUN.y=h*.6;
-    RUN.hp=RUN.maxHp=100;
-    RUN.armor=0; RUN.plates=0;
-    RUN.wave=1; RUN.kills=0; RUN.coins=0;
-    RUN.weapon="SMG";
-    RUN.ammo=WEAPONS.SMG.mag;
-    RUN.zombies.length=0;
-    RUN.bullets.length=0;
-  }
+    // runtime
+    running: false,
+    startedAt: 0,
+    lastT: 0,
 
-  function spawnZombie(){
-    const side=Math.floor(Math.random()*4);
-    let x,y;
-    if(side===0){x=-40;y=Math.random()*RUN.h}
-    if(side===1){x=RUN.w+40;y=Math.random()*RUN.h}
-    if(side===2){x=Math.random()*RUN.w;y=-40}
-    if(side===3){x=Math.random()*RUN.w;y=RUN.h+40}
-    const hp=22+RUN.wave*1.4;
-    RUN.zombies.push({x,y,r:16,hp,maxHp:hp,spd:50+RUN.wave});
-  }
+    // input
+    input: {
+      moveX: 0, moveY: 0,
+      aimX: 1, aimY: 0,
+      shooting: false
+    },
 
-  function shoot(t){
-    const w=WEAPONS[RUN.weapon];
-    const dt=60000/(w.rpm);
-    if(t-RUN.lastShot<dt||RUN.reloading||RUN.ammo<=0)return;
-    RUN.lastShot=t; RUN.ammo--;
-    let dx=RUN.aimX-RUN.x,dy=RUN.aimY-RUN.y;
-    const len=Math.hypot(dx,dy)||1; dx/=len; dy/=len;
-    const ang=Math.atan2(dy,dx);
-    const mk=(a)=>{
-      RUN.bullets.push({
-        x:RUN.x+dx*(RUN.r+10),
-        y:RUN.y+dy*(RUN.r+10),
-        vx:Math.cos(a)*w.speed,
-        vy:Math.sin(a)*w.speed,
-        r:2.6,life:1.1,dmg:w.dmg
-      });
-    };
-    if(w.pellets){
-      for(let i=0;i<w.pellets;i++)mk(ang+(Math.random()*2-1)*w.spread);
-    }else mk(ang+(Math.random()*2-1)*w.spread);
-  }
+    // world select
+    meta: {
+      mode: "arcade",
+      map: "Ashes",
+      character: "male",
+      skin: "default",
+      weaponKey: "SMG"
+    },
 
-  function tick(dt,t){
-    if(!RUN.running)return;
-    RUN.x=clamp(RUN.x+RUN.joyX*220*dt,20,RUN.w-20);
-    RUN.y=clamp(RUN.y+RUN.joyY*220*dt,90,RUN.h-20);
-    if(RUN.shoot)shoot(t);
+    // main state
+    state: {
+      // screen
+      w: 0, h: 0,
+      camX: 0, camY: 0,
 
-    if(Math.random()<0.02)spawnZombie();
+      // run stats
+      timeMs: 0,
+      wave: 1,
+      kills: 0,
+      coins: 0,
 
-    for(let i=RUN.bullets.length-1;i>=0;i--){
-      const b=RUN.bullets[i];
-      b.life-=dt;
-      b.x+=b.vx*dt; b.y+=b.vy*dt;
-      if(b.life<=0){RUN.bullets.splice(i,1);continue}
-      for(let j=RUN.zombies.length-1;j>=0;j--){
-        const z=RUN.zombies[j];
-        if(dist2(b.x,b.y,z.x,z.y)<(z.r+b.r)**2){
-          z.hp-=b.dmg;
-          RUN.bullets.splice(i,1);
-          if(z.hp<=0){RUN.zombies.splice(j,1);RUN.kills++;RUN.coins++}
-          break;
+      perks: { Jug: 0, Speed: 0, Mag: 0 },
+
+      player: { x: 0, y: 0, vx: 0, vy: 0, hp: CFG.player.hpMax, lastHitAt: -99999 },
+      bullets: [],
+      zombies: [],
+
+      shoot: { lastShotAt: 0 },
+      _bossSpawned: {}
+    },
+
+    // optional hooks (world module can wrap these)
+    _tickWorld: null,
+    _buyPerk: null,
+
+    // -------------------------------------------------------
+    // Public control
+    // -------------------------------------------------------
+    start(mode, w, h, opts = {}) {
+      this.meta.mode = (String(mode || "").toLowerCase().includes("rogue")) ? "roguelike" : "arcade";
+      this.state.w = Math.max(1, w | 0);
+      this.state.h = Math.max(1, h | 0);
+
+      if (opts.map) this.meta.map = String(opts.map);
+      if (opts.character) this.meta.character = String(opts.character);
+      if (opts.skin) this.meta.skin = String(opts.skin);
+      if (opts.weaponKey && CFG.weapons[opts.weaponKey]) this.meta.weaponKey = opts.weaponKey;
+
+      this._resetRun();
+
+      this.running = true;
+      this.startedAt = now();
+      this.lastT = 0;
+
+      return true;
+    },
+
+    stop() {
+      this.running = false;
+      return true;
+    },
+
+    resize(w, h) {
+      this.state.w = Math.max(1, w | 0);
+      this.state.h = Math.max(1, h | 0);
+      return true;
+    },
+
+    setMove(x, y) {
+      this.input.moveX = clamp(Number(x) || 0, -1, 1);
+      this.input.moveY = clamp(Number(y) || 0, -1, 1);
+      return true;
+    },
+
+    setAim(x, y) {
+      const nx = Number(x) || 0;
+      const ny = Number(y) || 0;
+      const n = norm(nx, ny);
+      if (n.L > 0.02) {
+        this.input.aimX = n.x;
+        this.input.aimY = n.y;
+      }
+      return true;
+    },
+
+    setShooting(on) {
+      this.input.shooting = !!on;
+      return true;
+    },
+
+    setWeapon(key) {
+      if (CFG.weapons[key]) this.meta.weaponKey = key;
+      return this.meta.weaponKey;
+    },
+
+    buyPerk(perkId) {
+      const id = String(perkId || "");
+      const p = CFG.perks[id];
+      if (!p) return false;
+
+      if (this.meta.mode !== "roguelike") return false;
+      if (this.state.coins < p.cost) return false;
+
+      this.state.coins -= p.cost;
+      this.state.perks[id] = 1;
+
+      // world module may apply perk effects
+      if (typeof this._buyPerk === "function") {
+        try { this._buyPerk(this, id); } catch {}
+      } else {
+        // fallback effects
+        if (id === "Jug") {
+          const st = this._effectiveStats();
+          this.state.player.hp = Math.min(this.state.player.hp + 25, st.hpMax);
         }
       }
-    }
 
-    for(const z of RUN.zombies){
-      const dx=RUN.x-z.x,dy=RUN.y-z.y;
-      const len=Math.hypot(dx,dy)||1;
-      z.x+=dx/len*z.spd*dt;
-      z.y+=dy/len*z.spd*dt;
-      if(dist2(z.x,z.y,RUN.x,RUN.y)<(z.r+RUN.r)**2){
-        RUN.hp-=10*dt;
-        if(RUN.hp<=0)RUN.running=false;
+      return true;
+    },
+
+    updateFrame(t) {
+      if (!this.running) return;
+
+      if (!this.lastT) this.lastT = t;
+      let dt = (t - this.lastT) / 1000;
+      this.lastT = t;
+      dt = Math.min(CFG.dtMax, Math.max(0, dt));
+
+      const tms = (this.startedAt ? (this.startedAt + (t - this.lastT)) : now());
+      // we'll use "t" from rAF as ms clock too:
+      this._tick(dt, t);
+
+      return true;
+    },
+
+    // -------------------------------------------------------
+    // Internals
+    // -------------------------------------------------------
+    _weapon() {
+      return CFG.weapons[this.meta.weaponKey] || CFG.weapons.SMG;
+    },
+
+    _effectiveStats() {
+      const jug = this.state.perks.Jug ? 1.35 : 1.0;
+      const speed = this.state.perks.Speed ? 1.18 : 1.0;
+      return {
+        hpMax: Math.round(CFG.player.hpMax * jug),
+        speed: CFG.player.speed * speed
+      };
+    },
+
+    _resetRun() {
+      const S = this.state;
+      const st = this._effectiveStats();
+
+      S.timeMs = 0;
+      S.wave = 1;
+      S.kills = 0;
+      S.coins = 0;
+      S.perks = { Jug: 0, Speed: 0, Mag: 0 };
+
+      S.player.x = 0;
+      S.player.y = 0;
+      S.player.vx = 0;
+      S.player.vy = 0;
+      S.player.hp = st.hpMax;
+      S.player.lastHitAt = -99999;
+
+      S.bullets = [];
+      S.zombies = [];
+      S.shoot.lastShotAt = 0;
+      S._bossSpawned = {};
+
+      this.input.aimX = 1;
+      this.input.aimY = 0;
+      this.input.moveX = 0;
+      this.input.moveY = 0;
+      this.input.shooting = false;
+
+      this._spawnWave(S.wave);
+    },
+
+    _spawnWave(w) {
+      const S = this.state;
+      const count = CFG.wave.baseCount + (w - 1) * CFG.wave.countGrowth;
+      const hpMul = Math.pow(CFG.wave.hpGrowth, (w - 1));
+      const spMul = Math.pow(CFG.wave.speedGrowth, (w - 1));
+
+      for (let i = 0; i < count; i++) {
+        const ang = rand(0, Math.PI * 2);
+        const r = rand(520, 880);
+        const x = S.player.x + Math.cos(ang) * r;
+        const y = S.player.y + Math.sin(ang) * r;
+
+        S.zombies.push({
+          kind: "zombie",
+          x, y, vx: 0, vy: 0,
+          hp: CFG.zombie.baseHp * hpMul,
+          sp: CFG.zombie.baseSpeed * spMul,
+          r: CFG.zombie.radius,
+          nextTouchAt: 0
+        });
       }
-    }
-  }
+    },
 
-  window.BCO_ZOMBIES_CORE={
-    RUN,WEAPONS,reset,tick,spawnZombie
+    _canShoot(tms) {
+      const w = this._weapon();
+      const intervalMs = (60_000 / w.rpm);
+      return (tms - this.state.shoot.lastShotAt) >= intervalMs;
+    },
+
+    _shoot(tms) {
+      if (!this._canShoot(tms)) return;
+
+      const S = this.state;
+      const w = this._weapon();
+      S.shoot.lastShotAt = tms;
+
+      const sp = CFG.bullet.speed;
+      const ax = this.input.aimX;
+      const ay = this.input.aimY;
+
+      for (let i = 0; i < w.bullets; i++) {
+        const a = Math.atan2(ay, ax) + rand(-w.spread, w.spread);
+        const dx = Math.cos(a);
+        const dy = Math.sin(a);
+
+        S.bullets.push({
+          x: S.player.x + dx * 18,
+          y: S.player.y + dy * 18,
+          vx: dx * sp,
+          vy: dy * sp,
+          born: tms,
+          life: CFG.bullet.lifeMs,
+          dmg: w.dmg,
+          pierce: CFG.bullet.pierce,
+          r: CFG.bullet.radius
+        });
+      }
+    },
+
+    _hitPlayer(tms) {
+      const S = this.state;
+      const st = this._effectiveStats();
+      if (tms - S.player.lastHitAt < CFG.player.iFramesMs) return;
+
+      S.player.lastHitAt = tms;
+      S.player.hp = Math.max(0, S.player.hp - CFG.zombie.damage);
+
+      if (S.player.hp <= 0) {
+        this.running = false;
+      }
+    },
+
+    _tick(dt, tms) {
+      const S = this.state;
+      S.timeMs = Math.max(0, (now() - this.startedAt) | 0);
+
+      // movement
+      const st = this._effectiveStats();
+      const mx = this.input.moveX;
+      const my = this.input.moveY;
+
+      S.player.vx = mx * st.speed;
+      S.player.vy = my * st.speed;
+      S.player.x += S.player.vx * dt;
+      S.player.y += S.player.vy * dt;
+
+      // fallback arena clamp (world collisions can do better)
+      const pr = len(S.player.x, S.player.y);
+      if (pr > CFG.arenaRadius) {
+        const n = norm(S.player.x, S.player.y);
+        S.player.x = n.x * CFG.arenaRadius;
+        S.player.y = n.y * CFG.arenaRadius;
+      }
+
+      // shooting
+      if (this.input.shooting) this._shoot(tms);
+
+      // bullets
+      for (let i = S.bullets.length - 1; i >= 0; i--) {
+        const b = S.bullets[i];
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+
+        if ((tms - b.born) > b.life) { S.bullets.splice(i, 1); continue; }
+        if (len(b.x, b.y) > CFG.arenaRadius + 1200) { S.bullets.splice(i, 1); continue; }
+      }
+
+      // zombies seek
+      for (let i = S.zombies.length - 1; i >= 0; i--) {
+        const z = S.zombies[i];
+        const dx = S.player.x - z.x;
+        const dy = S.player.y - z.y;
+        const n = norm(dx, dy);
+
+        z.vx = n.x * z.sp;
+        z.vy = n.y * z.sp;
+        z.x += z.vx * dt;
+        z.y += z.vy * dt;
+
+        const dist = len(dx, dy);
+        if (dist < (z.r + CFG.player.hitbox)) {
+          if (tms >= z.nextTouchAt) {
+            z.nextTouchAt = tms + CFG.zombie.touchDpsMs;
+            this._hitPlayer(tms);
+          }
+        }
+      }
+
+      // allow world module to apply map collisions + bosses
+      if (typeof this._tickWorld === "function") {
+        try { this._tickWorld(this, dt, tms); } catch {}
+      }
+
+      // collisions bullets vs zombies
+      for (let bi = S.bullets.length - 1; bi >= 0; bi--) {
+        const b = S.bullets[bi];
+        let consumed = false;
+
+        for (let zi = S.zombies.length - 1; zi >= 0; zi--) {
+          const z = S.zombies[zi];
+          const dx = z.x - b.x;
+          const dy = z.y - b.y;
+          const dist = len(dx, dy);
+
+          if (dist < (z.r + b.r)) {
+            z.hp -= b.dmg;
+
+            if (z.hp <= 0) {
+              S.zombies.splice(zi, 1);
+              S.kills += 1;
+              S.coins += (this.meta.mode === "roguelike") ? 2 : 1;
+            }
+
+            if (b.pierce > 0) b.pierce -= 1;
+            else consumed = true;
+
+            break;
+          }
+        }
+
+        if (consumed) S.bullets.splice(bi, 1);
+      }
+
+      // next wave
+      if (S.zombies.length === 0 && this.running) {
+        S.wave += 1;
+        this._spawnWave(S.wave);
+      }
+
+      // camera (simple follow)
+      S.camX = S.player.x;
+      S.camY = S.player.y;
+    }
   };
-})();
 
-/* =========================================================
-   FILE: app/webapp/static/zombies.input.js
-   ========================================================= */
-(() => {
-  "use strict";
-  const C=window.BCO_ZOMBIES_CORE;
-  let joyId=null,shootId=null;
-  function p(e){return{ x:e.clientX??e.touches[0].clientX,
-                        y:e.clientY??e.touches[0].clientY}}
-  function bind(canvas){
-    canvas.addEventListener("pointerdown",e=>{
-      if(e.clientX<window.innerWidth/2){
-        joyId=e.pointerId;
-        const s=p(e); C.RUN.joyCX=s.x; C.RUN.joyCY=s.y;
-      }else{
-        shootId=e.pointerId;
-        const s=p(e); C.RUN.aimX=s.x; C.RUN.aimY=s.y; C.RUN.shoot=true;
-      }
-    });
-    window.addEventListener("pointermove",e=>{
-      if(e.pointerId===joyId){
-        const s=p(e);
-        const dx=(s.x-C.RUN.joyCX)/40,dy=(s.y-C.RUN.joyCY)/40;
-        C.RUN.joyX=Math.max(-1,Math.min(1,dx));
-        C.RUN.joyY=Math.max(-1,Math.min(1,dy));
-      }
-      if(e.pointerId===shootId){
-        const s=p(e); C.RUN.aimX=s.x; C.RUN.aimY=s.y;
-      }
-    });
-    window.addEventListener("pointerup",e=>{
-      if(e.pointerId===joyId){joyId=null;C.RUN.joyX=C.RUN.joyY=0}
-      if(e.pointerId===shootId){shootId=null;C.RUN.shoot=false}
-    });
-  }
-  window.BCO_ZOMBIES_INPUT={bind};
-})();
-
-/* =========================================================
-   FILE: app/webapp/static/zombies.render.js
-   ========================================================= */
-(() => {
-  "use strict";
-  const C=window.BCO_ZOMBIES_CORE;
-  const A=window.BCO_ZOMBIES_ASSETS;
-
-  function draw(ctx){
-    const R=C.RUN;
-    ctx.clearRect(0,0,R.w,R.h);
-    for(const b of R.bullets){
-      ctx.fillStyle="#fff";
-      ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill();
-    }
-    for(const z of R.zombies){
-      A?.drawZombie?.(ctx,z.x,z.y,{scale:.34})||
-      (ctx.fillStyle="#3f3",ctx.beginPath(),ctx.arc(z.x,z.y,z.r,0,Math.PI*2),ctx.fill());
-    }
-    A?.drawPlayer?.(ctx,R.x,R.y,R.joyX,R.joyY,{scale:.34})||
-    (ctx.fillStyle="#4af",ctx.beginPath(),ctx.arc(R.x,R.y,R.r,0,Math.PI*2),ctx.fill());
-  }
-  window.BCO_ZOMBIES_RENDER={draw};
-})();
-
-/* =========================================================
-   FILE: app/webapp/static/zombies.boot.js
-   ========================================================= */
-(() => {
-  "use strict";
-  const CORE=window.BCO_ZOMBIES_CORE;
-  const INPUT=window.BCO_ZOMBIES_INPUT;
-  const RENDER=window.BCO_ZOMBIES_RENDER;
-
-  let canvas,ctx,last=0;
-
-  function loop(t){
-    const dt=Math.min(.033,(t-last)/1000); last=t;
-    CORE.tick(dt,performance.now());
-    RENDER.draw(ctx);
-    requestAnimationFrame(loop);
-  }
-
-  function open(){
-    if(canvas)return;
-    canvas=document.createElement("canvas");
-    canvas.style.position="fixed";
-    canvas.style.inset="0";
-    canvas.style.zIndex="9999";
-    document.body.appendChild(canvas);
-    ctx=canvas.getContext("2d");
-    const resize=()=>{
-      canvas.width=innerWidth;
-      canvas.height=innerHeight;
-      CORE.RUN.w=innerWidth;
-      CORE.RUN.h=innerHeight;
-      CORE.reset(innerWidth,innerHeight);
-    };
-    window.addEventListener("resize",resize);
-    resize();
-    INPUT.bind(canvas);
-    CORE.RUN.running=true;
-    requestAnimationFrame(loop);
-  }
-
-  window.BCO_ZOMBIES={
-    open,
-    start:open,
-    stop:()=>CORE.RUN.running=false
-  };
+  window.BCO_ZOMBIES_CORE = CORE;
+  console.log("[Z_CORE] loaded");
 })();
