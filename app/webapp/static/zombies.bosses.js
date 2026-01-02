@@ -7,10 +7,9 @@
      window.BCO_ZOMBIES_BOSSES.onBulletHit(CORE, boss, bullet) -> bool(consumed)
      window.BCO_ZOMBIES_BOSSES.install(CORE, mapGetter?)
    Notes:
-     - Backward compatible with your current create(type,x,y).
-     - Safe no-op if you don't call/install.
-     - Adds premium behaviors: phases, telegraphs, projectiles (spitter),
-       shockwave (brute), drops, wave-based scaling.
+     - Backward compatible with create(type,x,y)
+     - Safe no-op if you don't call install()
+     - Premium behaviors: phases, telegraphs, projectiles, shockwave, drops, wave scaling
    ========================================================= */
 (() => {
   "use strict";
@@ -24,7 +23,7 @@
   };
 
   // ---------------------------------------------------------
-  // Config (tuned for "feel premium", not unfair)
+  // Config (premium feel, not unfair)
   // ---------------------------------------------------------
   const CFG = {
     // Scaling by wave: hp * hpMul^(wave-1), speed * spMul^(wave-1)
@@ -37,7 +36,6 @@
       touchDpsMs: 330,
       dmg: 16,
 
-      // abilities
       slam: {
         cdMs: 3000,
         windupMs: 520,
@@ -46,7 +44,7 @@
         knock: 220
       },
 
-      enrageAt: 0.45,  // hp% threshold
+      enrageAt: 0.45,
       enrageSpMul: 1.18
     },
 
@@ -57,7 +55,6 @@
       touchDpsMs: 340,
       dmg: 12,
 
-      // abilities
       spit: {
         cdMs: 1500,
         windupMs: 320,
@@ -68,20 +65,18 @@
         slowSec: 1.2
       },
 
-      // phase shift: more projectiles low hp
       frenzyAt: 0.40,
       frenzyCdMul: 0.75
     },
 
     drops: {
-      // coins are added to CORE.state.coins; overlay can ignore
       coinsBase: 8,
       coinsWaveMul: 1.22
     }
   };
 
   // ---------------------------------------------------------
-  // Helpers / state storage
+  // Helpers
   // ---------------------------------------------------------
   function now() { return performance.now(); }
 
@@ -94,29 +89,33 @@
   }
 
   function waveOf(CORE) {
-    return Number(CORE?.state?.wave || CORE?.wave || 1) | 0;
+    return (Number(CORE?.state?.wave || CORE?.wave || 1) | 0) || 1;
+  }
+
+  function playerHitbox(CORE) {
+    const hb = CORE?.cfg?.player?.hitbox;
+    return Number.isFinite(hb) ? hb : 16;
   }
 
   function scaleBoss(boss, wave) {
     const w = Math.max(1, wave | 0);
     const hpMul = Math.pow(CFG.scale.hpMul, Math.max(0, w - 1));
     const spMul = Math.pow(CFG.scale.spMul, Math.max(0, w - 1));
-    boss.hpMax = Math.round((boss.hpMax || boss.hp) * hpMul);
+    boss.hpMax = Math.round((boss.hpMax || boss.hp || 1) * hpMul);
     boss.hp = boss.hpMax;
     boss.sp = (boss.sp || 0) * spMul;
   }
 
   function ensureRT(CORE) {
     CORE._bossRT = CORE._bossRT || {
-      // active bosses stored on CORE.state.zombies with kind "boss_*"
       projectiles: [], // spitter spit balls
-      telegraphs: []   // simple draw hints (optional, renderer can use)
+      telegraphs: []   // render hints (optional)
     };
     return CORE._bossRT;
   }
 
   // ---------------------------------------------------------
-  // Create bosses (BACK-COMPAT)
+  // Create (BACK-COMPAT)
   // ---------------------------------------------------------
   function mkBrute(x, y, wave = 1) {
     const b = {
@@ -128,13 +127,8 @@
       hpMax: CFG.brute.hp,
       hp: CFG.brute.hp,
 
-      // contact
       nextTouchAt: 0,
-
-      // ability state
       slam: { nextAt: 0, state: "ready", startedAt: 0 },
-
-      // phase
       enraged: false
     };
     scaleBoss(b, wave);
@@ -152,27 +146,24 @@
       hp: CFG.spitter.hp,
 
       nextTouchAt: 0,
-
       spit: { nextAt: 0, state: "ready", startedAt: 0 },
-
       frenzy: false
     };
     scaleBoss(b, wave);
     return b;
   }
 
-  // Public: create(type,x,y,opts?)
+  // Public create(type,x,y,opts?)
   // opts: { wave }
   function create(type, x, y, opts = null) {
     const t = String(type || "brute").toLowerCase();
     const w = Math.max(1, Number(opts?.wave || 1) | 0);
-
     if (t === "spitter") return mkSpitter(x, y, w);
     return mkBrute(x, y, w);
   }
 
   // ---------------------------------------------------------
-  // AI + Abilities
+  // Movement / Damage helpers
   // ---------------------------------------------------------
   function moveSeek(boss, player, dt, speedMul = 1.0) {
     const dx = (player.x - boss.x);
@@ -188,54 +179,49 @@
     const p = getPlayer(CORE);
     if (!p) return;
 
-    // If perks module sets CORE._dmgMul / run._dmgMul, respect it:
     const mul = Number(CORE?._dmgMul || CORE?._perkRT?._dmgMul || CORE?._dmgMultiplier || 1.0);
     const dmg = Math.max(1, Math.round((Number(amount) || 0) * (Number.isFinite(mul) ? mul : 1.0)));
 
-    // CORE has iFrames in its own _hitPlayer, overlay has hitPlayer()
-    // We’ll do a soft hit here: if CORE exposes helper, use it.
-    if (typeof CORE._hitPlayer === "function") {
-      // CORE expects to subtract fixed CFG.zombie.damage, so we do manual:
+    // CORE-style
+    if (CORE?.state?.player && typeof CORE.cfg?.player?.iFramesMs === "number") {
       try {
         const S = CORE.state;
         const tms = now();
-        if (tms - S.player.lastHitAt < CORE.cfg.player.iFramesMs) return;
+        if ((tms - (S.player.lastHitAt || -99999)) < CORE.cfg.player.iFramesMs) return;
         S.player.lastHitAt = tms;
-        S.player.hp = Math.max(0, S.player.hp - dmg);
+        S.player.hp = Math.max(0, (S.player.hp || 0) - dmg);
         if (S.player.hp <= 0) CORE.running = false;
       } catch {}
       return;
     }
 
-    // Overlay-style:
-    if (typeof p.lastHitAt === "number") {
+    // Overlay fallback
+    try {
       const tms = now();
       const ifr = CORE?.cfg?.player?.iFramesMs || 220;
-      if (tms - p.lastHitAt < ifr) return;
+      if (typeof p.lastHitAt === "number" && (tms - p.lastHitAt) < ifr) return;
       p.lastHitAt = tms;
-    }
-    p.hp = Math.max(0, (p.hp || 0) - dmg);
+      p.hp = Math.max(0, (p.hp || 0) - dmg);
+    } catch {}
   }
 
+  // ---------------------------------------------------------
+  // Boss ticks
+  // ---------------------------------------------------------
   function bruteTick(CORE, boss, dt, tms, map) {
     const p = getPlayer(CORE);
     if (!p) return;
 
-    // phase: enrage
     const hpPct = (boss.hpMax > 0) ? (boss.hp / boss.hpMax) : 1;
-    if (!boss.enraged && hpPct <= CFG.brute.enrageAt) {
-      boss.enraged = true;
-    }
+    if (!boss.enraged && hpPct <= CFG.brute.enrageAt) boss.enraged = true;
 
     const spMul = boss.enraged ? CFG.brute.enrageSpMul : 1.0;
 
-    // slam ability
     const slam = boss.slam;
     if (slam.state === "ready" && tms >= slam.nextAt) {
       slam.state = "windup";
       slam.startedAt = tms;
 
-      // telegraph (optional)
       const rt = ensureRT(CORE);
       rt.telegraphs.push({
         kind: "slam",
@@ -246,18 +232,13 @@
     }
 
     if (slam.state === "windup") {
-      // during windup brute slows slightly
       moveSeek(boss, p, dt, spMul * 0.55);
 
       if ((tms - slam.startedAt) >= CFG.brute.slam.windupMs) {
-        slam.state = "boom";
-        // apply slam damage if player in radius
         const dx = p.x - boss.x;
         const dy = p.y - boss.y;
         if (len(dx, dy) <= CFG.brute.slam.radius) {
           damagePlayer(CORE, CFG.brute.slam.dmg);
-
-          // knockback if player has velocity
           const n = norm(dx, dy);
           p.x += n.x * CFG.brute.slam.knock * 0.25;
           p.y += n.y * CFG.brute.slam.knock * 0.25;
@@ -267,20 +248,19 @@
         slam.state = "ready";
       }
     } else {
-      // normal chase
       moveSeek(boss, p, dt, spMul);
     }
 
-    // contact damage (touch DPS)
+    // contact DPS
     const dist = len(p.x - boss.x, p.y - boss.y);
-    if (dist < (boss.r + (CORE?.cfg?.player?.hitbox || CORE?.cfg?.player?.hitbox === 0 ? CORE.cfg.player.hitbox : 16))) {
+    if (dist < (boss.r + playerHitbox(CORE))) {
       if (tms >= boss.nextTouchAt) {
         boss.nextTouchAt = tms + CFG.brute.touchDpsMs;
         damagePlayer(CORE, CFG.brute.dmg);
       }
     }
 
-    // map collisions
+    // map collision
     try {
       const C = window.BCO_ZOMBIES_COLLISIONS;
       if (C?.collideEntityWithMap) C.collideEntityWithMap(boss, map);
@@ -298,7 +278,7 @@
     const cdMul = boss.frenzy ? CFG.spitter.frenzyCdMul : 1.0;
     const cdMs = Math.max(650, CFG.spitter.spit.cdMs * cdMul);
 
-    // keep distance: if too close, back off slightly, else strafe/chase
+    // spacing
     const dx = p.x - boss.x;
     const dy = p.y - boss.y;
     const d = len(dx, dy);
@@ -310,11 +290,9 @@
       boss.x += boss.vx * dt;
       boss.y += boss.vy * dt;
     } else {
-      // light chase
       moveSeek(boss, p, dt, 1.0);
     }
 
-    // spit ability
     if (spit.state === "ready" && tms >= spit.nextAt) {
       spit.state = "windup";
       spit.startedAt = tms;
@@ -323,16 +301,12 @@
       rt.telegraphs.push({
         kind: "spit",
         x: boss.x, y: boss.y,
-        // small line hint; renderer can use aim vector
         until: tms + CFG.spitter.spit.windupMs
       });
     }
 
     if (spit.state === "windup") {
       if ((tms - spit.startedAt) >= CFG.spitter.spit.windupMs) {
-        spit.state = "fire";
-
-        // shoot 1..3 based on frenzy
         const shots = boss.frenzy ? 2 : 1;
         const rt = ensureRT(CORE);
 
@@ -351,7 +325,8 @@
             born: tms,
             life: CFG.spitter.spit.lifeMs,
             r: CFG.spitter.spit.radius,
-            dmg: CFG.spitter.spit.dmg
+            dmg: CFG.spitter.spit.dmg,
+            slowSec: CFG.spitter.spit.slowSec
           });
         }
 
@@ -360,22 +335,24 @@
       }
     }
 
-    // contact damage (touch DPS)
-    const hitbox = CORE?.cfg?.player?.hitbox ?? CORE?.cfg?.player?.hitbox ?? 16;
-    if (d < (boss.r + hitbox)) {
+    // contact DPS
+    if (d < (boss.r + playerHitbox(CORE))) {
       if (tms >= boss.nextTouchAt) {
         boss.nextTouchAt = tms + CFG.spitter.touchDpsMs;
         damagePlayer(CORE, CFG.spitter.dmg);
       }
     }
 
-    // map collisions
+    // map collision
     try {
       const C = window.BCO_ZOMBIES_COLLISIONS;
       if (C?.collideEntityWithMap) C.collideEntityWithMap(boss, map);
     } catch {}
   }
 
+  // ---------------------------------------------------------
+  // Projectiles + telegraphs
+  // ---------------------------------------------------------
   function tickProjectiles(CORE, dt, tms, map) {
     const rt = ensureRT(CORE);
     if (!rt.projectiles.length) return;
@@ -395,9 +372,8 @@
         continue;
       }
 
-      // collide with walls -> vanish
+      // hit walls -> vanish
       if (walls && window.BCO_ZOMBIES_COLLISIONS?.collideBullets) {
-        // reuse bullet collision by wrapping in array
         const tmp = [pr];
         window.BCO_ZOMBIES_COLLISIONS.collideBullets(tmp, map);
         if (tmp.length === 0) {
@@ -408,9 +384,18 @@
 
       // hit player
       const d = len(p.x - pr.x, p.y - pr.y);
-      const hitbox = CORE?.cfg?.player?.hitbox ?? 16;
-      if (d < (hitbox + pr.r)) {
+      if (d < (playerHitbox(CORE) + pr.r)) {
         damagePlayer(CORE, pr.dmg);
+
+        // optional slow hook (if perks/world uses it)
+        try {
+          const slowSec = Number(pr.slowSec || 0);
+          if (slowSec > 0) {
+            CORE._perkRT = CORE._perkRT || {};
+            CORE._perkRT._slowUntil = Math.max(CORE._perkRT._slowUntil || 0, (tms + slowSec * 1000));
+          }
+        } catch {}
+
         rt.projectiles.splice(i, 1);
       }
     }
@@ -425,21 +410,17 @@
   }
 
   // ---------------------------------------------------------
-  // Bullet hit hook (optional)
+  // Bullet hit hook
   // ---------------------------------------------------------
   function onBulletHit(CORE, boss, bullet) {
-    // Return true if bullet should be consumed.
-    // Default: consumed like normal (no special shields), but we can add crits.
     if (!boss || !bullet) return false;
 
-    // Crit when player aims near head direction (simple: faster bullets -> small crit chance)
     const crit = (Math.random() < 0.10);
     const dmg = Number(bullet.dmg || 0);
     const dealt = crit ? Math.round(dmg * 1.35) : dmg;
 
     boss.hp -= dealt;
 
-    // if dead -> drop coins
     if (boss.hp <= 0) {
       try {
         const w = waveOf(CORE);
@@ -449,7 +430,6 @@
       } catch {}
     }
 
-    // let pierce work if present
     if (Number(bullet.pierce || 0) > 0) {
       bullet.pierce -= 1;
       return false;
@@ -458,21 +438,19 @@
   }
 
   // ---------------------------------------------------------
-  // Tick: apply boss logic + projectiles + spawn from map
+  // Tick: spawn + AI + projectiles
   // ---------------------------------------------------------
   function tick(CORE, dt, tms, map) {
     if (!CORE) return false;
 
-    // detect map if not provided
     const m = map || getMapDefault(CORE) || null;
 
-    // optional spawn bosses at configured waves
-    // We store "spawned" flags on CORE.state._bossSpawned
+    // spawn bosses from map config (bossSpawns)
     try {
-      const S = CORE.state;
+      const S = CORE.state || CORE;
       const w = waveOf(CORE);
       S._bossSpawned = S._bossSpawned || {};
-      const key = String(m?.name || CORE.meta?.map || "Ashes");
+      const key = String(m?.name || CORE?.meta?.map || "Ashes");
 
       const sp = m?.bossSpawns || [];
       for (const s of sp) {
@@ -482,28 +460,27 @@
         const id = `${key}:${wave}:${String(s.type || "brute")}`;
         if (S._bossSpawned[id]) continue;
 
-        // spawn at ring around player
         const p = getPlayer(CORE);
         if (!p) continue;
 
         const ang = Math.random() * Math.PI * 2;
-        const rr = (m?.spawn?.ringMax || 880) + 120;
+        const ringMax = Number(m?.spawn?.ringMax || 880);
+        const rr = ringMax + 120;
         const bx = p.x + Math.cos(ang) * rr;
         const by = p.y + Math.sin(ang) * rr;
 
         const boss = create(String(s.type || "brute"), bx, by, { wave: w });
-        // bosses live inside zombies array for compatibility
-        if (Array.isArray(S.zombies)) S.zombies.push(boss);
-        else if (Array.isArray(CORE.zombies)) CORE.zombies.push(boss);
+
+        const list = CORE?.state?.zombies || CORE?.zombies;
+        if (Array.isArray(list)) list.push(boss);
 
         S._bossSpawned[id] = true;
       }
     } catch {}
 
-    // tick existing bosses inside zombies list
+    // tick bosses that live in zombies list
     const list = CORE?.state?.zombies || CORE?.zombies || null;
     if (!Array.isArray(list) || !list.length) {
-      // still tick projectiles (could be active)
       tickProjectiles(CORE, dt, tms, m);
       pruneTelegraphs(CORE, tms);
       return true;
@@ -529,7 +506,7 @@
   }
 
   // ---------------------------------------------------------
-  // Install helper for CORE: hooks into CORE._tickWorld and bullet-vs-zombies
+  // Install: hook CORE world + bullet hook
   // ---------------------------------------------------------
   function install(CORE, mapGetter) {
     if (!CORE || typeof CORE !== "object") return false;
@@ -543,13 +520,9 @@
       try { tick(core, dt, tms, getMap()); } catch {}
     };
 
-    // optional: wrap bullet collision to include boss hp
-    // CORE handles bullets vs zombies. We can't safely patch internal loops unless you expose hook.
-    // So we provide a recommended optional hook name:
-    //   if CORE._onBulletHit exists, we wrap it; otherwise we add one for external call sites.
+    // bullet hit hook for boss damage
     const prevHit = CORE._onBulletHit;
     CORE._onBulletHit = (core, zombie, bullet) => {
-      // if existing hook says consumed, respect it
       try {
         if (typeof prevHit === "function") {
           const consumed = !!prevHit(core, zombie, bullet);
