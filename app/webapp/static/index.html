@@ -5,6 +5,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#07070b" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>BLACK CROWN OPS — Mini App</title>
 
   <base href="/webapp/">
@@ -51,6 +54,7 @@
     </div>
   </header>
 
+  <!-- оставляем, но сейчас скрыто (будем использовать позже под расширение) -->
   <div class="top-tabs" style="display:none;"></div>
 
   <main class="wrap app-main">
@@ -89,6 +93,9 @@
       </div>
     </section>
 
+    <!-- =========================
+         HOME
+    ========================== -->
     <section class="grid tabpane active" id="tab-home">
       <div class="card">
         <div class="card-title">🚀 Быстрые действия</div>
@@ -96,6 +103,8 @@
           <button class="btn primary" id="btnOpenBot" type="button">Открыть меню бота</button>
           <button class="btn" id="btnSync" type="button">Синхронизировать профиль</button>
           <button class="btn" id="btnPremium" type="button">Premium Hub</button>
+          <!-- NEW: быстрый вход в игру (full takeover) -->
+          <button class="btn primary" id="btnPlayZombies" type="button">🧟 Play Zombies (Fullscreen)</button>
         </div>
         <div class="hint">
           Совет: выбирай профиль сверху (Voice/Mode/Platform), и чат будет отвечать под эти настройки.
@@ -139,6 +148,8 @@
         </div>
       </div>
 
+      <!-- НЕ УРЕЗАЕМ: mini-games остаются, но Zombies здесь = витрина/триггеры.
+           Реальная игра теперь в отдельной вкладке GAME (tab-game) + fullscreen takeover. -->
       <div class="card">
         <div class="card-title">🎮 Mini Games (2 режима)</div>
         <div class="hint">
@@ -162,39 +173,39 @@
           </div>
 
           <div class="cardlite">
-            <div class="card-title">🧟 Zombies Survival (ARCADE / ROGUELIKE)</div>
+            <div class="card-title">🧟 Zombies Survival (Preview)</div>
+            <div class="hint">
+              Это превью/панель. Реальная игра теперь в отдельной вкладке <b>Game</b> и открывается полноэкранно.
+            </div>
+
             <div class="seg" style="margin:8px 0;">
               <button class="seg-btn active" id="btnZModeArcade" type="button">💥 Arcade</button>
               <button class="seg-btn" id="btnZModeRogue" type="button">😈 Roguelike</button>
             </div>
 
-            <div class="z-arena" id="zArena" aria-label="Zombies arena">
-              <button class="zombie" id="z1" type="button">🧟</button>
-              <button class="zombie" id="z2" type="button">🧟</button>
-              <button class="zombie" id="z3" type="button">🧟</button>
-            </div>
-
-            <div class="game-stat mono" id="zStat">🎮 ARCADE • 🧟 Wave 1 • ☠️ 0 • 💰 0 • ❤️ 100 • 🔫 SMG</div>
-
             <div class="actions" style="margin-top:10px;">
-              <button class="btn primary" id="btnZGameStart" type="button">Start run</button>
-              <button class="btn" id="btnZGameStop" type="button">Stop</button>
+              <button class="btn primary" id="btnZQuickPlay" type="button">🧟 Open Fullscreen Game</button>
               <button class="btn" id="btnZGameSend" type="button">Send result → bot</button>
             </div>
 
-            <div class="card-sub">Shop (только Roguelike)</div>
+            <div class="card-sub">Shop (в игре • Roguelike)</div>
             <div class="actions">
               <button class="btn" id="btnZBuyJug" type="button">🧪 Jug (12)</button>
               <button class="btn" id="btnZBuySpeed" type="button">⚡ Speed (10)</button>
               <button class="btn" id="btnZBuyAmmo" type="button">🔫 Ammo (8)</button>
             </div>
 
-            <div class="hint">Подсказка: дальше мы перевяжем эти кнопки на новый движок.</div>
+            <div class="hint">
+              Кнопки магазина тут — быстрые хоткеи. Полный магазин/upgrade/reroll/reload — внутри Game fullscreen.
+            </div>
           </div>
         </div>
       </div>
     </section>
 
+    <!-- =========================
+         COACH
+    ========================== -->
     <section class="grid tabpane" id="tab-coach">
       <div class="card">
         <div class="card-title">🎯 План тренировки (20 минут)</div>
@@ -228,6 +239,9 @@
       </div>
     </section>
 
+    <!-- =========================
+         VOD
+    ========================== -->
     <section class="grid tabpane" id="tab-vod">
       <div class="card">
         <div class="card-title">🎬 VOD: разбор без видео</div>
@@ -245,6 +259,9 @@
       </div>
     </section>
 
+    <!-- =========================
+         SETTINGS
+    ========================== -->
     <section class="grid tabpane" id="tab-settings">
       <div class="card">
         <div class="card-title">⚙️ Профиль</div>
@@ -304,13 +321,45 @@
       </div>
     </section>
 
-    <section class="grid tabpane" id="tab-zombies">
+    <!-- =========================
+         GAME (ZOMBIES FULLSCREEN)
+         ВОТ ТА САМАЯ ОТДЕЛЬНАЯ ВКЛАДКА
+    ========================== -->
+    <section class="grid tabpane" id="tab-game">
       <div class="card">
-        <div class="card-title">🧟 Zombies: штаб</div>
+        <div class="card-title">🧟 Game: Zombies Survival</div>
+        <div class="hint">
+          Здесь — вход в полноценную игру. При запуске Mini App переходит в <b>full takeover</b>:
+          скрываем header/nav и отдаём экран игре.
+        </div>
+
+        <div class="card-sub">Карта</div>
         <div class="seg" id="segZMap">
           <button class="seg-btn active" data-value="Ashes" type="button">🧟 Ashes</button>
           <button class="seg-btn" data-value="Astra" type="button">🧟 Astra</button>
         </div>
+
+        <div class="card-sub">Режим</div>
+        <div class="seg" style="margin-top:8px;">
+          <button class="seg-btn active" id="btnZModeArcade2" type="button">💥 Arcade</button>
+          <button class="seg-btn" id="btnZModeRogue2" type="button">😈 Roguelike</button>
+        </div>
+
+        <div class="actions" style="margin-top:10px;">
+          <button class="btn primary" id="btnZEnterGame" type="button">▶ Start Fullscreen</button>
+          <button class="btn" id="btnZOpenHQ" type="button">🧠 Zombies HQ (бот/гайды)</button>
+          <button class="btn" id="btnZGameSend2" type="button">Send result → bot</button>
+        </div>
+
+        <div class="hint">
+          Магазин/upgrade/reroll/reload/перки/скины — <b>внутри игры</b> (full overlay).
+          Эта вкладка — “лаунчер”, а не панель с мелкими кнопками.
+        </div>
+      </div>
+
+      <!-- оставляем богатый функционал HQ (ничего не режем), просто НЕ мешаем игре -->
+      <div class="card">
+        <div class="card-title">🧟 Zombies: штаб (команды боту)</div>
         <div class="actions">
           <button class="btn primary" id="btnOpenZombies" type="button">Открыть Zombies в боте</button>
           <button class="btn" id="btnZPerks" type="button">Перки</button>
@@ -329,6 +378,7 @@
     </footer>
   </main>
 
+  <!-- NAV: 5 вкладок, Game вместо старого "Zombies" -->
   <nav class="bottombar bottom-nav" aria-label="Навигация">
     <button class="nav-btn active" data-tab="home" type="button" aria-selected="true">
       <span class="nav-ico">⭐</span><span class="nav-txt">Главная</span>
@@ -342,12 +392,14 @@
     <button class="nav-btn" data-tab="settings" type="button" aria-selected="false">
       <span class="nav-ico">⚙️</span><span class="nav-txt">Настройки</span>
     </button>
-    <button class="nav-btn" data-tab="zombies" type="button" aria-selected="false">
-      <span class="nav-ico">🧟</span><span class="nav-txt">Zombies</span>
+    <button class="nav-btn" data-tab="game" type="button" aria-selected="false">
+      <span class="nav-ico">🕹️</span><span class="nav-txt">Game</span>
     </button>
   </nav>
 
   <div class="toast" id="toast">OK</div>
+
+  <!-- mount под fullscreen overlay/канвас -->
   <div id="zOverlayMount" aria-hidden="true"></div>
 
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -383,11 +435,6 @@
         });
       }
 
-      // IMPORTANT:
-      // We do NOT load legacy /webapp/zombies.js here anymore.
-      // New engine stack:
-      // assets -> perks/maps/collisions/bosses -> core -> render -> world -> game -> init -> app
-
       setHealth("js: boot…");
 
       loadOptional("/webapp/zombies.assets.js")
@@ -401,10 +448,7 @@
         .then(function () { return load("/webapp/zombies.game.js"); })
         .then(function () { return load("/webapp/zombies.init.js"); })
         .then(function () { return load("/webapp/app.js"); })
-        .then(function () {
-          // app.js должен выставить window.__BCO_JS_OK__ = true
-          setHealth("js: OK (booted)");
-        })
+        .then(function () { setHealth("js: OK (booted)"); })
         .catch(function (e) {
           console.error("BCO boot load error:", e);
           setHealth("js: BOOT ERROR (check console)");
