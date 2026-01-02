@@ -1,5 +1,7 @@
 /* app/webapp/static/style.css */
 /* BLACK CROWN OPS — Mini App (Premium iOS glass + nebula) */
+/* v1.4.0 LUX — +Game Takeover (Zombies full takeover) +3D-ready layers */
+/* НИЧЕГО НЕ УРЕЗАНО — только добавлено/усилено/починено (клики, слои, safe-area, full takeover). */
 
 :root{
   --bg0:#07070b;
@@ -31,6 +33,12 @@
   --safe-right: env(safe-area-inset-right, 0px);
 
   --font: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+
+  /* ---------- Game / renderer readiness ---------- */
+  --game-z: 999;          /* base game layer */
+  --game-ui-z: 1100;      /* hud/controls */
+  --game-modal-z: 1300;   /* modals */
+  --touch-ring: 0 0 0 3px rgba(139,92,246,.22), 0 0 0 1px rgba(34,211,238,.18);
 }
 
 *{ box-sizing:border-box; }
@@ -47,12 +55,28 @@ html, body{
 body{
   overflow-x:hidden;
   -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
 }
 button, input, textarea{ font-family: inherit; outline:none; }
 a{ color: var(--accent2); }
 
 @media (prefers-reduced-motion: reduce){
   *{ animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
+/* =========================
+   iOS / WebView HARDENING (tap reliability)
+========================= */
+button, .btn, .chip, .seg-btn, .nav-btn, .tab, .bco-z-mini, .bco-shopbtn, .bco-fire{
+  -webkit-tap-highlight-color: rgba(0,0,0,0);
+  touch-action: manipulation;
+  user-select:none;
+}
+button:focus-visible, .btn:focus-visible, .seg-btn:focus-visible, .nav-btn:focus-visible, .tab:focus-visible{
+  box-shadow: var(--touch-ring);
+}
+*{
+  -webkit-user-drag: none;
 }
 
 /* =========================
@@ -141,9 +165,10 @@ body::after{
   font-size: 12px;
   letter-spacing:.15px;
   user-select:none;
-  transition: transform .08s ease, background .15s ease, border-color .15s ease;
+  transition: transform .08s ease, background .15s ease, border-color .15s ease, filter .15s ease;
 }
 .chip:active{ transform: scale(.98); background: rgba(255,255,255,.085); }
+.chip:hover{ filter: brightness(1.02); }
 
 .hdr-actions{
   margin-top: 10px;
@@ -168,7 +193,10 @@ body::after{
   gap: 8px;
   overflow:auto;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
+.top-tabs::-webkit-scrollbar{ display:none; }
+
 .tab{
   flex: 0 0 auto;
   border-radius: 999px;
@@ -180,7 +208,7 @@ body::after{
   background: rgba(255,255,255,.04);
   color: rgba(255,255,255,.82);
   user-select:none;
-  transition: transform .08s ease, background .15s ease, border-color .15s ease, color .15s ease;
+  transition: transform .08s ease, background .15s ease, border-color .15s ease, color .15s ease, filter .15s ease;
 }
 .tab:active{ transform: scale(.985); }
 .tab.active{
@@ -188,6 +216,7 @@ body::after{
   background: linear-gradient(135deg, rgba(139,92,246,.22), rgba(34,211,238,.10));
   color: rgba(255,255,255,.94);
 }
+.tab:hover{ filter: brightness(1.03); }
 
 /* =========================
    MAIN LAYOUT
@@ -337,14 +366,16 @@ body::after{
   letter-spacing:.2px;
   cursor:pointer;
   user-select:none;
-  transition: transform .08s ease, background .15s ease, border-color .15s ease, filter .15s ease;
+  transition: transform .08s ease, background .15s ease, border-color .15s ease, filter .15s ease, box-shadow .15s ease;
 }
 .btn:active{ transform: scale(.985); filter: brightness(1.04); }
+.btn:hover{ filter: brightness(1.03); }
 .btn.primary{
   border-color: rgba(139,92,246,.45);
   background: linear-gradient(135deg, rgba(139,92,246,.35), rgba(34,211,238,.18));
   box-shadow: 0 14px 35px rgba(139,92,246,.20);
 }
+.btn.primary:hover{ box-shadow: 0 16px 44px rgba(139,92,246,.24); }
 .btn.ghost{ background: rgba(255,255,255,.035); }
 .btn:disabled{ opacity:.55; cursor: default; }
 
@@ -389,9 +420,10 @@ body::after{
   font-size: 12px;
   letter-spacing:.1px;
   user-select:none;
-  transition: transform .08s ease, background .15s ease, border-color .15s ease;
+  transition: transform .08s ease, background .15s ease, border-color .15s ease, filter .15s ease;
 }
 .seg-btn:active{ transform: scale(.985); }
+.seg-btn:hover{ filter: brightness(1.03); }
 .seg-btn.active{
   border-color: rgba(255,255,255,.18);
   background: rgba(255,255,255,.09);
@@ -529,7 +561,7 @@ body::after{
   gap: 4px;
   color: rgba(255,255,255,.78);
   user-select:none;
-  transition: transform .08s ease, background .15s ease, border-color .15s ease, color .15s ease;
+  transition: transform .08s ease, background .15s ease, border-color .15s ease, color .15s ease, filter .15s ease;
 }
 .nav-btn span{
   font-size: 11px;
@@ -537,6 +569,7 @@ body::after{
   letter-spacing:.1px;
 }
 .nav-btn:active{ transform: scale(.985); background: rgba(255,255,255,.06); }
+.nav-btn:hover{ filter: brightness(1.03); }
 .nav-btn.active{
   border-color: rgba(139,92,246,.35);
   background: linear-gradient(135deg, rgba(139,92,246,.22), rgba(34,211,238,.12));
@@ -574,7 +607,7 @@ body::after{
 .bco-z-overlay{
   position: fixed;
   inset: 0;
-  z-index: 999;
+  z-index: var(--game-z);
   background:
     radial-gradient(900px 600px at 20% 10%, rgba(139,92,246,.20), transparent 60%),
     radial-gradient(900px 600px at 90% 30%, rgba(34,211,238,.14), transparent 60%),
@@ -582,12 +615,19 @@ body::after{
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   overflow: hidden;
+
+  /* critical for controls */
   touch-action: none;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: auto;
+  transform: translateZ(0);
 }
 
+/* Game topbar */
 .bco-z-topbar{
   position: absolute;
   left: 0; right: 0; top: 0;
+  z-index: calc(var(--game-ui-z) + 2);
   padding:
     calc(12px + var(--safe-top))
     calc(12px + var(--safe-right))
@@ -599,6 +639,9 @@ body::after{
   justify-content: space-between;
   background: rgba(0,0,0,.25);
   border-bottom: 1px solid rgba(255,255,255,.06);
+
+  /* makes tap reliable */
+  pointer-events: auto;
 }
 
 .bco-z-title{
@@ -626,27 +669,40 @@ body::after{
   font-weight: 950;
   font-size: 12px;
   user-select:none;
+  transform: translateZ(0);
+  transition: transform .08s ease, filter .15s ease, background .15s ease;
 }
 .bco-z-mini:active{ transform: scale(.985); }
+.bco-z-mini:hover{ filter: brightness(1.04); }
 
+/* Canvas layer */
 .bco-z-canvas{
   position: absolute;
   left: 0; right: 0;
   top: 0; bottom: 0;
   width: 100%;
   height: 100%;
+  z-index: var(--game-z);
+  display:block;
+
+  /* renderer-friendly */
+  transform: translateZ(0);
+  will-change: transform;
 }
 
+/* HUD layer (info only) */
 .bco-z-hud{
   position: absolute;
   left: 0; right: 0;
   top: calc(56px + var(--safe-top));
+  z-index: calc(var(--game-ui-z) + 1);
   padding: 10px calc(12px + var(--safe-right)) 0 calc(12px + var(--safe-left));
   display:flex;
   gap: 10px;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+
   pointer-events: none; /* чтобы не мешать управлению */
 }
 .bco-z-pill{
@@ -660,9 +716,11 @@ body::after{
   border: 1px solid rgba(255,255,255,.10);
 }
 
+/* Controls layer */
 .bco-z-controls{
   position: absolute;
   left: 0; right: 0; bottom: 0;
+  z-index: calc(var(--game-ui-z) + 2);
   padding:
     12px
     calc(12px + var(--safe-right))
@@ -672,9 +730,17 @@ body::after{
   gap: 12px;
   align-items:flex-end;
   justify-content: space-between;
+
   pointer-events: none; /* кнопки внутри включим */
 }
 
+/* Bigger touch zones on iOS */
+@media (max-width: 520px){
+  .bco-joy, .bco-fire{ width: 150px; height: 150px; }
+  .bco-joy-knob{ width: 64px; height: 64px; margin-left: -32px; margin-top: -32px; }
+}
+
+/* Joystick base */
 .bco-joy{
   width: 140px;
   height: 140px;
@@ -685,8 +751,10 @@ body::after{
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   position: relative;
+
   pointer-events: auto;
   touch-action: none;
+  transform: translateZ(0);
 }
 .bco-joy::before{
   content:"";
@@ -708,8 +776,10 @@ body::after{
   background: linear-gradient(135deg, rgba(139,92,246,.28), rgba(34,211,238,.16));
   border: 1px solid rgba(255,255,255,.18);
   box-shadow: 0 16px 38px rgba(0,0,0,.35);
+  will-change: transform;
 }
 
+/* FIRE (aim-stick ready) */
 .bco-fire{
   width: 140px;
   height: 140px;
@@ -724,24 +794,30 @@ body::after{
   font-weight: 1100;
   letter-spacing:.3px;
   color: rgba(255,255,255,.95);
+
   pointer-events: auto;
   user-select:none;
   touch-action: none;
+  transform: translateZ(0);
 }
 .bco-fire:active{ transform: scale(.985); filter: brightness(1.06); }
 
+/* Shop bar */
 .bco-z-shop{
   position: absolute;
   left: 0; right: 0;
   bottom: calc(170px + var(--safe-bottom));
+  z-index: calc(var(--game-ui-z) + 2);
   padding: 0 calc(12px + var(--safe-right)) 0 calc(12px + var(--safe-left));
   display:flex;
   gap: 10px;
   flex-wrap: wrap;
   justify-content: center;
-  pointer-events: auto;
-}
 
+  /* clickable */
+  pointer-events: auto;
+  touch-action: manipulation;
+}
 .bco-shopbtn{
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.12);
@@ -751,13 +827,17 @@ body::after{
   font-weight: 950;
   font-size: 12px;
   user-select:none;
+  transform: translateZ(0);
+  transition: transform .08s ease, filter .15s ease, background .15s ease, border-color .15s ease;
 }
+.bco-shopbtn:hover{ filter: brightness(1.04); }
 .bco-shopbtn:active{ transform: scale(.985); }
 .bco-shopbtn.primary{
   border-color: rgba(139,92,246,.45);
   background: linear-gradient(135deg, rgba(139,92,246,.28), rgba(34,211,238,.14));
 }
 
+/* Modal (Shop/Character/etc) — scroll/click safe */
 .bco-z-modal{
   position: absolute;
   inset: 0;
@@ -768,17 +848,27 @@ body::after{
   background: rgba(0,0,0,.40);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  z-index: 1200;
+  z-index: var(--game-modal-z);
+
+  /* click safe */
+  pointer-events: auto;
+  touch-action: none;
 }
 .bco-z-modal.show{ display:flex; }
 
 .bco-z-card{
   width: min(520px, 100%);
+  max-height: min(76vh, 620px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+
   border-radius: 18px;
   background: rgba(255,255,255,.06);
   border: 1px solid rgba(255,255,255,.12);
   box-shadow: 0 22px 60px rgba(0,0,0,.60);
   padding: 14px;
+
+  transform: translateZ(0);
 }
 .bco-z-card h3{
   margin: 0 0 8px 0;
@@ -819,7 +909,56 @@ body::after{
 }
 
 /* =========================
+   GAME TAKEOVER MODE (driven by app.js: .bco-game on html/body)
+   — убираем всё, что мешает фуллскрину и тапам
+========================= */
+html.bco-game, body.bco-game{
+  height: 100%;
+  overflow: hidden !important;
+  overscroll-behavior: none;
+  background: #000;
+}
+html.bco-game .app-header,
+html.bco-game .top-tabs,
+html.bco-game .bottom-nav{
+  display: none !important;
+}
+html.bco-game .app-main{
+  padding: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+}
+html.bco-game .tabpane{
+  /* игра должна жить отдельно (overlay). Тут ничего не ломаем, просто не мешаем. */
+}
+html.bco-game .toast{
+  bottom: calc(16px + var(--safe-bottom));
+}
+
+/* =========================
+   3D readiness helpers (optional)
+   - если позже подключишь WebGL canvas для 3D, просто повесь класс .bco-z-canvas-3d
+========================= */
+.bco-z-canvas-3d{
+  /* webgl-friendly */
+  image-rendering: auto;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+  will-change: transform, opacity;
+}
+
+/* =========================
    Micro polish
 ========================= */
 ::selection{ background: rgba(139,92,246,.35); color: rgba(255,255,255,.95); }
 .card, .chip, .btn, .seg-btn, .nav-btn, .tab{ transform: translateZ(0); }
+
+/* Subtle lift on tap for important elements */
+.btn.primary:active,
+.bco-shopbtn.primary:active,
+.bco-fire:active{
+  filter: brightness(1.06) saturate(1.06);
+}
+
+/* Prevent weird text zoom on iOS */
+html{ -webkit-text-size-adjust: 100%; }
