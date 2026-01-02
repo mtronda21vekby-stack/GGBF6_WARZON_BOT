@@ -313,7 +313,7 @@
 
       this._resetRun();
 
-      // If bosses module exists and exposes install, attach once per run safely
+      // If bosses module exists and exposes install, attach once per core instance (safe)
       try {
         const B = window.BCO_ZOMBIES_BOSSES;
         if (B?.install && !this._bossInstalled) {
@@ -365,7 +365,6 @@
     setWeapon(key) {
       if (CFG.weapons[key]) this.meta.weaponKey = key;
 
-      // In roguelike, swapping weapon is an upgrade action; keep it safe:
       // If you call setWeapon mid-run, rebuild weapon with same rarity/upgrade if possible.
       try {
         const S = this.state;
@@ -384,7 +383,8 @@
       const S = this.state;
       if (!S.weapon) return false;
       if (S.reload.active) return false;
-      if (S.weapon.mag >= S.weapon.magMax) return false;
+      const W = this._weaponEffective();
+      if (S.weapon.mag >= W.magMax) return false;
       if (S.weapon.reserve <= 0) return false;
 
       this._startReload(performance.now());
@@ -536,10 +536,10 @@
       };
 
       // weapon instance
-      const startRarity = (this.meta.mode === "roguelike") ? "common" : "common";
+      const startRarity = "common";
       S.weapon = mkWeapon(this.meta.weaponKey, startRarity, 0);
 
-      // arcade starts full ammo always; roguelike still starts full but with reserve economy meaningful
+      // start full ammo
       S.weapon.mag = S.weapon.magMax;
       S.weapon.reserve = S.weapon.reserveMax;
 
@@ -569,7 +569,6 @@
       // other
       S.shoot.lastShotAt = 0;
       S._bossSpawned = {};
-      this._bossInstalled = false;
 
       // input
       this.input.aimX = 1;
@@ -744,7 +743,7 @@
       // if reloading -> block
       if (S.reload.active) return;
 
-      // if empty -> auto reload (roguelike/arcade both)
+      // if empty -> auto reload
       if ((S.weapon.mag | 0) <= 0) {
         this._startReload(tms);
         return;
@@ -782,7 +781,7 @@
         });
       }
 
-      // if mag hits 0 and player is still holding shoot -> auto reload
+      // if mag hits 0 -> auto reload
       if ((S.weapon.mag | 0) <= 0 && S.weapon.reserve > 0) {
         this._startReload(tms);
       }
@@ -815,7 +814,7 @@
 
       let dmg = Math.max(1, Math.round(Number(amount) || 0));
 
-      // plating cancels if hit (feel like COD)
+      // plating cancels if hit
       if (S.player.plating.active) {
         S.player.plating.active = false;
         S.player.plating.until = 0;
@@ -896,7 +895,6 @@
 
       // ammo
       if (Math.random() < ammoChance) {
-        // adds reserve or "max ammo" small pack
         const amt = 10 + Math.floor(wave * 1.2);
         this._spawnPickup("ammo", x, y, { amount: amt });
       }
@@ -938,17 +936,9 @@
       if (pu.kind === "ammo") {
         const amt = Math.max(1, (pu.data?.amount | 0) || 10);
 
-        // if max ammo event active, top everything
-        const now = performance.now();
-        const ev = this._eventsActive();
-        if (ev.maxAmmo) {
-          // already active, still top-up
-        }
-
         const W = this._weaponEffective();
         if (S.weapon) {
           S.weapon.reserve = Math.min(W.reserveMax, (S.weapon.reserve | 0) + amt);
-          // small mag top-up feel
           if (S.weapon.mag < W.magMax && Math.random() < 0.35) S.weapon.mag = Math.min(W.magMax, S.weapon.mag + 2);
         }
         return true;
@@ -966,16 +956,12 @@
         const up = pu.data?.upgrade || 0;
 
         if (CFG.weapons[wkey]) {
-          // replace current weapon (v1). Later: 2-slot inventory.
           S.weapon = mkWeapon(wkey, rarity, up);
-          // keep meta in sync for UI label
           this.meta.weaponKey = wkey;
 
-          // premium: instantly load full mag; reserve stays per weapon template
           S.weapon.mag = S.weapon.magMax;
           S.weapon.reserve = S.weapon.reserveMax;
 
-          // cancel reload
           S.reload.active = false;
           S.reload.until = 0;
           return true;
@@ -990,7 +976,6 @@
         if (e === "max_ammo") {
           S.events.maxAmmoUntil = now + CFG.events.maxAmmoMs;
 
-          // instantly top ammo
           const W = this._weaponEffective();
           if (S.weapon) {
             S.weapon.mag = W.magMax;
@@ -1024,19 +1009,16 @@
       for (let i = S.pickups.length - 1; i >= 0; i--) {
         const pu = S.pickups[i];
 
-        // life
         if ((tms - pu.born) > pu.life) {
           S.pickups.splice(i, 1);
           continue;
         }
 
-        // tiny drift / settle
         pu.x += (pu.vx || 0) * dt;
         pu.y += (pu.vy || 0) * dt;
         pu.vx *= 0.92;
         pu.vy *= 0.92;
 
-        // magnet feel
         const dx = px - pu.x;
         const dy = py - pu.y;
         const d = len(dx, dy);
@@ -1048,7 +1030,6 @@
           pu.y += n.y * pull;
         }
 
-        // pickup
         if (d < CFG.loot.pickupRadius) {
           if (this._applyPickup(pu)) {
             S.pickups.splice(i, 1);
@@ -1082,7 +1063,6 @@
       const penalty = (W.movePenalty || 0) * (st.movePenaltyMul || 1.0);
       speed *= (1.0 - clamp(penalty, 0, 0.22));
 
-      // while plating, move slightly slower
       if (S.player.plating.active) speed *= 0.86;
 
       S.player.vx = mx * speed;
@@ -1098,7 +1078,6 @@
         const C = window.BCO_ZOMBIES_COLLISIONS;
         const map = this._mapInfo();
         if (C?.collideEntityWithMap && map) {
-          // treat player as entity with radius
           const ent = { x: S.player.x, y: S.player.y, r: st.hitbox };
           C.collideEntityWithMap(ent, map);
           S.player.x = ent.x;
@@ -1117,7 +1096,6 @@
 
         if ((tms - b.born) > b.life) { S.bullets.splice(i, 1); continue; }
 
-        // clamp loose
         const map = this._mapInfo();
         if (map && map.w && map.h) {
           const pad = 900;
@@ -1145,7 +1123,6 @@
 
         // bosses are ticked by bosses module; we still want them to exist here
         if (z.kind === "boss_brute" || z.kind === "boss_spitter") {
-          // do nothing here; bosses module handles move/damage
           continue;
         }
 
@@ -1191,48 +1168,48 @@
           const dist = len(dx, dy);
 
           if (dist < ((z.r || CFG.zombie.radius) + b.r)) {
-            // Boss hook if installed
-            if (typeof this._onBulletHit === "function") {
+            const isBoss = (z.kind === "boss_brute" || z.kind === "boss_spitter");
+
+            // ---- Boss hook path (NO double damage / NO double pierce) ----
+            if (isBoss && typeof this._onBulletHit === "function") {
               try {
-                const c = !!this._onBulletHit(this, z, b);
-                if (c) consumed = true;
-              } catch {}
+                // _onBulletHit decides boss hp + pierce consumption, returns true if bullet consumed
+                consumed = !!this._onBulletHit(this, z, b);
+              } catch {
+                // fallback if hook crashes
+                z.hp -= b.dmg;
+                if (b.pierce > 0) b.pierce -= 1;
+                else consumed = true;
+              }
+
             } else {
-              // default damage for non-boss
+              // ---- Default damage path (all non-boss, or boss without hook) ----
               z.hp -= b.dmg;
 
               if (z.hp <= 0) {
-                // kill
                 S.zombies.splice(zi, 1);
                 S.kills += 1;
 
-                // coins (arcade minimal, roguelike via drops too)
                 if (this.meta.mode === "roguelike") {
-                  // baseline coin for pacing + events double points handled via pickups
                   S.coins += (z.elite ? 2 : 1);
                 }
 
-                // XP
                 this._awardXP(CFG.progress.xpKill + (z.elite ? 4 : 0));
-
-                // loot drops (roguelike only)
                 this._dropOnKill(z);
               }
 
-              // pierce
               if (b.pierce > 0) b.pierce -= 1;
               else consumed = true;
             }
 
-            // If boss hook handled damage and boss died, we must remove it if hp <= 0
-            if ((z.kind === "boss_brute" || z.kind === "boss_spitter") && z.hp <= 0) {
-              S.zombies.splice(zi, 1);
-              S.kills += 3; // bosses count bigger
+            // If boss died (hook or fallback), remove + reward + drops
+            if (isBoss && z.hp <= 0) {
+              // remove if still present
+              try { S.zombies.splice(zi, 1); } catch {}
+              S.kills += 3;
               this._awardXP(CFG.progress.xpBoss);
 
-              // boss drops (roguelike)
               if (this.meta.mode === "roguelike") {
-                // burst of coins + guaranteed event + weapon
                 this._spawnPickup("coins", z.x, z.y, { amount: 10 + Math.floor(S.wave * 1.2) });
                 this._spawnPickup("event", z.x + 18, z.y, { event: pick(["max_ammo", "double_points", "insta_kill"]) });
                 this._spawnPickup("weapon", z.x - 18, z.y, { weaponKey: pick(Object.keys(CFG.weapons)), rarity: rollRarity(S.wave + 6), upgrade: clamp(Math.floor((S.wave - 1) / 5), 1, 4) });
@@ -1254,14 +1231,11 @@
       if (S.zombies.length === 0 && this.running) {
         S.wave += 1;
 
-        // wave bonus xp
         this._awardXP(CFG.progress.xpWave + Math.floor(S.wave * 0.6));
 
-        // roguelike: small wave cash
         if (this.meta.mode === "roguelike") {
           S.coins += 2 + Math.floor(S.wave * 0.35);
 
-          // tiny chance to spawn event on wave start for hype
           if (Math.random() < clamp(0.05 + (S.wave - 1) * 0.003, 0.05, 0.12)) {
             const e = pick(["double_points", "insta_kill"]);
             this._spawnPickup("event", S.player.x + rand(-40, 40), S.player.y + rand(-40, 40), { event: e });
