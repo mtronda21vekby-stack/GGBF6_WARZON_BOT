@@ -3,11 +3,18 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="color-scheme" content="dark light">
+  <!-- PREMIUM: anti-zoom + safe-area + stable scaling -->
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no"
+  />
+  <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#07070b" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="format-detection" content="telephone=no,date=no,address=no,email=no" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
   <title>BLACK CROWN OPS — Mini App</title>
 
   <base href="/webapp/">
@@ -16,38 +23,101 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
+  <!-- build marker -->
   <script>window.__BCO_BUILD__="__BUILD__";</script>
 
+  <!-- PREMIUM: disable pinch/double-tap zoom (iOS WebView hardening) -->
   <script>
     (function () {
-      var build = (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__") ? window.__BCO_BUILD__ : String(Date.now());
+      // Guard: prevent zoom gestures in iOS Safari/WebView
+      function prevent(e) { try { e.preventDefault(); } catch(_) {} }
+      // gesture* fires on iOS for pinch
+      window.addEventListener("gesturestart", prevent, { passive: false });
+      window.addEventListener("gesturechange", prevent, { passive: false });
+      window.addEventListener("gestureend", prevent, { passive: false });
+
+      // Prevent pinch (multi-touch) + prevent double-tap zoom
+      var lastTouchEnd = 0;
+      window.addEventListener("touchstart", function (e) {
+        if (e.touches && e.touches.length > 1) prevent(e);
+      }, { passive: false });
+
+      window.addEventListener("touchend", function (e) {
+        var now = Date.now();
+        if (now - lastTouchEnd <= 300) prevent(e); // double-tap
+        lastTouchEnd = now;
+      }, { passive: false });
+
+      // If user uses ctrl/cmd + wheel (desktop), block zoom
+      window.addEventListener("wheel", function (e) {
+        if (e.ctrlKey) prevent(e);
+      }, { passive: false });
+    })();
+  </script>
+
+  <!-- CSS cache-bust loader -->
+  <script>
+    (function () {
+      var build = (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__")
+        ? window.__BCO_BUILD__
+        : String(Date.now());
       window.__BCO_BUILD__ = build;
 
       var css = document.createElement("link");
       css.rel = "stylesheet";
       css.href = "/webapp/style.css?build=" + encodeURIComponent(build);
       document.head.appendChild(css);
+
+      // Fallback for very early paint
+      var nos = document.createElement("noscript");
+      nos.innerHTML = '<link rel="stylesheet" href="/webapp/style.css?build=' + encodeURIComponent(build) + '">';
+      document.head.appendChild(nos);
+    })();
+  </script>
+
+  <!-- Telegram WebApp bootstrap: fullscreen/expand + colors -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>
+    (function () {
+      function safe(fn){ try{ fn(); }catch(_){ } }
+      function initTG(){
+        if (!window.Telegram || !Telegram.WebApp) return;
+        var wa = Telegram.WebApp;
+
+        safe(function(){ wa.ready(); });
+        safe(function(){ wa.expand(); }); // best-effort "fullscreen" inside Telegram
+        safe(function(){ wa.setHeaderColor && wa.setHeaderColor("#07070b"); });
+        safe(function(){ wa.setBackgroundColor && wa.setBackgroundColor("#07070b"); });
+
+        // Optional polish (safe-guards)
+        safe(function(){ wa.enableClosingConfirmation && wa.enableClosingConfirmation(); });
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initTG, { once: true });
+      } else {
+        initTG();
+      }
     })();
   </script>
 </head>
 
 <body>
-  <div class="bg">
+  <div class="bg" aria-hidden="true">
     <div class="stars"></div>
     <div class="nebula"></div>
     <div class="gridfx"></div>
   </div>
 
-  <header class="top app-header">
+  <header class="top app-header" role="banner">
     <div class="brand">
-      <div class="logo">👑</div>
+      <div class="logo" aria-hidden="true">👑</div>
       <div class="brand-text">
         <div class="title brand-title">BLACK CROWN OPS</div>
         <div class="sub brand-sub">premium • FPS coach</div>
       </div>
     </div>
 
-    <div class="chip-row chips">
+    <div class="chip-row chips" role="group" aria-label="Профиль">
       <button class="chip" id="chipVoice" type="button">🤝 Тиммейт</button>
       <button class="chip" id="chipMode" type="button">🧠 Normal</button>
       <button class="chip" id="chipPlatform" type="button">🖥 PC</button>
@@ -57,7 +127,7 @@
   <!-- оставляем, но сейчас скрыто (будем использовать позже под расширение) -->
   <div class="top-tabs" style="display:none;"></div>
 
-  <main class="wrap app-main">
+  <main class="wrap app-main" role="main">
     <section class="hero card">
       <div class="hero-left">
         <div class="hero-kicker">Твой штаб управления</div>
@@ -103,6 +173,7 @@
           <button class="btn primary" id="btnOpenBot" type="button">Открыть меню бота</button>
           <button class="btn" id="btnSync" type="button">Синхронизировать профиль</button>
           <button class="btn" id="btnPremium" type="button">Premium Hub</button>
+
           <!-- NEW: быстрый вход в игру (full takeover) -->
           <button class="btn primary" id="btnPlayZombies" type="button">🧟 Play Zombies (Fullscreen)</button>
         </div>
@@ -131,7 +202,7 @@
         <div class="chat-compose">
           <textarea id="chatInput" class="input" rows="2"
             placeholder="Напиши: игра | input | где умираешь | цель"></textarea>
-          <button class="chat-send" id="btnChatSend" type="button">➤</button>
+          <button class="chat-send" id="btnChatSend" type="button" aria-label="Send">➤</button>
         </div>
       </div>
 
@@ -402,8 +473,7 @@
   <!-- mount под fullscreen overlay/канвас -->
   <div id="zOverlayMount" aria-hidden="true"></div>
 
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
+  <!-- BOOT LOADER (order preserved; async=false) -->
   <script>
     (function () {
       var build = window.__BCO_BUILD__ || String(Date.now());
