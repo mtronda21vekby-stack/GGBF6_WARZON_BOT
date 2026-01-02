@@ -56,8 +56,8 @@
     // weapons
     weapons: {
       SMG: { name: "SMG", rpm: 820, dmg: 10, spread: 0.08, recoil: 0.06, bullets: 1 },
-      AR: { name: "AR", rpm: 640, dmg: 14, spread: 0.05, recoil: 0.08, bullets: 1 },
-      SG: { name: "SG", rpm: 120, dmg: 8, spread: 0.22, recoil: 0.12, bullets: 6 }
+      AR:  { name: "AR",  rpm: 640, dmg: 14, spread: 0.05, recoil: 0.08, bullets: 1 },
+      SG:  { name: "SG",  rpm: 120, dmg: 8,  spread: 0.22, recoil: 0.12, bullets: 6 }
     },
 
     // UI
@@ -81,7 +81,6 @@
     return { x: x / L, y: y / L, L };
   };
   const rand = (a, b) => a + Math.random() * (b - a);
-  const pick = (arr) => arr[(Math.random() * arr.length) | 0];
   const fmt = (n) => (Number(n) || 0).toFixed(0);
 
   function haptic(type = "impact", style = "medium") {
@@ -110,6 +109,17 @@
   const ASSETS = () => window.BCO_ZOMBIES_ASSETS || null;
 
   // =========================================================
+  // Perks bridge (optional) — SOURCE OF TRUTH
+  // Expecting window.BCO_ZOMBIES_PERKS with optional methods:
+  //   cost(perkId, run) -> number
+  //   canBuy(perkId, run) -> boolean
+  //   buy(perkId, run) -> boolean  (should mutate run, decrease coins itself OR return {spent:n})
+  //   apply(perkId, run) -> void
+  //   tick(run, dt, tms) -> void
+  // =========================================================
+  const PERKS = () => window.BCO_ZOMBIES_PERKS || null;
+
+  // =========================================================
   // DOM / Overlay
   // =========================================================
   const mount = () => document.getElementById("zOverlayMount");
@@ -132,6 +142,9 @@
   // sizing
   let W = 0;
   let H = 0;
+
+  // shop buttons refs (for dynamic label update)
+  const shopBtns = {};
 
   // =========================================================
   // Input state
@@ -209,6 +222,7 @@
   }
 
   function effectiveStats() {
+    // NOTE: base fallback perks, but PERKS module can override via tick/apply
     const jug = game.perks.Jug ? 1.35 : 1.0;
     const speed = game.perks.Speed ? 1.18 : 1.0;
     const mag = game.perks.Mag ? 1.0 : 1.0; // placeholder hook
@@ -341,7 +355,7 @@
       height: 160px;
       padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
       box-sizing: border-box;
-      pointer-events: none; /* allow canvas events, controls will re-enable */
+      pointer-events: none;
       background: linear-gradient(0deg, rgba(0,0,0,.55), rgba(0,0,0,0));
     `;
 
@@ -415,10 +429,11 @@
       transition: opacity .18s ease;
     `;
 
-    function mkShopBtn(label, onClick) {
+    function mkShopBtn(perkId, labelBase, onClick) {
       const b = document.createElement("button");
       b.type = "button";
-      b.textContent = label;
+      b.dataset.perkId = perkId;
+      b.textContent = labelBase;
       b.style.cssText = `
         padding: 10px 12px;
         border-radius: 14px;
@@ -430,12 +445,13 @@
         touch-action: manipulation;
       `;
       b.addEventListener("click", onClick, { passive: true });
+      shopBtns[perkId] = b;
       return b;
     }
 
-    shopBar.appendChild(mkShopBtn("🧪 Jug (12)", () => API.buyPerk("Jug")));
-    shopBar.appendChild(mkShopBtn("⚡ Speed (10)", () => API.buyPerk("Speed")));
-    shopBar.appendChild(mkShopBtn("🔫 Ammo (8)", () => API.buyPerk("Mag")));
+    shopBar.appendChild(mkShopBtn("Jug",   "🧪 Jug",   () => API.buyPerk("Jug")));
+    shopBar.appendChild(mkShopBtn("Speed", "⚡ Speed", () => API.buyPerk("Speed")));
+    shopBar.appendChild(mkShopBtn("Mag",   "🔫 Ammo",  () => API.buyPerk("Mag")));
 
     hudBottom.appendChild(joy);
     hudBottom.appendChild(fireBtn);
@@ -455,6 +471,9 @@
 
     // Wire input handlers
     wireControls(joyInner);
+
+    // shop labels sync on mount
+    syncShopLabels();
   }
 
   function destroyOverlay() {
@@ -506,7 +525,6 @@
   }
 
   function aimSetFromScreen(px, py) {
-    // aim direction from player screen position to pointer
     const cam = camera();
     const sx = (game.p.x - cam.x) + W / 2;
     const sy = (game.p.y - cam.y) + H / 2;
@@ -520,7 +538,7 @@
     }
   }
 
-  function wireControls(joyInnerEl) {
+  function wireControls() {
     if (!canvas) return;
 
     // FIRE button: hold to shoot
@@ -594,7 +612,7 @@
       joyReset();
     };
 
-    // Aim (on canvas): always update aim on pointer move (even while moving)
+    // Aim
     const aimDown = (id, x, y) => {
       input.aimActive = true;
       input.aimId = id;
@@ -629,7 +647,6 @@
       joy.addEventListener("pointercancel", (e) => { e.preventDefault(); joyUp(e.pointerId); }, { passive: false });
 
       canvas.addEventListener("pointerdown", (e) => {
-        // aim always; don't steal joystick pointer
         e.preventDefault();
         canvas.setPointerCapture?.(e.pointerId);
         aimDown(e.pointerId, e.clientX, e.clientY);
@@ -644,7 +661,6 @@
       canvas.addEventListener("pointerup", (e) => { e.preventDefault(); aimUp(e.pointerId); }, { passive: false });
       canvas.addEventListener("pointercancel", (e) => { e.preventDefault(); aimUp(e.pointerId); }, { passive: false });
     } else {
-      // touch fallback
       joy.addEventListener("touchstart", (e) => {
         e.preventDefault();
         const t = e.changedTouches[0];
@@ -697,8 +713,20 @@
   // Camera
   // =========================================================
   function camera() {
-    // simple camera centered on player
     return { x: game.p.x, y: game.p.y };
+  }
+
+  // =========================================================
+  // World hooks (compat for zombies.world.js)
+  // =========================================================
+  // These are intentionally on API, so world.js can wrap them:
+  //   const _tick = core._tickWorld; core._tickWorld = (run,dt,t)=>{...; if(_tick) _tick(...) }
+  //   const _buy  = core._buyPerk;  core._buyPerk  = (run,perk)=>{...; if(_buy) _buy(...) }
+  function tickWorld(run, dt, tms) {
+    // default noop (world.js can wrap)
+  }
+  function buyWorldPerk(run, perkId) {
+    // default noop (world.js can wrap)
   }
 
   // =========================================================
@@ -733,6 +761,7 @@
 
     spawnWave(game.wave);
 
+    syncShopLabels();
     updateHud();
   }
 
@@ -765,12 +794,10 @@
     overlay.style.display = "block";
     overlay.style.opacity = "1";
 
-    // telegram UI
     try { tg?.BackButton?.show?.(); } catch {}
     try { tg?.MainButton?.hide?.(); } catch {}
     try { tg?.expand?.(); } catch {}
 
-    // show shop only in roguelike
     if (shopBar) shopBar.style.opacity = (game.mode === "roguelike") ? "1" : "0";
 
     haptic("impact", "medium");
@@ -826,14 +853,11 @@
     const w = weapon();
     game.shootAcc.lastShotAt = tms;
 
-    const st = effectiveStats();
-    const sp = CFG.bullet.speed; // could scale with perks
+    const sp = CFG.bullet.speed;
 
-    // base direction
     const ax = input.aimX;
     const ay = input.aimY;
 
-    // spread
     const spread = w.spread;
     const bullets = w.bullets;
 
@@ -876,6 +900,15 @@
   function update(dt, tms) {
     game.timeMs = tms - game.startedAtMs;
 
+    // allow world modules to inject (maps/collisions/bosses)
+    try { API._tickWorld(game, dt, tms); } catch {}
+
+    // perks tick (regen etc) from module (if provided)
+    try {
+      const P = PERKS();
+      if (P?.tick) P.tick(game, dt, tms);
+    } catch {}
+
     // movement
     const st = effectiveStats();
     const mx = input.moveX;
@@ -909,7 +942,6 @@
         continue;
       }
 
-      // out of arena
       if (len2(b.x, b.y) > CFG.arenaRadius + 220) {
         game.bullets.splice(i, 1);
         continue;
@@ -920,7 +952,6 @@
     for (let i = game.zombies.length - 1; i >= 0; i--) {
       const z = game.zombies[i];
 
-      // seek player
       const dx = game.p.x - z.x;
       const dy = game.p.y - z.y;
       const n = norm(dx, dy);
@@ -931,7 +962,6 @@
       z.x += z.vx * dt;
       z.y += z.vy * dt;
 
-      // touch player
       const dist = len2(dx, dy);
       if (dist < (CFG.zombie.radius + CFG.player.hitbox)) {
         if (tms >= z.nextTouchAt) {
@@ -985,15 +1015,13 @@
   }
 
   // =========================================================
-  // Render
+  // Render helpers
   // =========================================================
   function drawArena(cam) {
-    // background grid + ring
     ctx.save();
     ctx.translate(W / 2, H / 2);
     ctx.translate(-game.p.x + cam.x, -game.p.y + cam.y);
 
-    // grid
     ctx.globalAlpha = 0.22;
     ctx.lineWidth = 1;
 
@@ -1017,7 +1045,6 @@
       ctx.stroke();
     }
 
-    // arena ring
     ctx.globalAlpha = 0.65;
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(255,255,255,.12)";
@@ -1036,7 +1063,6 @@
     ctx.arc(0, 0, 18, 0, Math.PI * 2);
     ctx.fill();
 
-    // crown mark
     ctx.fillStyle = "rgba(255,255,255,.22)";
     ctx.beginPath();
     ctx.arc(6, -6, 5, 0, Math.PI * 2);
@@ -1068,13 +1094,11 @@
       return;
     }
 
-    // Use A.SPRITES mapping if present. We keep it safe: if missing -> fallback.
     const spr = (kind === "player")
       ? (A.SPRITES.player || A.SPRITES.player_idle || null)
       : (A.SPRITES.zombie || A.SPRITES.zombie_walk || null);
 
     if (!spr || !A.drawSprite) {
-      // If your assets module exposes drawSprite, we use it. Otherwise fallback.
       if (kind === "player") drawFallbackPlayer(x, y);
       else drawFallbackZombie(x, y);
       return;
@@ -1126,7 +1150,6 @@
 
     const cam = camera();
 
-    // vignette
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,.18)";
     ctx.fillRect(0, 0, W, H);
@@ -1134,12 +1157,10 @@
 
     drawArena(cam);
 
-    // world transform
     ctx.save();
     ctx.translate(W / 2, H / 2);
     ctx.translate(-cam.x, -cam.y);
 
-    // bullets
     ctx.globalAlpha = 0.9;
     ctx.fillStyle = "rgba(255,255,255,.9)";
     for (const b of game.bullets) {
@@ -1148,12 +1169,10 @@
       ctx.fill();
     }
 
-    // zombies
     for (const z of game.zombies) {
       drawSprite("zombie", z.x, z.y, z.vx, z.vy);
     }
 
-    // player
     drawSprite("player", game.p.x, game.p.y, input.aimX, input.aimY);
 
     ctx.restore();
@@ -1162,8 +1181,56 @@
   }
 
   // =========================================================
-  // HUD updates
+  // HUD updates + shop label sync
   // =========================================================
+  function perkCost(name) {
+    const P = PERKS();
+    try {
+      if (P?.cost) {
+        const c = Number(P.cost(name, game));
+        if (Number.isFinite(c)) return c;
+      }
+    } catch {}
+    if (name === "Jug") return 12;
+    if (name === "Speed") return 10;
+    if (name === "Mag") return 8;
+    return 999;
+  }
+
+  function syncShopLabels() {
+    const P = PERKS();
+    const defs = {
+      Jug:   { base: "🧪 Jug",   emoji: "🧪" },
+      Speed: { base: "⚡ Speed", emoji: "⚡" },
+      Mag:   { base: "🔫 Ammo",  emoji: "🔫" }
+    };
+
+    for (const k of Object.keys(defs)) {
+      const b = shopBtns[k];
+      if (!b) continue;
+
+      const cost = perkCost(k);
+      const owned = !!game.perks?.[k];
+
+      // optional: let module provide label
+      let label = `${defs[k].base} (${cost})`;
+      try {
+        if (P?.label) {
+          const s = P.label(k, game);
+          if (s) label = String(s);
+        }
+      } catch {}
+
+      if (owned) label = `${label} ✓`;
+
+      b.textContent = label;
+
+      // disable button if owned (lux UX)
+      b.disabled = owned;
+      b.style.opacity = owned ? "0.55" : "1";
+    }
+  }
+
   function updateHud() {
     const sub = document.getElementById("bco-z-sub");
     const hud = document.getElementById("bco-z-hud");
@@ -1179,6 +1246,9 @@
     }
 
     if (shopBar) shopBar.style.opacity = (game.mode === "roguelike") ? "1" : "0";
+
+    // keep shop labels live (prices/owned)
+    syncShopLabels();
   }
 
   // =========================================================
@@ -1206,25 +1276,47 @@
   }
 
   // =========================================================
-  // Shop / perks
+  // Shop / perks (now routed through module if present)
   // =========================================================
-  function perkCost(name) {
-    if (name === "Jug") return 12;
-    if (name === "Speed") return 10;
-    if (name === "Mag") return 8;
-    return 999;
-  }
-
   function buyPerk(name) {
     if (game.mode !== "roguelike") { haptic("notif", "warning"); return false; }
+    if (game.perks?.[name]) { haptic("impact", "light"); return false; }
+
+    // allow world module to react first (maps/perk systems)
+    try { API._buyPerk(game, name); } catch {}
+
+    const P = PERKS();
+
+    // If module provides buy() — it owns the logic
+    if (P?.buy) {
+      try {
+        const ok = !!P.buy(name, game);
+        if (ok) {
+          haptic("notif", "success");
+          updateHud();
+          return true;
+        }
+        haptic("notif", "warning");
+        return false;
+      } catch {
+        haptic("notif", "warning");
+        return false;
+      }
+    }
+
+    // Else fallback local buy (your previous behavior)
     const c = perkCost(name);
     if (game.coins < c) { haptic("notif", "warning"); return false; }
 
     game.coins -= c;
     game.perks[name] = 1;
+
     // apply max hp immediately
     const st = effectiveStats();
     game.p.hp = Math.min(game.p.hp + 18, st.hpMax);
+
+    // If module has apply(), call it (soft integration)
+    try { if (P?.apply) P.apply(name, game); } catch {}
 
     haptic("notif", "success");
     updateHud();
@@ -1235,7 +1327,6 @@
   // Results -> bot
   // =========================================================
   function score() {
-    // elite but simple
     const base = game.kills * 100;
     const waveBonus = (game.wave - 1) * 250;
     const timeSec = Math.max(1, game.timeMs / 1000);
@@ -1270,6 +1361,10 @@
   // Public API
   // =========================================================
   const API = {
+    // world hooks (for zombies.world.js wrapping)
+    _tickWorld: tickWorld,
+    _buyPerk: buyWorldPerk,
+
     open() {
       if (!openFlag) openOverlay();
       return true;
@@ -1293,6 +1388,7 @@
       const m = (String(mode || "")).toLowerCase();
       game.mode = (m === "roguelike" || m === "rogue") ? "roguelike" : "arcade";
       if (shopBar) shopBar.style.opacity = (game.mode === "roguelike") ? "1" : "0";
+      syncShopLabels();
       updateHud();
       return game.mode;
     },
@@ -1300,7 +1396,6 @@
       if (character) game.character = String(character);
       if (skin) game.skin = String(skin);
 
-      // if assets API exists — set skins
       const A = ASSETS();
       try {
         if (A?.setPlayerSkin) A.setPlayerSkin(game.skin);
