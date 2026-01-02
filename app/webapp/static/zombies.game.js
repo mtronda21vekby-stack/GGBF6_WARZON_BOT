@@ -17,7 +17,6 @@
   // Safe DOM helpers (robust selectors)
   // -------------------------
   const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
   function pickEl(selectors) {
     for (const s of selectors) {
@@ -85,7 +84,7 @@
       document.body.style.webkitUserSelect = "none";
       document.body.style.webkitTouchCallout = "none";
 
-      // prevent double-tap zoom
+      // prevent double-tap zoom + unify pointer behavior
       document.body.style.touchAction = "none";
       document.documentElement.style.touchAction = "none";
 
@@ -93,6 +92,8 @@
       if (canvas) {
         canvas.style.touchAction = "none";
         canvas.style.pointerEvents = "auto";
+        // block iOS context menu / long press
+        canvas.addEventListener("contextmenu", (e) => { try { e.preventDefault(); } catch {} }, { passive: false });
       }
 
       // sticks and buttons must be clickable
@@ -100,6 +101,7 @@
         if (!el) continue;
         el.style.touchAction = "none";
         el.style.pointerEvents = "auto";
+        el.addEventListener("contextmenu", (e) => { try { e.preventDefault(); } catch {} }, { passive: false });
       }
 
       // hard prevent pinch zoom gesture
@@ -108,12 +110,22 @@
       document.addEventListener("gesturechange", prevent, { passive: false });
       document.addEventListener("gestureend", prevent, { passive: false });
 
-      // prevent scroll on touchmove during play (we will allow when modal scrolls elsewhere)
+      // prevent scroll on touchmove during play (allow inside modals / scrollable sheets)
       document.addEventListener("touchmove", (e) => {
-        // allow scrolling inside modals if explicitly marked
         const path = (e.composedPath && e.composedPath()) || [];
         for (const n of path) {
-          if (n && n.classList && (n.classList.contains("modal") || n.classList.contains("modal-body") || n.classList.contains("allow-scroll"))) {
+          if (!n || !n.classList) continue;
+          // allow scroll in anything modal-like or explicitly scrollable
+          if (
+            n.classList.contains("modal") ||
+            n.classList.contains("modal-body") ||
+            n.classList.contains("allow-scroll") ||
+            n.classList.contains("sheet") ||
+            n.classList.contains("sheet-body") ||
+            n.classList.contains("scroll") ||
+            n.classList.contains("scroll-y") ||
+            n.hasAttribute("data-allow-scroll")
+          ) {
             return;
           }
         }
@@ -133,15 +145,11 @@
     try {
       if (!TG) return;
 
-      // expand first
       try { TG.expand(); } catch {}
-
-      // hide main/back if possible
       try { TG.MainButton && TG.MainButton.hide && TG.MainButton.hide(); } catch {}
       try { TG.BackButton && TG.BackButton.hide && TG.BackButton.hide(); } catch {}
 
-      // request fullscreen if supported
-      // Telegram has evolving API; we try safely:
+      // evolving API, safe try-calls
       try { TG.requestFullscreen && TG.requestFullscreen(); } catch {}
       try { TG.setHeaderColor && TG.setHeaderColor("#000000"); } catch {}
       try { TG.setBackgroundColor && TG.setBackgroundColor("#000000"); } catch {}
@@ -150,6 +158,19 @@
     } catch (e) {
       warn("Telegram takeover error", e);
     }
+  }
+
+  // While game is running, Telegram buttons can reappear (orientation etc). Hard-hide periodically.
+  let _tgHideTimer = 0;
+  function startTelegramHideLoop() {
+    if (!TG || _tgHideTimer) return;
+    _tgHideTimer = window.setInterval(() => {
+      const CORE = window.BCO_ZOMBIES_CORE;
+      if (!CORE || !CORE.running) return;
+      try { TG.MainButton && TG.MainButton.hide && TG.MainButton.hide(); } catch {}
+      try { TG.BackButton && TG.BackButton.hide && TG.BackButton.hide(); } catch {}
+      try { TG.expand && TG.expand(); } catch {}
+    }, 350);
   }
 
   // -------------------------
@@ -191,10 +212,8 @@
   function makeStick(el, kind /* "move" | "aim" */) {
     if (!el) return null;
 
-    // we support: outer circle = el, inner knob = first child or .knob
     const knob = el.querySelector(".knob") || el.querySelector(".inner") || el.firstElementChild || null;
 
-    // state
     let active = false;
     let pid = null;
     let cx = 0, cy = 0;
@@ -226,7 +245,7 @@
       recalc();
       active = true;
       pid = e.pointerId;
-      el.setPointerCapture && el.setPointerCapture(pid);
+      try { el.setPointerCapture && el.setPointerCapture(pid); } catch {}
       onMove(e);
     }
 
@@ -237,6 +256,7 @@
       const vx = (e.clientX - cx);
       const vy = (e.clientY - cy);
       const L = Math.hypot(vx, vy) || 0;
+
       const nx = L > 0 ? (vx / Math.max(L, radius)) : 0;
       const ny = L > 0 ? (vy / Math.max(L, radius)) : 0;
 
@@ -244,15 +264,15 @@
       const cly = Math.max(-1, Math.min(1, ny));
       setKnob(clx, cly);
 
-      // push to CORE input
       const CORE = window.BCO_ZOMBIES_CORE;
       if (!CORE) return;
 
       if (kind === "move") {
-        // y inverted for typical joystick feel? keep as-is (your core expects -1..1)
         CORE.setMove && CORE.setMove(clx, cly);
       } else {
         CORE.setAim && CORE.setAim(clx, cly);
+        // ULTRA: for aim stick, shooting state should follow pointer immediately (no rAF lag)
+        CORE.setShooting && CORE.setShooting(Math.hypot(clx, cly) > 0.08);
       }
     }
 
@@ -267,16 +287,18 @@
 
       const CORE = window.BCO_ZOMBIES_CORE;
       if (CORE && kind === "move") CORE.setMove && CORE.setMove(0, 0);
-      if (CORE && kind === "aim") CORE.setAim && CORE.setAim(0, 0);
+      if (CORE && kind === "aim") {
+        // setAim(0,0) is fine even if core keeps last aim; we MUST stop shooting now
+        CORE.setAim && CORE.setAim(0, 0);
+        CORE.setShooting && CORE.setShooting(false);
+      }
     }
 
-    // pointer events (best for iOS webview if touchAction none)
     el.addEventListener("pointerdown", onDown, { passive: false });
     window.addEventListener("pointermove", onMove, { passive: false });
     window.addEventListener("pointerup", onUp, { passive: false });
     window.addEventListener("pointercancel", onUp, { passive: false });
 
-    // initial geometry
     setTimeout(recalc, 0);
     window.addEventListener("resize", recalc);
 
@@ -292,7 +314,6 @@
   // FIRE behavior (legacy)
   // -------------------------
   function setupFireBehavior() {
-    // If dual-stick exists -> FIRE is redundant. Hide it.
     if (stickR && btnFire) {
       btnFire.style.display = "none";
       btnFire.style.pointerEvents = "none";
@@ -300,7 +321,6 @@
       return;
     }
 
-    // Otherwise keep FIRE as "shoot hold"
     if (!btnFire) return;
 
     const CORE = () => window.BCO_ZOMBIES_CORE;
@@ -323,24 +343,6 @@
   }
 
   // -------------------------
-  // Auto-shoot on RIGHT stick hold (Dual-stick)
-  // -------------------------
-  function setupDualStickShooting(aimStick) {
-    if (!aimStick) return;
-
-    function tick() {
-      const CORE = window.BCO_ZOMBIES_CORE;
-      if (CORE && CORE.setShooting) {
-        // shoot while aiming stick is actively held and not centered
-        const should = !!aimStick.active && (Math.hypot(aimStick.dx, aimStick.dy) > 0.08);
-        CORE.setShooting(should);
-      }
-      requestAnimationFrame(tick);
-    }
-    requestAnimationFrame(tick);
-  }
-
-  // -------------------------
   // Render hook (do not break your renderer)
   // -------------------------
   function drawFrame() {
@@ -349,13 +351,11 @@
 
     const snap = CORE.getFrameData();
 
-    // If you have your own renderer module, use it
     const R = window.BCO_ZOMBIES_RENDER || window.BCO_ZOMBIES_RENDERER || window.BCO_ZOMBIES_DRAW;
     if (R && typeof R.draw === "function") {
       try { R.draw(canvas, snap); return; } catch (e) { /* fallback below */ }
     }
 
-    // Minimal fallback so you always see "something" (never blank)
     const ctx = canvas ? canvas.getContext("2d") : null;
     if (!ctx) return;
 
@@ -364,20 +364,17 @@
 
     ctx.clearRect(0, 0, w, h);
 
-    // simple camera
     const camX = snap.camera?.x || 0;
     const camY = snap.camera?.y || 0;
 
     const toX = (x) => (w / 2) + (x - camX) * dpr;
     const toY = (y) => (h / 2) + (y - camY) * dpr;
 
-    // player
     ctx.beginPath();
     ctx.arc(toX(snap.player.x), toY(snap.player.y), 14 * dpr, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(220,220,255,0.95)";
     ctx.fill();
 
-    // zombies
     for (const z of (snap.zombies || [])) {
       ctx.beginPath();
       ctx.arc(toX(z.x), toY(z.y), (z.r || 16) * dpr, 0, Math.PI * 2);
@@ -385,7 +382,6 @@
       ctx.fill();
     }
 
-    // bullets
     for (const b of (snap.bullets || [])) {
       ctx.beginPath();
       ctx.arc(toX(b.x), toY(b.y), 3 * dpr, 0, Math.PI * 2);
@@ -407,6 +403,8 @@
       warn("BCO_ZOMBIES_CORE missing or incomplete");
       return;
     }
+
+    startTelegramHideLoop();
 
     function frame(tms) {
       try {
@@ -437,16 +435,13 @@
 
     if (forceTakeover) requestTakeover();
 
-    // Ensure canvas size first
     const r = resizeCanvas() || { cssW: window.innerWidth, cssH: window.innerHeight };
 
-    // Read options from globals if you have them (safe)
     const mode = (window.BCO_ZOMBIES_MODE || window.__Z_MODE__ || CORE.meta?.mode || "arcade");
     const map = (window.BCO_ZOMBIES_MAP || window.__Z_MAP__ || CORE.meta?.map || "Ashes");
     const character = (window.BCO_ZOMBIES_CHARACTER || CORE.meta?.character || "male");
     const skin = (window.BCO_ZOMBIES_SKIN || CORE.meta?.skin || "default");
 
-    // HARD: if UI shows roguelike, but some module passes "ARCADE • Astra" etc, normalize:
     const modeStr = String(mode);
     const opts = { map, character, skin };
 
@@ -468,17 +463,12 @@
   function init() {
     applyIosHardening();
 
-    // Build sticks
     const moveStick = makeStick(stickL, "move");
     const aimStick  = makeStick(stickR, "aim");
-
-    // Dual-stick shooting is the contract behavior
-    if (aimStick) setupDualStickShooting(aimStick);
 
     // FIRE legacy behavior (and auto-hide on dual-stick)
     setupFireBehavior();
 
-    // Start button
     if (btnStart) {
       btnStart.addEventListener("pointerdown", (e) => {
         try { e.preventDefault(); } catch {}
@@ -486,7 +476,7 @@
       }, { passive: false });
     }
 
-    // Also: tap canvas to start if not running (lux UX)
+    // Tap canvas to start if not running
     if (canvas) {
       canvas.addEventListener("pointerdown", (e) => {
         const CORE = window.BCO_ZOMBIES_CORE;
@@ -496,37 +486,30 @@
       }, { passive: false });
     }
 
-    // Resize on orientation changes
-    window.addEventListener("resize", () => {
-      resizeCanvas();
-    });
+    window.addEventListener("resize", () => { resizeCanvas(); });
 
-    // If Telegram exists, try to keep buttons hidden during play
     if (TG) {
-      try {
-        TG.ready && TG.ready();
-        TG.expand && TG.expand();
-      } catch {}
+      try { TG.ready && TG.ready(); } catch {}
+      try { TG.expand && TG.expand(); } catch {}
+      // don’t force takeover here (only on start), but keep loop available
+      startTelegramHideLoop();
     }
 
-    // Auto-start loop if core already running (e.g., restored state)
     try {
       const CORE = window.BCO_ZOMBIES_CORE;
       if (CORE && CORE.running) startLoop();
     } catch {}
 
     health("ready");
-    log("init ok", { hasCanvas: !!canvas, hasL: !!stickL, hasR: !!stickR, hasFire: !!btnFire, hasStart: !!btnStart });
+    log("init ok", { hasCanvas: !!canvas, hasL: !!stickL, hasR: !!stickR, hasFire: !!btnFire, hasStart: !!btnStart, hasMove: !!moveStick, hasAim: !!aimStick });
   }
 
-  // Delay init until DOM ready
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init, { once: true });
   } else {
     init();
   }
 
-  // Expose minimal API for other modules (optional)
   window.BCO_ZOMBIES_GAME = {
     startGame,
     startLoop,
