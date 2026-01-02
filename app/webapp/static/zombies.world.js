@@ -24,67 +24,61 @@
       this.map = MAPS.get(mapName);
     },
 
-    applyCollisions(run) {
+    applyCollisions(CORE) {
       if (!this.map) return;
+      const S = CORE.state;
 
-      COLL.collideEntityWithMap(run, this.map, this.map.w, this.map.h);
+      // player + zombies vs walls
+      COLL.collideEntityWithMap(S.player, this.map);
+      for (const z of S.zombies) COLL.collideEntityWithMap(z, this.map);
 
-      for (const z of run.zombies) {
-        COLL.collideEntityWithMap(z, this.map, this.map.w, this.map.h);
-      }
-
-      COLL.collideBullets(run.bullets, this.map);
+      // bullets vs walls
+      COLL.collideBullets(S.bullets, this.map);
     },
 
-    spawnBossIfNeeded(run) {
+    spawnBossIfNeeded(CORE) {
       if (!this.map || !this.map.bossSpawns) return;
+      const S = CORE.state;
 
       for (const bs of this.map.bossSpawns) {
-        if (bs.wave === run.wave && !run._bossSpawned?.[bs.wave]) {
-          const b = BOSSES.create(
-            bs.type,
-            Math.random() * this.map.w,
-            Math.random() * this.map.h
-          );
+        if (bs.wave === S.wave && !S._bossSpawned?.[bs.wave]) {
+          const b = BOSSES.create(bs.type, S.player.x + (Math.random() * 400 - 200), S.player.y + (Math.random() * 400 - 200));
           if (b) {
-            run.zombies.push(b);
-            run._bossSpawned = run._bossSpawned || {};
-            run._bossSpawned[bs.wave] = true;
+            S.zombies.push(b);
+            S._bossSpawned = S._bossSpawned || {};
+            S._bossSpawned[bs.wave] = true;
           }
         }
       }
     },
 
-    applyPerk(run, perkId) {
-      const fn = PERKS[perkId];
-      if (fn) fn(run);
+    applyPerk(CORE, perkId) {
+      const fn = PERKS?.[perkId];
+      if (fn) fn(CORE);
     }
   };
 
   // =========================================================
   // HOOK INTO CORE GAME LOOP
   // =========================================================
-  if (window.BCO_ZOMBIES) {
-    const core = window.BCO_ZOMBIES;
+  if (window.BCO_ZOMBIES_CORE) {
+    const core = window.BCO_ZOMBIES_CORE;
 
-    const _tick = core._tickWorld;
-    core._tickWorld = function (run, dt, t) {
-      if (!World.map) World.load(run.map || "Ashes");
-
-      World.applyCollisions(run);
-      World.spawnBossIfNeeded(run);
-
-      if (_tick) _tick(run, dt, t);
+    const prevTick = core._tickWorld;
+    core._tickWorld = function (CORE, dt, t) {
+      if (!World.map) World.load(core.meta.map || "Ashes");
+      World.applyCollisions(core);
+      World.spawnBossIfNeeded(core);
+      if (prevTick) prevTick(CORE, dt, t);
     };
 
-    const _buyPerk = core._buyPerk;
-    core._buyPerk = function (run, perkId) {
-      World.applyPerk(run, perkId);
-      if (_buyPerk) _buyPerk(run, perkId);
+    const prevBuy = core._buyPerk;
+    core._buyPerk = function (CORE, perkId) {
+      World.applyPerk(core, perkId);
+      if (prevBuy) prevBuy(CORE, perkId);
     };
   }
 
   window.BCO_ZOMBIES_WORLD = World;
-
   console.log("[BCO_ZOMBIES_WORLD] loaded");
 })();
