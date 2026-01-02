@@ -1,7 +1,7 @@
 /* app/webapp/static/style.css */
 /* BLACK CROWN OPS — Mini App (Premium iOS glass + nebula) */
-/* v1.4.1 LUX MAX++ — Game Takeover (true fullscreen lock) + iOS tap hardening + anti-zoom helpers + 3D-ready layers */
-/* НИЧЕГО НЕ УРЕЗАНО — только добавлено/усилено/починено (клики, слои, safe-area, full takeover, 3D hooks, missing UI classes). */
+/* v1.4.2 LUX MAX++ — TG insets fix (buttons not covering UI) + true fullscreen takeover + iOS tap hardening + anti-zoom helpers + 3D-ready layers */
+/* НИЧЕГО НЕ УРЕЗАНО — только добавлено/усилено/починено. */
 
 :root{
   --bg0:#07070b;
@@ -31,6 +31,10 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
+
+  /* Telegram WebApp overlays (set by JS, fallback 0) */
+  --tg-top: 0px;
+  --tg-bottom: 0px;
 
   --font: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 
@@ -138,7 +142,6 @@ html.bco-perf .bco-z-card{
 
 /* =========================
    BACKGROUND FX (nebula)
-   - works even if HTML has .bg/.stars/.nebula/.gridfx
 ========================= */
 body::before{
   content:"";
@@ -211,7 +214,7 @@ body::after{
   top: 0;
   z-index: 30;
   padding:
-    calc(12px + var(--safe-top))
+    calc(12px + var(--safe-top) + var(--tg-top))
     calc(14px + var(--safe-right))
     10px
     calc(14px + var(--safe-left));
@@ -279,7 +282,7 @@ body::after{
 ========================= */
 .top-tabs{
   position: sticky;
-  top: calc(78px + var(--safe-top));
+  top: calc(78px + var(--safe-top) + var(--tg-top));
   z-index: 25;
   padding: 10px calc(14px + var(--safe-right)) 10px calc(14px + var(--safe-left));
   background: rgba(7,7,11,.40);
@@ -323,7 +326,7 @@ body::after{
   padding:
     14px
     calc(14px + var(--safe-right))
-    calc(108px + var(--safe-bottom))
+    calc(108px + var(--safe-bottom) + var(--tg-bottom))
     calc(14px + var(--safe-left));
   max-width: 980px;
   margin: 0 auto;
@@ -342,7 +345,7 @@ body::after{
   .grid-2{ grid-template-columns: 1fr; }
 }
 
-/* Compatibility: your HTML uses .grid2, .grid, .grid2 (typo-safe) */
+/* Compatibility */
 .grid{ display:block; }
 .grid2, .grid-2{ display:grid; }
 .grid2{
@@ -384,8 +387,6 @@ body::after{
   margin: 12px 0;
   background: rgba(255,255,255,.08);
 }
-
-/* cardlite used in your HTML */
 .cardlite{
   border-radius: 16px;
   background: rgba(255,255,255,.045);
@@ -397,7 +398,7 @@ body::after{
 }
 
 /* =========================
-   HERO (compat: your HTML has hero-left/right, kicker/desc/actions)
+   HERO
 ========================= */
 .hero{
   display:grid;
@@ -462,7 +463,6 @@ body::after{
   color: rgba(255,255,255,.92);
 }
 
-/* Premium block used in your HTML */
 .premium{
   margin-top: 10px;
   border-radius: 16px;
@@ -537,7 +537,6 @@ body::after{
 }
 .inp::placeholder{ color: rgba(255,255,255,.45); }
 
-/* Compatibility: your HTML uses .input (not .inp) */
 .input{
   width:100%;
   border-radius: 16px;
@@ -563,7 +562,6 @@ body::after{
 }
 @media (max-width: 520px){ .grid-3{ grid-template-columns: 1fr; } }
 
-/* Segments */
 .seg{
   display:flex;
   gap: 8px;
@@ -590,7 +588,6 @@ body::after{
   background: rgba(255,255,255,.09);
 }
 
-/* Pills */
 .pill{
   border-radius: 999px;
   padding: 9px 12px;
@@ -607,7 +604,6 @@ body::after{
   flex-wrap: wrap;
 }
 
-/* Hint */
 .hint{
   margin-top: 10px;
   font-size: 12px;
@@ -616,7 +612,7 @@ body::after{
 }
 
 /* =========================
-   LIST (your HTML uses .list .li .dot)
+   LIST
 ========================= */
 .list{ margin-top: 10px; }
 .li{
@@ -673,8 +669,7 @@ body::after{
 }
 
 /* =========================
-   MINI ZOMBIES PLACEHOLDER (your old HTML block uses .z-arena .zombie)
-   - keep it pretty; real game is overlay
+   MINI ZOMBIES PLACEHOLDER
 ========================= */
 .z-arena{
   margin-top: 10px;
@@ -704,7 +699,7 @@ body::after{
 .zombie:active{ transform: scale(.985); }
 
 /* =========================
-   CHAT (support app.js chat bubbles + your HTML shell)
+   CHAT
 ========================= */
 .chat-shell{
   margin-top: 12px;
@@ -797,7 +792,6 @@ body::after{
 }
 .chat-send:active{ transform: scale(.985); }
 
-/* chat bubbles (added) */
 .chat-row{
   display:flex;
   gap: 10px;
@@ -834,7 +828,6 @@ body::after{
   padding-left: 2px;
 }
 
-/* typing dots */
 .typing{ display:inline-flex; gap: 6px; align-items:center; }
 .typing .dot{
   width: 6px; height: 6px;
@@ -873,7 +866,7 @@ body::after{
   padding:
     10px
     calc(12px + var(--safe-right))
-    calc(10px + var(--safe-bottom))
+    calc(10px + var(--safe-bottom) + var(--tg-bottom))
     calc(12px + var(--safe-left));
   background: rgba(7,7,11,.72);
   backdrop-filter: blur(18px);
@@ -915,7 +908,7 @@ body::after{
 .toast{
   position: fixed;
   left: 50%;
-  bottom: calc(98px + var(--safe-bottom));
+  bottom: calc(98px + var(--safe-bottom) + var(--tg-bottom));
   transform: translateX(-50%) translateY(14px);
   z-index: 80;
   opacity: 0;
@@ -934,7 +927,7 @@ body::after{
 .toast.show{ opacity: 1; transform: translateX(-50%) translateY(0px); }
 
 /* =========================
-   FULLSCREEN ZOMBIES OVERLAY (for app.js)
+   FULLSCREEN ZOMBIES OVERLAY
 ========================= */
 .bco-z-overlay{
   position: fixed;
@@ -953,8 +946,8 @@ body::after{
   -webkit-overflow-scrolling: auto;
   transform: translateZ(0);
 
-  /* future 3D renderer stability */
   contain: layout paint size style;
+  isolation: isolate;
 }
 
 /* Game topbar */
@@ -963,7 +956,7 @@ body::after{
   left: 0; right: 0; top: 0;
   z-index: calc(var(--game-ui-z) + 2);
   padding:
-    calc(12px + var(--safe-top))
+    calc(12px + var(--safe-top) + var(--tg-top))
     calc(12px + var(--safe-right))
     12px
     calc(12px + var(--safe-left));
@@ -973,7 +966,6 @@ body::after{
   justify-content: space-between;
   background: rgba(0,0,0,.25);
   border-bottom: 1px solid rgba(255,255,255,.06);
-
   pointer-events: auto;
 }
 
@@ -993,7 +985,6 @@ body::after{
 .bco-z-topbar .left{ display:flex; flex-direction: column; }
 .bco-z-topbar .right{ display:flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
-/* topbar buttons */
 .bco-z-mini{
   min-height: 38px;
   border-radius: 999px;
@@ -1019,12 +1010,9 @@ body::after{
   height: 100%;
   z-index: var(--game-z);
   display:block;
-
   transform: translateZ(0);
   will-change: transform;
 }
-
-/* If later you mount a WebGL canvas, add this class */
 .bco-z-canvas-3d{
   image-rendering: auto;
   backface-visibility: hidden;
@@ -1032,11 +1020,11 @@ body::after{
   will-change: transform, opacity;
 }
 
-/* HUD layer */
+/* HUD */
 .bco-z-hud{
   position: absolute;
   left: 0; right: 0;
-  top: calc(56px + var(--safe-top));
+  top: calc(56px + var(--safe-top) + var(--tg-top));
   z-index: calc(var(--game-ui-z) + 1);
   padding: 10px calc(12px + var(--safe-right)) 0 calc(12px + var(--safe-left));
   display:flex;
@@ -1044,7 +1032,6 @@ body::after{
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-
   pointer-events: none;
 }
 .bco-z-pill{
@@ -1058,7 +1045,7 @@ body::after{
   border: 1px solid rgba(255,255,255,.10);
 }
 
-/* Controls layer */
+/* Controls */
 .bco-z-controls{
   position: absolute;
   left: 0; right: 0; bottom: 0;
@@ -1066,23 +1053,20 @@ body::after{
   padding:
     12px
     calc(12px + var(--safe-right))
-    calc(12px + var(--safe-bottom))
+    calc(12px + var(--safe-bottom) + var(--tg-bottom))
     calc(12px + var(--safe-left));
   display:flex;
   gap: 12px;
   align-items:flex-end;
   justify-content: space-between;
-
   pointer-events: none;
 }
 
-/* Bigger touch zones on iOS */
 @media (max-width: 520px){
   .bco-joy, .bco-fire{ width: 150px; height: 150px; }
   .bco-joy-knob{ width: 64px; height: 64px; margin-left: -32px; margin-top: -32px; }
 }
 
-/* Joystick base */
 .bco-joy{
   width: 140px;
   height: 140px;
@@ -1093,12 +1077,9 @@ body::after{
   backdrop-filter: blur(var(--ui-blur));
   -webkit-backdrop-filter: blur(var(--ui-blur));
   position: relative;
-
   pointer-events: auto;
   touch-action: none;
   transform: translateZ(0);
-
-  /* keep joystick above any accidental overlays */
   z-index: calc(var(--game-ui-z) + 3);
 }
 .bco-joy::before{
@@ -1124,7 +1105,7 @@ body::after{
   will-change: transform;
 }
 
-/* FIRE */
+/* FIRE (right aim surface) */
 .bco-fire{
   width: 140px;
   height: 140px;
@@ -1139,12 +1120,10 @@ body::after{
   font-weight: 1100;
   letter-spacing:.3px;
   color: rgba(255,255,255,.95);
-
   pointer-events: auto;
   user-select:none;
   touch-action: none;
   transform: translateZ(0);
-
   z-index: calc(var(--game-ui-z) + 3);
 }
 .bco-fire:active{ transform: scale(.985); filter: brightness(1.06); }
@@ -1153,14 +1132,13 @@ body::after{
 .bco-z-shop{
   position: absolute;
   left: 0; right: 0;
-  bottom: calc(170px + var(--safe-bottom));
+  bottom: calc(170px + var(--safe-bottom) + var(--tg-bottom));
   z-index: calc(var(--game-ui-z) + 2);
   padding: 0 calc(12px + var(--safe-right)) 0 calc(12px + var(--safe-left));
   display:flex;
   gap: 10px;
   flex-wrap: wrap;
   justify-content: center;
-
   pointer-events: auto;
   touch-action: manipulation;
   max-width: 100%;
@@ -1185,21 +1163,24 @@ body::after{
   background: linear-gradient(135deg, rgba(139,92,246,.28), rgba(34,211,238,.14));
 }
 
-/* Modal (Shop/Character/etc) — scroll/click safe */
+/* Modal */
 .bco-z-modal{
   position: absolute;
   inset: 0;
   display:none;
   align-items:center;
   justify-content:center;
-  padding: calc(18px + var(--safe-top)) calc(14px + var(--safe-right)) calc(18px + var(--safe-bottom)) calc(14px + var(--safe-left));
+  padding:
+    calc(18px + var(--safe-top) + var(--tg-top))
+    calc(14px + var(--safe-right))
+    calc(18px + var(--safe-bottom) + var(--tg-bottom))
+    calc(14px + var(--safe-left));
   background: rgba(0,0,0,.40);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   z-index: var(--game-modal-z);
-
   pointer-events: auto;
-  touch-action: none; /* modal backdrop never scrolls */
+  touch-action: none;
 }
 .bco-z-modal.show{ display:flex; }
 
@@ -1208,28 +1189,13 @@ body::after{
   max-height: min(76vh, 620px);
   overflow: auto;
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-
   border-radius: 18px;
   background: rgba(255,255,255,.06);
   border: 1px solid rgba(255,255,255,.12);
   box-shadow: 0 22px 60px rgba(0,0,0,.60);
   padding: 14px;
-
   transform: translateZ(0);
-
-  /* ✅ critical: allow vertical scroll inside card even when overlay is touch-locked */
-  touch-action: pan-y;
-  pointer-events: auto;
 }
-.bco-z-card::-webkit-scrollbar{ width: 10px; }
-.bco-z-card::-webkit-scrollbar-thumb{
-  background: rgba(255,255,255,.12);
-  border-radius: 999px;
-  border: 2px solid rgba(0,0,0,.18);
-}
-.bco-z-card::-webkit-scrollbar-track{ background: transparent; }
-
 .bco-z-card h3{
   margin: 0 0 8px 0;
   font-size: 14px;
@@ -1269,8 +1235,7 @@ body::after{
 }
 
 /* =========================
-   GAME TAKEOVER MODE (driven by app.js: .bco-game on html/body)
-   - TRUE fullscreen lock (fixes iOS scroll + Telegram bleed)
+   GAME TAKEOVER MODE
 ========================= */
 html.bco-game, body.bco-game{
   height: 100%;
@@ -1278,8 +1243,6 @@ html.bco-game, body.bco-game{
   overflow: hidden !important;
   overscroll-behavior: none;
   background: #000;
-
-  /* critical: lock page under overlay */
   position: fixed;
   inset: 0;
 }
@@ -1297,10 +1260,9 @@ html.bco-game .app-main{
   margin: 0 !important;
 }
 html.bco-game .toast{
-  bottom: calc(16px + var(--safe-bottom));
+  bottom: calc(16px + var(--safe-bottom) + var(--tg-bottom));
 }
 
-/* Make sure overlay + canvases are true viewport sized */
 html.bco-game .bco-z-overlay,
 html.bco-game .bco-z-canvas,
 html.bco-game .bco-z-canvas-3d{
@@ -1312,7 +1274,6 @@ html.bco-game .bco-z-canvas-3d{
   max-height: none !important;
 }
 
-/* If you later add a 3D “renderer” toggle, you can set: html.bco-3d */
 html.bco-3d .bco-z-overlay{
   background:
     radial-gradient(900px 600px at 20% 10%, rgba(139,92,246,.16), transparent 60%),
@@ -1321,7 +1282,7 @@ html.bco-3d .bco-z-overlay{
 }
 
 /* =========================
-   FOOTER (your HTML has .foot)
+   FOOTER
 ========================= */
 .foot{
   margin-top: 14px;
@@ -1338,14 +1299,12 @@ html.bco-3d .bco-z-overlay{
 ========================= */
 .card, .chip, .btn, .seg-btn, .nav-btn, .tab, .cardlite{ transform: translateZ(0); }
 
-/* Subtle lift on tap for important elements */
 .btn.primary:active,
 .bco-shopbtn.primary:active,
 .bco-fire:active{
   filter: brightness(1.06) saturate(1.06);
 }
 
-/* Make tap targets feel “premium” on iOS */
 @media (max-width: 520px){
   .chip, .seg-btn, .btn{ min-height: 46px; }
   .nav-btn{ min-height: 58px; }
@@ -1354,6 +1313,3 @@ html.bco-3d .bco-z-overlay{
 /* Ensure clickable controls are never blocked by accidental overlays */
 .bco-z-overlay *{ pointer-events: auto; }
 .bco-z-hud{ pointer-events: none; }
-
-/* Tiny safety: if any element ends up above overlay, overlay still wins */
-.bco-z-overlay{ isolation: isolate; }
