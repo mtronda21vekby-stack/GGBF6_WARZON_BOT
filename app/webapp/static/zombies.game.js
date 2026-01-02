@@ -1,11 +1,13 @@
 /* =========================================================
-   BLACK CROWN OPS — ZOMBIES GAME (UI + RENDER + INPUT)
+   BLACK CROWN OPS — ZOMBIES GAME (UI + RENDER + INPUT) [LUX+]
    File: app/webapp/static/zombies.game.js
    Requires:
      - zombies.core.js
      - zombies.render.js
      - zombies.assets.js (optional)
      - zombies.world.js (optional)
+     - zombies.bosses.js (optional, LUX recommended)
+     - zombies.perks.js  (optional)
    Provides:
      - window.BCO_ZOMBIES_GAME
    ========================================================= */
@@ -33,6 +35,9 @@
   let raf = 0;
   let dpr = 1;
 
+  // Track bosses to grant premium drops even if CORE doesn't call _onBulletHit
+  let _bossPrev = new Set();
+
   const input = {
     moveX: 0, moveY: 0,
     aimX: 1, aimY: 0
@@ -54,6 +59,63 @@
       tg.sendData(s);
       return true;
     } catch { return false; }
+  }
+
+  // ---------------------------------------------------------
+  // Optional modules
+  // ---------------------------------------------------------
+  const BOSSES = () => window.BCO_ZOMBIES_BOSSES || null;
+  const MAPS = () => window.BCO_ZOMBIES_MAPS || null;
+  const PERKS = () => window.BCO_ZOMBIES_PERKS || null;
+
+  function mapGet() {
+    try { return MAPS()?.get?.(CORE.meta.map) || null; } catch { return null; }
+  }
+
+  function bossesEnsureInstalled() {
+    const B = BOSSES();
+    if (!B || !B.install) return false;
+
+    if (CORE._bcoBossesInstalled === true) return true;
+    try {
+      const ok = !!B.install(CORE, () => mapGet());
+      CORE._bcoBossesInstalled = ok;
+      if (ok) console.log("[Z_GAME] bosses installed");
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+
+  // Premium drop fallback (if CORE doesn't call boss onBulletHit)
+  function bossesDropFallback(count = 1) {
+    // Soft-scaling: big but not insane
+    try {
+      const w = Math.max(1, Number(CORE.state.wave || 1) | 0);
+      const base = 8;
+      const mul = 1.22;
+      const add = Math.round(base * Math.pow(mul, Math.max(0, w - 1))) * Math.max(1, count | 0);
+      CORE.state.coins = (CORE.state.coins | 0) + add;
+    } catch {}
+  }
+
+  function bossIs(x) {
+    return !!x && (x.kind === "boss_brute" || x.kind === "boss_spitter");
+  }
+
+  function snapshotBosses() {
+    const arr = CORE?.state?.zombies;
+    const set = new Set();
+    if (Array.isArray(arr)) {
+      for (const z of arr) if (bossIs(z)) set.add(z);
+    }
+    return set;
+  }
+
+  function countDeadBosses(prev, next) {
+    let dead = 0;
+    prev.forEach((b) => { if (!next.has(b)) dead++; });
+    return dead;
   }
 
   // ---------------------------------------------------------
@@ -182,10 +244,11 @@
     `;
     bottom.appendChild(shop);
 
-    const mkBtn = (txt, on) => {
+    const mkBtn = (perkId, fallbackText) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.textContent = txt;
+      b.dataset.perkId = perkId;
+      b.textContent = fallbackText;
       b.style.cssText = `
         padding:12px 14px; border-radius:16px;
         border:1px solid rgba(255,255,255,.14);
@@ -195,13 +258,38 @@
         letter-spacing:.2px;
         touch-action: manipulation;
       `;
-      b.addEventListener("click", on, { passive: true });
+      b.addEventListener("click", () => {
+        // allow perks module to own logic if it exposes buy()
+        const P = PERKS();
+        let ok = false;
+
+        try {
+          if (P?.buy) ok = !!P.buy(perkId, CORE);
+          else ok = !!CORE.buyPerk(perkId);
+        } catch {
+          ok = !!CORE.buyPerk(perkId);
+        }
+
+        if (ok) {
+          // if perks module is "function table", call perk handler after purchase
+          try {
+            const P2 = PERKS();
+            if (P2 && typeof P2[perkId] === "function") P2[perkId](CORE);
+          } catch {}
+
+          haptic("notif", "success");
+          syncShop(shop);
+        } else {
+          haptic("notif", "warning");
+          syncShop(shop);
+        }
+      }, { passive: true });
       return b;
     };
 
-    shop.appendChild(mkBtn("🧪 Jug (12)", () => { if (CORE.buyPerk("Jug")) haptic("notif","success"); else haptic("notif","warning"); }));
-    shop.appendChild(mkBtn("⚡ Speed (10)", () => { if (CORE.buyPerk("Speed")) haptic("notif","success"); else haptic("notif","warning"); }));
-    shop.appendChild(mkBtn("🔫 Ammo (8)", () => { if (CORE.buyPerk("Mag")) haptic("notif","success"); else haptic("notif","warning"); }));
+    shop.appendChild(mkBtn("Jug",   "🧪 Jug (12)"));
+    shop.appendChild(mkBtn("Speed", "⚡ Speed (10)"));
+    shop.appendChild(mkBtn("Mag",   "🔫 Ammo (8)"));
 
     function mkStick(side) {
       const base = document.createElement("div");
@@ -243,6 +331,7 @@
 
     // Resize + wire
     resize();
+
     wireStick(joyL, (x, y) => {
       input.moveX = x; input.moveY = y;
       CORE.setMove(x, y);
@@ -272,6 +361,10 @@
 
     // local refs
     overlay._bco = { shop };
+    syncShop(shop);
+
+    // Attempt install bosses (lux)
+    bossesEnsureInstalled();
   }
 
   function destroyOverlay() {
@@ -280,6 +373,97 @@
     overlay = null;
     canvas = null;
     ctx = null;
+  }
+
+  // ---------------------------------------------------------
+  // Shop sync (lux labels, disable owned, respect perks module if present)
+  // ---------------------------------------------------------
+  function perkOwned(id) {
+    try { return !!CORE?.state?.perks?.[id]; } catch { return false; }
+  }
+
+  function perkCost(id) {
+    // 1) PERKS module cost()
+    try {
+      const P = PERKS();
+      if (P?.cost) {
+        const c = Number(P.cost(id, CORE));
+        if (Number.isFinite(c)) return c;
+      }
+    } catch {}
+
+    // 2) CORE cfg perks table
+    try {
+      const p = CORE?.cfg?.perks?.[id];
+      const c = Number(p?.cost);
+      if (Number.isFinite(c)) return c;
+    } catch {}
+
+    // 3) fallback defaults
+    if (id === "Jug") return 12;
+    if (id === "Speed") return 10;
+    if (id === "Mag") return 8;
+    return 999;
+  }
+
+  function perkLabel(id) {
+    const defs = {
+      Jug:   { base: "🧪 Jug" },
+      Speed: { base: "⚡ Speed" },
+      Mag:   { base: "🔫 Ammo" }
+    };
+
+    // 1) PERKS module label()
+    try {
+      const P = PERKS();
+      if (P?.label) {
+        const s = P.label(id, CORE);
+        if (s) return String(s);
+      }
+    } catch {}
+
+    // 2) default
+    const cost = perkCost(id);
+    const base = defs[id]?.base || String(id);
+    return `${base} (${cost})`;
+  }
+
+  function canBuyPerk(id) {
+    if (CORE.meta.mode !== "roguelike") return false;
+    if (perkOwned(id)) return false;
+
+    // 1) PERKS module canBuy()
+    try {
+      const P = PERKS();
+      if (P?.canBuy) return !!P.canBuy(id, CORE);
+    } catch {}
+
+    // 2) CORE coins vs cost
+    try {
+      const c = perkCost(id);
+      return (CORE.state.coins | 0) >= (c | 0);
+    } catch {
+      return false;
+    }
+  }
+
+  function syncShop(shopEl) {
+    if (!shopEl) return;
+
+    const btns = shopEl.querySelectorAll("button[data-perk-id]");
+    for (const b of btns) {
+      const id = String(b.dataset.perkId || "");
+      const owned = perkOwned(id);
+
+      let txt = perkLabel(id);
+      if (owned) txt = `${txt} ✓`;
+
+      b.textContent = txt;
+
+      const ok = canBuyPerk(id);
+      b.disabled = owned || !ok;
+      b.style.opacity = owned ? "0.55" : (ok ? "1" : "0.65");
+    }
   }
 
   // ---------------------------------------------------------
@@ -363,13 +547,33 @@
 
     if (!overlay || !ctx) return;
 
+    // Ensure bosses installed even if module loaded after
+    bossesEnsureInstalled();
+
+    // Snapshot bosses before tick for drop fallback
+    const prevBosses = snapshotBosses();
+
     if (CORE.running) CORE.updateFrame(t);
+
+    // Snapshot after tick
+    const nextBosses = snapshotBosses();
+    const deadBossCount = countDeadBosses(prevBosses, nextBosses);
+    if (deadBossCount > 0) {
+      bossesDropFallback(deadBossCount);
+      haptic("impact", "light");
+    }
 
     const view = { w: overlay.getBoundingClientRect().width, h: overlay.getBoundingClientRect().height };
     RENDER.render(ctx, CORE, CORE.input, view);
 
     updateHud();
     checkDeathAutoSend();
+
+    // Keep shop synced (prices/coins/owned)
+    const shop = overlay?._bco?.shop;
+    if (shop) syncShop(shop);
+
+    _bossPrev = nextBosses;
   }
 
   let _sentDeath = false;
@@ -392,7 +596,8 @@
     const st = CORE._effectiveStats ? CORE._effectiveStats() : { hpMax: 100 };
     const hp = Math.max(0, Math.min(CORE.state.player.hp, st.hpMax));
 
-    if (sub) sub.textContent = `${CORE.meta.mode.toUpperCase()} • ${CORE.meta.map}`;
+    const mapName = String(CORE.meta.map || "Ashes");
+    if (sub) sub.textContent = `${String(CORE.meta.mode || "arcade").toUpperCase()} • ${mapName}`;
     if (hud) hud.textContent = `❤️ ${hp|0}/${st.hpMax|0} • ☠️ ${CORE.state.kills|0} • 💰 ${CORE.state.coins|0} • 🔫 ${CORE._weapon().name}`;
 
     const shop = overlay?._bco?.shop;
@@ -465,9 +670,19 @@
       resize();
       _sentDeath = false;
 
+      // ensure bosses installed before run start
+      bossesEnsureInstalled();
+
       CORE.start(mode, overlay.getBoundingClientRect().width, overlay.getBoundingClientRect().height, opts);
 
+      // reset boss tracking
+      _bossPrev = snapshotBosses();
+
       if (!raf) raf = requestAnimationFrame(loop);
+
+      // resync shop after mode change
+      const shop = overlay?._bco?.shop;
+      if (shop) syncShop(shop);
 
       haptic("notif", "success");
       return true;
@@ -484,6 +699,10 @@
       const m = String(mode || "").toLowerCase();
       CORE.meta.mode = (m.includes("rogue")) ? "roguelike" : "arcade";
       updateHud();
+
+      const shop = overlay?._bco?.shop;
+      if (shop) syncShop(shop);
+
       return CORE.meta.mode;
     },
 
@@ -512,9 +731,31 @@
     },
 
     buyPerk(id) {
-      const ok = CORE.buyPerk(id);
-      if (ok) haptic("notif", "success");
-      else haptic("notif", "warning");
+      // allow PERKS module to own buy if it supports it
+      let ok = false;
+      try {
+        const P = PERKS();
+        if (P?.buy) ok = !!P.buy(id, CORE);
+        else ok = !!CORE.buyPerk(id);
+      } catch {
+        ok = !!CORE.buyPerk(id);
+      }
+
+      if (ok) {
+        // if perks module is a function-table, call handler
+        try {
+          const P2 = PERKS();
+          if (P2 && typeof P2[id] === "function") P2[id](CORE);
+        } catch {}
+
+        haptic("notif", "success");
+      } else {
+        haptic("notif", "warning");
+      }
+
+      const shop = overlay?._bco?.shop;
+      if (shop) syncShop(shop);
+
       return ok;
     },
 
@@ -525,5 +766,5 @@
   };
 
   window.BCO_ZOMBIES_GAME = API;
-  console.log("[Z_GAME] ready");
+  console.log("[Z_GAME] ready (LUX+)");
 })();
