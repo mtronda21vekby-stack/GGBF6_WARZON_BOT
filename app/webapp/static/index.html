@@ -7,17 +7,14 @@
   <meta name="color-scheme" content="dark light">
   <title>BLACK CROWN OPS — Mini App</title>
 
-  <!-- ✅ критично для Telegram iOS: фиксируем базу -->
   <base href="/webapp/">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-  <!-- ✅ build доступен и до загрузки JS -->
   <script>window.__BCO_BUILD__="__BUILD__";</script>
 
-  <!-- ✅ BOOTSTRAP cache-bust: если __BUILD__ не подменили, ставим Date.now() -->
   <script>
     (function () {
       var build = (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__") ? window.__BCO_BUILD__ : String(Date.now());
@@ -32,14 +29,12 @@
 </head>
 
 <body>
-  <!-- ✅ фон оставляем (НЕ режем) -->
   <div class="bg">
     <div class="stars"></div>
     <div class="nebula"></div>
     <div class="gridfx"></div>
   </div>
 
-  <!-- ✅ COMPAT: добавили app-header, но НЕ убираем top -->
   <header class="top app-header">
     <div class="brand">
       <div class="logo">👑</div>
@@ -49,7 +44,6 @@
       </div>
     </div>
 
-    <!-- ✅ COMPAT: chips-row + chips -->
     <div class="chip-row chips">
       <button class="chip" id="chipVoice" type="button">🤝 Тиммейт</button>
       <button class="chip" id="chipMode" type="button">🧠 Normal</button>
@@ -57,10 +51,8 @@
     </div>
   </header>
 
-  <!-- ✅ (НЕ ОБЯЗАТЕЛЬНО) слот под top-tabs, если захочешь. Сейчас скрыт, но не мешает -->
   <div class="top-tabs" style="display:none;"></div>
 
-  <!-- ✅ COMPAT: добавили app-main, но НЕ убираем wrap -->
   <main class="wrap app-main">
     <section class="hero card">
       <div class="hero-left">
@@ -97,7 +89,6 @@
       </div>
     </section>
 
-    <!-- HOME -->
     <section class="grid tabpane active" id="tab-home">
       <div class="card">
         <div class="card-title">🚀 Быстрые действия</div>
@@ -111,7 +102,6 @@
         </div>
       </div>
 
-      <!-- ✅ встроенный чат -->
       <div class="chat-shell">
         <div class="chat-head">
           <div class="left">
@@ -149,7 +139,6 @@
         </div>
       </div>
 
-      <!-- ✅ MINI GAMES HUB -->
       <div class="card">
         <div class="card-title">🎮 Mini Games (2 режима)</div>
         <div class="hint">
@@ -179,7 +168,6 @@
               <button class="seg-btn" id="btnZModeRogue" type="button">😈 Roguelike</button>
             </div>
 
-            <!-- ✅ Оставляем старую арену (НЕ режем) -->
             <div class="z-arena" id="zArena" aria-label="Zombies arena">
               <button class="zombie" id="z1" type="button">🧟</button>
               <button class="zombie" id="z2" type="button">🧟</button>
@@ -207,7 +195,6 @@
       </div>
     </section>
 
-    <!-- COACH -->
     <section class="grid tabpane" id="tab-coach">
       <div class="card">
         <div class="card-title">🎯 План тренировки (20 минут)</div>
@@ -241,7 +228,6 @@
       </div>
     </section>
 
-    <!-- VOD -->
     <section class="grid tabpane" id="tab-vod">
       <div class="card">
         <div class="card-title">🎬 VOD: разбор без видео</div>
@@ -259,7 +245,6 @@
       </div>
     </section>
 
-    <!-- SETTINGS -->
     <section class="grid tabpane" id="tab-settings">
       <div class="card">
         <div class="card-title">⚙️ Профиль</div>
@@ -319,7 +304,6 @@
       </div>
     </section>
 
-    <!-- ZOMBIES (bot menu) -->
     <section class="grid tabpane" id="tab-zombies">
       <div class="card">
         <div class="card-title">🧟 Zombies: штаб</div>
@@ -345,7 +329,6 @@
     </footer>
   </main>
 
-  <!-- ✅ COMPAT: добавили bottom-nav, но НЕ убираем bottombar -->
   <nav class="bottombar bottom-nav" aria-label="Навигация">
     <button class="nav-btn active" data-tab="home" type="button" aria-selected="true">
       <span class="nav-ico">⭐</span><span class="nav-txt">Главная</span>
@@ -365,14 +348,10 @@
   </nav>
 
   <div class="toast" id="toast">OK</div>
-
-  <!-- ✅ Fullscreen overlay mount: JS будет создавать/вешать сюда игру -->
   <div id="zOverlayMount" aria-hidden="true"></div>
 
-  <!-- ✅ Telegram WebApp API -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-  <!-- ✅ ORDERED LOADER (core -> assets -> maps/collisions/bosses -> app) -->
   <script>
     (function () {
       var build = window.__BCO_BUILD__ || String(Date.now());
@@ -381,7 +360,7 @@
         return new Promise(function (resolve, reject) {
           var s = document.createElement("script");
           s.src = src + "?build=" + encodeURIComponent(build);
-          s.async = false; // важен порядок
+          s.async = false;
           s.onload = resolve;
           s.onerror = reject;
           document.body.appendChild(s);
@@ -393,26 +372,19 @@
           var s = document.createElement("script");
           s.src = src + "?build=" + encodeURIComponent(build);
           s.async = false;
-          s.onload = function () { resolve(true); };
-          s.onerror = function () { resolve(false); };
+          s.onload = function(){ resolve(true); };
+          s.onerror = function(){ resolve(false); };
           document.body.appendChild(s);
         });
       }
 
-      // ✅ core обязателен
       load("/webapp/zombies.js")
-
-        // ✅ спрайты опционально (если нет — работаем на fallback draw)
         .then(function () { return loadOptional("/webapp/zombies.assets.js"); })
-
-        // ✅ мир (карты/коллизии/боссы) — можно деплоить по частям, поэтому optional
+        .then(function () { return loadOptional("/webapp/zombies.perks.js"); })
         .then(function () { return loadOptional("/webapp/zombies.maps.js"); })
         .then(function () { return loadOptional("/webapp/zombies.collisions.js"); })
         .then(function () { return loadOptional("/webapp/zombies.bosses.js"); })
-
-        // ✅ app.js обязателен
         .then(function () { return load("/webapp/app.js"); })
-
         .catch(function (e) {
           console.error("BCO boot load error:", e);
           var el = document.getElementById("jsHealth");
@@ -421,7 +393,6 @@
     })();
   </script>
 
-  <!-- ✅ индикатор: js подхватился -->
   <script>
     (function () {
       var el = document.getElementById("jsHealth");
