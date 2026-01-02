@@ -1,13 +1,10 @@
-// app/webapp/static/app.js  [LUX v1.3.4+]
-// ✅ Keep ALL features, fix Zombies bridge, make it future-proof for 3D,
-// ✅ iOS tap safety, better TG Main/Back wiring, robust engine detection,
-// ✅ adds minimal 3D-ready hooks (renderer adapter + future scene pipeline) WITHOUT breaking 2D.
+// app/webapp/static/app.js  (LUX v1.3.4+)
+// - фикс “кнопки не нажимаются” (iOS WebView): нормальный tap-движок + touch-action + без passive на критичных местах
+// - Zombies как “полный переход в игру”: при входе во вкладку Zombies включаем fullscreen/overlay-режим (без урезания функционала)
+// - аккуратный bridge к BCO_ZOMBIES / CORE: пробуем разные сигнатуры, не ломаем старые версии движка
 (() => {
   "use strict";
 
-  // ---------------------------------------------------------
-  // Global health flag for loader / index.html diagnostics
-  // ---------------------------------------------------------
   window.__BCO_JS_OK__ = true;
 
   const tg = window.Telegram?.WebApp || null;
@@ -16,13 +13,13 @@
   const STORAGE_KEY = "bco_state_v1";
   const CHAT_KEY = "bco_chat_v1";
 
-  // ---------------------------------------------------------
-  // Defaults (KEEP + extend safely)
-  // ---------------------------------------------------------
+  // -----------------------------
+  // Defaults / state
+  // -----------------------------
   const defaults = {
     game: "Warzone",
     focus: "aim",
-    mode: "Normal",
+    mode: "Normal",          // Normal/Pro/Demon (coach style & also difficulty chip)
     platform: "PC",
     input: "Controller",
     voice: "TEAMMATE",
@@ -30,13 +27,12 @@
     bf6_class: "Assault",
     zombies_map: "Ashes",
 
-    // ✅ Zombies character cosmetics
-    character: "male", // male | female
-    skin: "default",   // depends on character
+    // ✅ Zombies cosmetics
+    character: "male",       // male | female
+    skin: "default",         // depends on character
 
-    // ✅ internal flags (safe)
-    _z_engine_pref: "auto", // auto | core | legacy
-    _z_render_pref: "2d"    // 2d | 3d (future)
+    // ✅ Zombies run mode (separate from coach mode)
+    zombies_mode: "arcade"   // arcade | roguelike
   };
 
   const state = { ...defaults };
@@ -48,18 +44,18 @@
 
   let currentTab = "home";
 
-  // ---------------------------------------------------------
-  // DOM helpers
-  // ---------------------------------------------------------
+  // -----------------------------
+  // DOM utils
+  // -----------------------------
   const qs = (s) => document.querySelector(s);
   const qsa = (s) => Array.from(document.querySelectorAll(s));
   const now = () => Date.now();
 
   function safeJsonParse(s) { try { return JSON.parse(s); } catch { return null; } }
 
-  // ---------------------------------------------------------
+  // -----------------------------
   // Haptics / toast
-  // ---------------------------------------------------------
+  // -----------------------------
   function haptic(type = "impact", style = "medium") {
     try {
       if (!tg?.HapticFeedback) return;
@@ -77,39 +73,143 @@
   }
 
   // =========================================================
-  // ✅ FAST TAP (iOS WebView SAFE) — NO DOUBLE FIRE
-  // - avoids ghost clicks, supports pointer, touch, click fallback
+  // ✅ LUX TAP ENGINE (iOS WebView SAFE)
+  // - решает “кнопки не нажимаются / двойные тапы”
+  // - НЕ passive на critical, чтобы можно было preventDefault()
   // =========================================================
-  function onTap(el, handler, opts = {}) {
-    if (!el) return;
+  const TAP = (() => {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || "");
+    const supportsPointer = !!window.PointerEvent;
 
-    const lockMs = Math.max(120, Number(opts.lockMs || 240));
-    let locked = false;
-    const lock = () => {
-      locked = true;
-      setTimeout(() => (locked = false), lockMs);
-    };
+    function bind(el, handler, opts = {}) {
+      if (!el || typeof handler !== "function") return () => {};
 
-    const fire = (e) => {
-      if (locked) return;
-      lock();
-      try { handler(e); } catch {}
-    };
+      const moveTol = Math.max(6, opts.moveTol || 10);
+      const lockMs = Math.max(160, opts.lockMs || 220);
+      const prevent = opts.prevent !== false;
 
-    // If element is a container (like segment root), pointerup is fine.
-    // For buttons, pointerup prevents double "click" on iOS.
-    if (window.PointerEvent) {
-      el.addEventListener("pointerup", fire, { passive: true });
-      return;
+      let locked = false;
+      let startX = 0, startY = 0;
+      let down = false;
+      let pid = null;
+      let downAt = 0;
+
+      const unlockLater = () => setTimeout(() => { locked = false; }, lockMs);
+
+      const onDown = (e) => {
+        try {
+          if (locked) return;
+          down = true;
+          downAt = now();
+
+          if (supportsPointer && e.pointerId != null) pid = e.pointerId;
+          const pt = pointOf(e);
+          startX = pt.x;
+          startY = pt.y;
+
+          // критично для iOS: предотвращаем “ghost click” и скролл при таче по кнопкам
+          if (prevent) {
+            try { e.preventDefault?.(); } catch {}
+            try { e.stopPropagation?.(); } catch {}
+          }
+          // pointer capture помогает когда палец чуть уезжает
+          try { el.setPointerCapture?.(pid); } catch {}
+        } catch {}
+      };
+
+      const onUp = (e) => {
+        try {
+          if (!down) return;
+          down = false;
+
+          const pt = pointOf(e);
+          const dx = pt.x - startX;
+          const dy = pt.y - startY;
+          const dist = Math.hypot(dx, dy);
+
+          if (dist <= moveTol) {
+            locked = true;
+            unlockLater();
+            handler(e);
+          }
+          if (prevent) {
+            try { e.preventDefault?.(); } catch {}
+            try { e.stopPropagation?.(); } catch {}
+          }
+          try { el.releasePointerCapture?.(pid); } catch {}
+          pid = null;
+        } catch {}
+      };
+
+      const onCancel = () => {
+        down = false;
+        pid = null;
+      };
+
+      // Prefer Pointer Events
+      if (supportsPointer) {
+        el.addEventListener("pointerdown", onDown, { passive: false });
+        el.addEventListener("pointerup", onUp, { passive: false });
+        el.addEventListener("pointercancel", onCancel, { passive: true });
+        return () => {
+          el.removeEventListener("pointerdown", onDown);
+          el.removeEventListener("pointerup", onUp);
+          el.removeEventListener("pointercancel", onCancel);
+        };
+      }
+
+      // Touch fallback
+      el.addEventListener("touchstart", onDown, { passive: false });
+      el.addEventListener("touchend", onUp, { passive: false });
+      el.addEventListener("touchcancel", onCancel, { passive: true });
+
+      // Click fallback (desktop)
+      el.addEventListener("click", (e) => {
+        if (locked) return;
+        locked = true; unlockLater();
+        try { handler(e); } catch {}
+      }, { passive: true });
+
+      return () => {
+        el.removeEventListener("touchstart", onDown);
+        el.removeEventListener("touchend", onUp);
+        el.removeEventListener("touchcancel", onCancel);
+      };
     }
 
-    el.addEventListener("touchend", fire, { passive: true });
-    el.addEventListener("click", fire, { passive: true });
-  }
+    function pointOf(e) {
+      const t = e?.changedTouches?.[0] || e?.touches?.[0];
+      if (t) return { x: t.clientX || 0, y: t.clientY || 0 };
+      return { x: e?.clientX || 0, y: e?.clientY || 0 };
+    }
 
-  // =========================================================
-  // Theme sync
-  // =========================================================
+    function hardenUI() {
+      // “кнопки не нажимаются” часто из-за touch-action / pointer-events / overlay
+      // мы безболезненно усилим интерактив через style-inject
+      const style = document.createElement("style");
+      style.id = "bco-tap-harden";
+      style.textContent = `
+        * { -webkit-tap-highlight-color: transparent; }
+        button, a, .seg-btn, .nav-btn, .tab, .btn, [role="button"] { touch-action: manipulation; }
+        .seg, .seg * , .nav, .nav * { pointer-events: auto !important; }
+        .tabpane { pointer-events: auto; }
+        #toast { pointer-events: none; }
+        /* Zombies fullscreen helper (без ломания вёрстки) */
+        body.bco-zombies-full { overflow: hidden !important; }
+        body.bco-zombies-full .nav { display: none !important; }
+        body.bco-zombies-full .top-tabs { display: none !important; }
+        body.bco-zombies-full .tabpane:not(#tab-zombies) { display: none !important; }
+        body.bco-zombies-full #tab-zombies { display: block !important; position: relative; z-index: 10; }
+      `;
+      document.head.appendChild(style);
+    }
+
+    return { bind, hardenUI };
+  })();
+
+  // -----------------------------
+  // Telegram theme sync
+  // -----------------------------
   function applyTelegramTheme() {
     if (!tg) return;
     const p = tg.themeParams || {};
@@ -133,9 +233,9 @@
     try { tg.setHeaderColor?.(p.secondary_bg_color || p.bg_color || "#07070b"); } catch {}
   }
 
-  // =========================================================
-  // Storage (Cloud + Local)
-  // =========================================================
+  // -----------------------------
+  // Storage (Cloud + local)
+  // -----------------------------
   async function cloudGet(key) {
     if (!tg?.CloudStorage?.getItem) return null;
     return new Promise((resolve) => {
@@ -174,7 +274,7 @@
 
   async function saveState() {
     const payload = JSON.stringify(state);
-    try { localStorage.setItem(STORAGE_KEY, payload); } catch {}
+    localStorage.setItem(STORAGE_KEY, payload);
     await cloudSet(STORAGE_KEY, payload);
   }
 
@@ -199,13 +299,13 @@
 
   async function saveChat() {
     const payload = JSON.stringify({ history: chat.history.slice(-120) });
-    try { localStorage.setItem(CHAT_KEY, payload); } catch {}
+    localStorage.setItem(CHAT_KEY, payload);
     await cloudSet(CHAT_KEY, payload);
   }
 
-  // =========================================================
-  // UI helpers
-  // =========================================================
+  // -----------------------------
+  // UI chips
+  // -----------------------------
   function setChipText() {
     const vv = state.voice === "COACH" ? "📚 Коуч" : "🤝 Тиммейт";
     const chipVoice = qs("#chipVoice");
@@ -253,23 +353,47 @@
     qsa(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   }
 
+  // -----------------------------
+  // Tabs + Zombies fullscreen behavior
+  // -----------------------------
+  function enterZombiesFullscreen() {
+    document.body.classList.add("bco-zombies-full");
+  }
+  function exitZombiesFullscreen() {
+    document.body.classList.remove("bco-zombies-full");
+  }
+
   function selectTab(tab) {
+    const prev = currentTab;
     currentTab = tab;
+
+    // If leaving zombies -> exit fullscreen
+    if (prev === "zombies" && tab !== "zombies") {
+      exitZombiesFullscreen();
+      try { ZB()?.close?.(); } catch {}
+      try { ZB()?.hide?.(); } catch {}
+    }
 
     qsa(".tabpane").forEach((p) => p.classList.toggle("active", p.id === `tab-${tab}`));
     setActiveNav(tab);
     setActiveTopTabs(tab);
+
+    // If entering zombies -> go fullscreen + open game overlay
+    if (tab === "zombies") {
+      enterZombiesFullscreen();
+      // open game view immediately (полный переход)
+      zombiesEnsureOpen(true);
+    }
 
     updateTelegramButtons();
 
     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
   }
 
-  // =========================================================
+  // -----------------------------
   // Payload / sendData
-  // =========================================================
+  // -----------------------------
   function toRouterProfile() {
-    // keep compat with Router expectations
     return {
       game: state.game,
       platform: state.platform,
@@ -294,7 +418,7 @@
         platform: tg?.platform ?? null,
         build: (window.__BCO_BUILD__ || null)
       },
-      ...(payload || {})
+      ...payload
     };
   }
 
@@ -302,7 +426,6 @@
     try {
       const fixed = { ...(payload || {}) };
 
-      // allow {profile:true} convenience
       if (Object.prototype.hasOwnProperty.call(fixed, "profile")) {
         if (fixed.profile === true) fixed.profile = toRouterProfile();
       }
@@ -310,7 +433,6 @@
       const pack = enrichPayload(fixed);
       let data = JSON.stringify(pack);
 
-      // Telegram sendData safe bound
       const MAX = 15000;
       if (data.length > MAX) {
         if (typeof pack.text === "string") pack.text = pack.text.slice(0, 4000);
@@ -340,137 +462,93 @@
   }
 
   // =========================================================
-  // ✅ ZOMBIES ENGINE — robust detection + 3D-ready adapter
-  // - supports: window.BCO_ZOMBIES (new facade) OR window.BCO_ZOMBIES_CORE
-  // - keeps your current UI calls working
+  // ✅ ZOMBIES BRIDGE
   // =========================================================
-  function getZombiesFacade() {
-    // Preferred: new facade (if your zombies.js exposes it)
-    if (window.BCO_ZOMBIES && typeof window.BCO_ZOMBIES === "object") return window.BCO_ZOMBIES;
+  function ZB() { return window.BCO_ZOMBIES || null; }
 
-    // Core-only fallback: build tiny facade around BCO_ZOMBIES_CORE (your new core)
-    const CORE = window.BCO_ZOMBIES_CORE;
-    if (CORE && typeof CORE.start === "function") {
-      // Build once
-      if (!window.__BCO_Z_FACADE__) {
-        window.__BCO_Z_FACADE__ = {
-          _core: CORE,
-          open: (opts = {}) => {
-            try {
-              // store cosmetics in core meta
-              CORE.meta.map = String(opts.map || CORE.meta.map || "Ashes");
-              CORE.meta.character = String(opts.character || CORE.meta.character || "male");
-              CORE.meta.skin = String(opts.skin || CORE.meta.skin || "default");
-              // renderer preference placeholder
-              CORE.meta.render = String(opts.render || CORE.meta.render || "2d");
-              return true;
-            } catch { return false; }
-          },
-          setMode: (mode) => {
-            try {
-              const m = String(mode || "");
-              CORE.meta.mode = m.toLowerCase().includes("rogue") ? "roguelike" : "arcade";
-              return true;
-            } catch { return false; }
-          },
-          start: (opts = {}) => {
-            try {
-              const map = opts?.map || CORE.meta.map || "Ashes";
-              const w = Math.max(1, (qs("#zCanvas")?.clientWidth || window.innerWidth) | 0);
-              const h = Math.max(1, (qs("#zCanvas")?.clientHeight || window.innerHeight) | 0);
-              CORE.start(CORE.meta.mode, w, h, { map, character: CORE.meta.character, skin: CORE.meta.skin, weaponKey: (opts.weaponKey || CORE.meta.weaponKey) });
-              return true;
-            } catch { return false; }
-          },
-          stop: () => { try { CORE.stop(); return true; } catch { return false; } },
-          buyPerk: (id) => { try { return CORE.buyPerk(id); } catch { return false; } },
-          // Try to send result through existing bot bridge if your zombies.js has one.
-          sendResult: (reason = "manual") => {
-            try {
-              const S = CORE.state;
-              sendToBot({
-                action: "game_result",
-                game: "zombies",
-                mode: CORE.meta.mode,
-                map: CORE.meta.map,
-                character: CORE.meta.character,
-                skin: CORE.meta.skin,
-                wave: S.wave | 0,
-                kills: S.kills | 0,
-                coins: S.coins | 0,
-                duration_ms: S.timeMs | 0,
-                score: Math.max(0, Math.round((S.kills || 0) * 25 + (S.wave || 0) * 60 + (S.level || 1) * 40)),
-                reason: String(reason || "manual"),
-                profile: true
-              });
-              return true;
-            } catch { return false; }
-          }
-        };
-      }
-      return window.__BCO_Z_FACADE__;
-    }
-
-    return null;
-  }
-
-  function zombiesEnsureOpen() {
-    const z = getZombiesFacade();
+  function zombiesEnsureOpen(fullscreen = false) {
+    const z = ZB();
     if (!z) {
       toast("Zombies engine not loaded");
       haptic("notif", "error");
       return false;
     }
+
+    // prepare opts
+    const opts = {
+      map: state.zombies_map,
+      character: state.character,
+      skin: state.skin,
+      mode: state.zombies_mode
+    };
+
+    // try open / show / enter
+    try { z.open?.({ ...opts, fullscreen: !!fullscreen }); } catch {}
+    try { z.show?.({ ...opts, fullscreen: !!fullscreen }); } catch {}
+    try { z.enter?.({ ...opts, fullscreen: !!fullscreen }); } catch {}
+
+    // If your engine uses CORE directly
     try {
-      z.open?.({
-        map: state.zombies_map,
-        character: state.character,
-        skin: state.skin,
-        render: state._z_render_pref || "2d"
-      });
+      const CORE = window.BCO_ZOMBIES_CORE;
+      if (CORE?.start && fullscreen) {
+        // don't auto-start here; only ensure UI/game canvas becomes active
+      }
     } catch {}
+
     return true;
   }
 
   function zombiesSetMode(mode) {
-    const z = getZombiesFacade();
+    const m = String(mode || "").toLowerCase().includes("rogue") ? "roguelike" : "arcade";
+    state.zombies_mode = m;
+    const z = ZB();
     if (!z) return;
-    try { z.setMode?.(mode); } catch {}
+    try { z.setMode?.(m); } catch {}
+    try { z.mode?.(m); } catch {}
   }
 
   function zombiesStart() {
-    const z = getZombiesFacade();
+    const z = ZB();
     if (!z) return;
-    // ✅ Fix: remove triple-start spam, call once with options
-    try {
-      z.start?.({ map: state.zombies_map, weaponKey: "SMG" });
-    } catch {
-      try { z.start?.(); } catch {}
-    }
+
+    const payload = {
+      mode: state.zombies_mode,
+      map: state.zombies_map,
+      character: state.character,
+      skin: state.skin
+    };
+
+    // Try modern signatures first
+    try { z.start?.(payload); return; } catch {}
+    try { z.start?.(state.zombies_mode); return; } catch {}
+    try { z.start?.(); } catch {}
   }
 
   function zombiesStop() {
-    const z = getZombiesFacade();
+    const z = ZB();
     if (!z) return;
-    try { z.stop?.("manual"); } catch { try { z.stop?.(); } catch {} }
+    try { z.stop?.("manual"); return; } catch {}
+    try { z.stop?.(); } catch {}
   }
 
   function zombiesSendResult() {
-    const z = getZombiesFacade();
+    const z = ZB();
     if (!z) return;
     try { z.sendResult?.("manual"); return; } catch {}
     try { z.result?.("manual"); return; } catch {}
   }
 
   function zombiesBuyPerk(id) {
-    const z = getZombiesFacade();
+    const z = ZB();
     if (!z) return;
-    try { z.buyPerk?.(id); } catch {}
+    try { z.buyPerk?.(id); return; } catch {}
+    // fallback: core direct
+    try { window.BCO_ZOMBIES_CORE?.buyPerk?.(id); } catch {}
   }
 
-  // =========================================================
-  // Telegram native buttons (Main/Back) — FIX offClick wiring
-  // =========================================================
+  // -----------------------------
+  // Telegram native buttons
+  // -----------------------------
   let tgButtonsWired = false;
   let tgMainHandler = null;
   let tgBackHandler = null;
@@ -490,7 +568,7 @@
           currentTab === "settings" ? "✅ Применить профиль" :
           currentTab === "coach" ? "🎯 План тренировки" :
           currentTab === "vod" ? "🎬 Отправить VOD" :
-          currentTab === "zombies" ? "🧟 Открыть Zombies" :
+          currentTab === "zombies" ? "🧟 Войти в игру" :
           "💎 Premium"
       });
     } catch {}
@@ -502,7 +580,9 @@
       haptic("impact", "medium");
 
       if (currentTab === "settings") { sendToBot({ type: "set_profile", profile: true }); return; }
+
       if (currentTab === "coach") { sendToBot({ type: "training_plan", focus: state.focus, profile: true }); return; }
+
       if (currentTab === "vod") {
         const t1 = (qs("#vod1")?.value || "").trim();
         const t2 = (qs("#vod2")?.value || "").trim();
@@ -511,24 +591,35 @@
         sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
         return;
       }
+
       if (currentTab === "zombies") {
-        if (zombiesEnsureOpen()) {
-          // Keep your UX: opens game; mode remains user-set
-          zombiesSetMode("arcade");
+        // "полный переход": гарантируем fullscreen overlay + старт по кнопке
+        if (zombiesEnsureOpen(true)) {
+          zombiesStart();
           return;
         }
         sendToBot({ type: "zombies_open", map: state.zombies_map, profile: true });
         return;
       }
+
       openBotMenuHint("premium");
     };
 
     tgBackHandler = () => {
       haptic("impact", "light");
+
+      // if zombies tab -> first exit fullscreen, then home
+      if (currentTab === "zombies") {
+        exitZombiesFullscreen();
+        try { ZB()?.close?.(); } catch {}
+        try { ZB()?.hide?.(); } catch {}
+        selectTab("home");
+        return;
+      }
+
       selectTab("home");
     };
 
-    // ✅ FIX: offClick must be called with previously registered handler, not the new one.
     try { tg.MainButton.offClick?.(tgMainHandler); } catch {}
     try { tg.MainButton.onClick?.(tgMainHandler); } catch {}
 
@@ -536,20 +627,20 @@
     try { tg.BackButton.onClick?.(tgBackHandler); } catch {}
   }
 
-  // =========================================================
-  // Share
-  // =========================================================
+  // -----------------------------
+  // Share helper
+  // -----------------------------
   function tryShare(text) {
     try {
-      navigator.clipboard?.writeText?.(String(text ?? ""));
+      navigator.clipboard?.writeText?.(text);
       toast("Скопировано ✅");
     } catch {
-      alert(String(text ?? ""));
+      alert(text);
     }
   }
 
   // =========================================================
-  // MINI APP CHAT (BOT REPLIES IN APP)
+  // ✅ MINI APP CHAT
   // =========================================================
   function chatLogEl() { return qs("#chatLog"); }
 
@@ -719,59 +810,61 @@
     return lines.join("\n");
   }
 
-  // =========================================================
-  // Segments wiring
-  // =========================================================
+  // -----------------------------
+  // Segments wiring (FIXED)
+  // -----------------------------
   function wireSeg(rootId, onPick) {
     const root = qs(rootId);
     if (!root) return;
 
-    const handler = async (btn) => {
-      haptic("impact", "light");
-      onPick(btn.dataset.value);
+    // ВАЖНО: на iOS pointerup на контейнере иногда не проходит из-за вложенных слоёв.
+    // Делаем надёжно: ловим down/up на root, но выбираем ближайшую .seg-btn.
+    TAP.bind(root, async (e) => {
+      const btn = e.target?.closest?.(".seg-btn");
+      if (!btn || !root.contains(btn)) return;
 
-      setActiveSeg(rootId, btn.dataset.value);
+      const v = btn.dataset.value;
+      if (v == null) return;
+
+      haptic("impact", "light");
+      try { onPick(v); } catch {}
+
+      setActiveSeg(rootId, v);
       setChipText();
 
       await saveState();
       toast("Сохранено ✅");
-    };
-
-    onTap(root, (e) => {
-      const btn = e.target?.closest?.(".seg-btn");
-      if (!btn) return;
-      handler(btn);
-    });
+    }, { lockMs: 180, moveTol: 12, prevent: true });
   }
 
-  // =========================================================
-  // Nav wiring
-  // =========================================================
+  // -----------------------------
+  // Nav wiring (FIXED)
+  // -----------------------------
   function wireNav() {
     qsa(".nav-btn").forEach((btn) => {
-      onTap(btn, () => {
+      TAP.bind(btn, () => {
         haptic("impact", "light");
         selectTab(btn.dataset.tab);
-      });
+      }, { lockMs: 160, moveTol: 14, prevent: true });
     });
 
     qsa(".tab").forEach((btn) => {
-      onTap(btn, () => {
+      TAP.bind(btn, () => {
         haptic("impact", "light");
         selectTab(btn.dataset.tab);
-      });
+      }, { lockMs: 160, moveTol: 14, prevent: true });
     });
   }
 
-  // =========================================================
+  // -----------------------------
   // Header chips
-  // =========================================================
+  // -----------------------------
   function wireHeaderChips() {
     const chipVoice = qs("#chipVoice");
     const chipMode = qs("#chipMode");
     const chipPlatform = qs("#chipPlatform");
 
-    onTap(chipVoice, async () => {
+    TAP.bind(chipVoice, async () => {
       haptic("impact", "light");
       state.voice = (state.voice === "COACH") ? "TEAMMATE" : "COACH";
       setChipText();
@@ -780,7 +873,7 @@
       toast(state.voice === "COACH" ? "Коуч включён 📚" : "Тиммейт 🤝");
     });
 
-    onTap(chipMode, async () => {
+    TAP.bind(chipMode, async () => {
       haptic("impact", "light");
       state.mode = (state.mode === "Normal") ? "Pro" : (state.mode === "Pro" ? "Demon" : "Normal");
       setChipText();
@@ -789,7 +882,7 @@
       toast(`Режим: ${state.mode}`);
     });
 
-    onTap(chipPlatform, async () => {
+    TAP.bind(chipPlatform, async () => {
       haptic("impact", "light");
       state.platform = (state.platform === "PC") ? "PlayStation" : (state.platform === "PlayStation" ? "Xbox" : "PC");
       setChipText();
@@ -800,7 +893,7 @@
   }
 
   // =========================================================
-  // 🎯 GAME #1: AIM TRIAL (kept)
+  // 🎯 AIM TRIAL
   // =========================================================
   const aim = {
     running: false,
@@ -849,7 +942,7 @@
     const maxY = Math.max(pad, h - pad - th);
 
     const x = pad + Math.random() * (maxX - pad);
-    const y = pad + Math.random() * (maxY - pad);
+    const y = pad + Math.random() * (maxY - pad - 6);
 
     target.style.transform = `translate(${x}px, ${y}px)`;
   }
@@ -912,26 +1005,26 @@
     });
   }
 
-  // =========================================================
-  // Wire buttons
-  // =========================================================
+  // -----------------------------
+  // Buttons wiring (FIXED)
+  // -----------------------------
   function wireButtons() {
-    onTap(qs("#btnClose"), () => {
+    TAP.bind(qs("#btnClose"), () => {
       haptic("impact", "medium");
       tg?.close?.();
     });
 
     // home / bot
-    onTap(qs("#btnOpenBot"), () => openBotMenuHint("main"));
-    onTap(qs("#btnPremium"), () => openBotMenuHint("premium"));
-    onTap(qs("#btnSync"), () => sendToBot({ type: "sync_request", profile: true }));
+    TAP.bind(qs("#btnOpenBot"), () => openBotMenuHint("main"));
+    TAP.bind(qs("#btnPremium"), () => openBotMenuHint("premium"));
+    TAP.bind(qs("#btnSync"), () => sendToBot({ type: "sync_request", profile: true }));
 
     // coach / vod / settings / zombies (bot-side)
-    onTap(qs("#btnOpenTraining"), () => openBotMenuHint("training"));
-    onTap(qs("#btnSendPlan"), () => sendToBot({ type: "training_plan", focus: state.focus, profile: true }));
+    TAP.bind(qs("#btnOpenTraining"), () => openBotMenuHint("training"));
+    TAP.bind(qs("#btnSendPlan"), () => sendToBot({ type: "training_plan", focus: state.focus, profile: true }));
 
-    onTap(qs("#btnOpenVod"), () => openBotMenuHint("vod"));
-    onTap(qs("#btnSendVod"), () => {
+    TAP.bind(qs("#btnOpenVod"), () => openBotMenuHint("vod"));
+    TAP.bind(qs("#btnSendVod"), () => {
       const t1 = (qs("#vod1")?.value || "").trim();
       const t2 = (qs("#vod2")?.value || "").trim();
       const t3 = (qs("#vod3")?.value || "").trim();
@@ -939,38 +1032,38 @@
       sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
     });
 
-    onTap(qs("#btnOpenSettings"), () => openBotMenuHint("settings"));
-    onTap(qs("#btnApplyProfile"), () => sendToBot({ type: "set_profile", profile: true }));
+    TAP.bind(qs("#btnOpenSettings"), () => openBotMenuHint("settings"));
+    TAP.bind(qs("#btnApplyProfile"), () => sendToBot({ type: "set_profile", profile: true }));
 
-    onTap(qs("#btnOpenZombies"), () => sendToBot({ type: "zombies_open", map: state.zombies_map, profile: true }));
-    onTap(qs("#btnZPerks"), () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map, profile: true }));
-    onTap(qs("#btnZLoadout"), () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map, profile: true }));
-    onTap(qs("#btnZEggs"), () => sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map, profile: true }));
-    onTap(qs("#btnZRound"), () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map, profile: true }));
-    onTap(qs("#btnZTips"), () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map, profile: true }));
+    TAP.bind(qs("#btnOpenZombies"), () => sendToBot({ type: "zombies_open", map: state.zombies_map, profile: true }));
+    TAP.bind(qs("#btnZPerks"), () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map, profile: true }));
+    TAP.bind(qs("#btnZLoadout"), () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map, profile: true }));
+    TAP.bind(qs("#btnZEggs"), () => sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map, profile: true }));
+    TAP.bind(qs("#btnZRound"), () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map, profile: true }));
+    TAP.bind(qs("#btnZTips"), () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map, profile: true }));
 
     // pay
-    onTap(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month", profile: true }));
-    onTap(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime", profile: true }));
+    TAP.bind(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month", profile: true }));
+    TAP.bind(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime", profile: true }));
 
-    onTap(qs("#btnShare"), () => {
+    TAP.bind(qs("#btnShare"), () => {
       const text =
         "BLACK CROWN OPS 😈\n" +
         "Тренировки, VOD, настройки, Zombies — всё в одном месте.\n" +
-        "Mini App + Fullscreen 2D Zombies (Arcade/Roguelike).";
+        "Mini App + Fullscreen Zombies (Arcade/Roguelike).";
       tryShare(text);
     });
 
     // chat
-    onTap(qs("#btnChatSend"), () => sendChatFromUI());
-    onTap(qs("#btnChatClear"), async () => {
+    TAP.bind(qs("#btnChatSend"), () => sendChatFromUI());
+    TAP.bind(qs("#btnChatClear"), async () => {
       haptic("impact", "light");
       chat.history = [];
       await saveChat();
       renderChat();
       toast("Чат очищен ✅");
     });
-    onTap(qs("#btnChatExport"), () => {
+    TAP.bind(qs("#btnChatExport"), () => {
       haptic("impact", "light");
       tryShare(exportChatText() || "— пусто —");
     });
@@ -982,37 +1075,37 @@
           e.preventDefault();
           sendChatFromUI();
         }
-      });
+      }, { passive: true });
     }
 
     // AIM game
     const { arena, target, btnStart, btnStop, btnSend } = aimEls();
-    onTap(btnStart, () => aimStart());
-    onTap(btnStop, () => aimStop(false));
-    onTap(btnSend, () => aimSendResult());
+    TAP.bind(btnStart, () => aimStart());
+    TAP.bind(btnStop, () => aimStop(false));
+    TAP.bind(btnSend, () => aimSendResult());
 
     if (arena && target) {
-      onTap(target, (e) => {
+      TAP.bind(target, (e) => {
         if (!aim.running) return;
         aim.shots += 1;
         aim.hits += 1;
         haptic("impact", "light");
         aimMoveTarget();
         aimUpdateUI();
-        e?.preventDefault?.();
-        e?.stopPropagation?.();
-      });
+        try { e?.preventDefault?.(); } catch {}
+        try { e?.stopPropagation?.(); } catch {}
+      }, { lockMs: 80, moveTol: 18, prevent: true });
 
-      onTap(arena, () => {
+      TAP.bind(arena, () => {
         if (!aim.running) return;
         aim.shots += 1;
         haptic("impact", "light");
         aimUpdateUI();
-      });
+      }, { lockMs: 80, moveTol: 18, prevent: true });
     }
 
     // =========================================================
-    // ✅ ZOMBIES (NEW ENGINE) — wire to facade
+    // ✅ ZOMBIES (NEW ENGINE) — fixed taps + fullscreen entry
     // =========================================================
     const btnZArc = qs("#btnZModeArcade");
     const btnZRog = qs("#btnZModeRogue");
@@ -1020,63 +1113,67 @@
     const btnZStop = qs("#btnZGameStop");
     const btnZSend = qs("#btnZGameSend");
 
-    onTap(btnZArc, async () => {
-      if (!zombiesEnsureOpen()) return;
+    TAP.bind(btnZArc, async () => {
+      if (!zombiesEnsureOpen(true)) return;
       zombiesSetMode("arcade");
       await saveState();
       toast("Zombies: Arcade 💥");
     });
 
-    onTap(btnZRog, async () => {
-      if (!zombiesEnsureOpen()) return;
+    TAP.bind(btnZRog, async () => {
+      if (!zombiesEnsureOpen(true)) return;
       zombiesSetMode("roguelike");
       await saveState();
       toast("Zombies: Roguelike 😈");
     });
 
-    onTap(btnZStart, () => {
-      if (!zombiesEnsureOpen()) return;
+    TAP.bind(btnZStart, () => {
+      if (!zombiesEnsureOpen(true)) return;
       zombiesStart();
       toast("Zombies: старт ▶");
     });
 
-    onTap(btnZStop, () => {
-      if (!zombiesEnsureOpen()) return;
+    TAP.bind(btnZStop, () => {
+      if (!zombiesEnsureOpen(true)) return;
       zombiesStop();
       toast("Zombies: стоп ⛔");
     });
 
-    onTap(btnZSend, () => {
-      if (!zombiesEnsureOpen()) return;
+    TAP.bind(btnZSend, () => {
+      if (!zombiesEnsureOpen(true)) return;
       zombiesSendResult();
     });
 
     // Old home "Shop" buttons => perks on new engine
-    onTap(qs("#btnZBuyJug"), () => {
-      if (!zombiesEnsureOpen()) return;
+    TAP.bind(qs("#btnZBuyJug"), () => {
+      if (!zombiesEnsureOpen(true)) return;
       zombiesSetMode("roguelike");
       zombiesStart();
       zombiesBuyPerk("Jug");
     });
 
-    onTap(qs("#btnZBuySpeed"), () => {
-      if (!zombiesEnsureOpen()) return;
+    TAP.bind(qs("#btnZBuySpeed"), () => {
+      if (!zombiesEnsureOpen(true)) return;
       zombiesSetMode("roguelike");
       zombiesStart();
       zombiesBuyPerk("Speed");
     });
 
-    onTap(qs("#btnZBuyAmmo"), () => {
-      if (!zombiesEnsureOpen()) return;
+    TAP.bind(qs("#btnZBuyAmmo"), () => {
+      if (!zombiesEnsureOpen(true)) return;
       zombiesSetMode("roguelike");
       zombiesStart();
       zombiesBuyPerk("Mag");
     });
+
+    // Bonus: reload / plate buttons if exist in UI (future-proof)
+    TAP.bind(qs("#btnZReload"), () => { try { window.BCO_ZOMBIES_CORE?.reload?.(); } catch {} }, { prevent: true });
+    TAP.bind(qs("#btnZPlate"), () => { try { window.BCO_ZOMBIES_CORE?.usePlate?.(); } catch {} }, { prevent: true });
   }
 
-  // =========================================================
+  // -----------------------------
   // Build tag
-  // =========================================================
+  // -----------------------------
   function ensureBuildTag() {
     const buildFromIndex =
       (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__")
@@ -1088,9 +1185,9 @@
     if (buildTag) buildTag.textContent = txt;
   }
 
-  // =========================================================
-  // Init Telegram
-  // =========================================================
+  // -----------------------------
+  // Telegram init
+  // -----------------------------
   function initTelegram() {
     const dbgUser = qs("#dbgUser");
     const dbgChat = qs("#dbgChat");
@@ -1123,20 +1220,23 @@
     updateTelegramButtons();
   }
 
-  // =========================================================
+  // -----------------------------
   // Boot
-  // =========================================================
+  // -----------------------------
   async function boot() {
     if (document.readyState !== "complete" && document.readyState !== "interactive") {
       await new Promise((r) => document.addEventListener("DOMContentLoaded", r, { once: true }));
     }
+
+    // harden tap & UI first (fix “не нажимаются”)
+    try { TAP.hardenUI(); } catch {}
 
     initTelegram();
     ensureBuildTag();
 
     const src = await loadState();
     const statSession = qs("#statSession");
-    if (statSession) statSession.textContent = src.toUpperCase();
+    if (statSession) statSession.textContent = String(src).toUpperCase();
 
     await loadChat();
 
@@ -1167,10 +1267,14 @@
     renderChat();
     aimReset();
 
-    // Safe: warm up zombies facade if available (no start)
-    try { getZombiesFacade(); } catch {}
-
+    // Default tab
     selectTab("home");
+
+    // If user already on zombies tab by hash, respect (future-proof)
+    try {
+      const hash = String(location.hash || "").replace("#", "");
+      if (hash && qs(`#tab-${hash}`)) selectTab(hash);
+    } catch {}
   }
 
   boot();
