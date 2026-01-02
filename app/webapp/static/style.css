@@ -1199,7 +1199,7 @@ body::after{
   z-index: var(--game-modal-z);
 
   pointer-events: auto;
-  touch-action: none;
+  touch-action: none; /* modal backdrop never scrolls */
 }
 .bco-z-modal.show{ display:flex; }
 
@@ -1208,6 +1208,7 @@ body::after{
   max-height: min(76vh, 620px);
   overflow: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 
   border-radius: 18px;
   background: rgba(255,255,255,.06);
@@ -1216,7 +1217,19 @@ body::after{
   padding: 14px;
 
   transform: translateZ(0);
+
+  /* ✅ critical: allow vertical scroll inside card even when overlay is touch-locked */
+  touch-action: pan-y;
+  pointer-events: auto;
 }
+.bco-z-card::-webkit-scrollbar{ width: 10px; }
+.bco-z-card::-webkit-scrollbar-thumb{
+  background: rgba(255,255,255,.12);
+  border-radius: 999px;
+  border: 2px solid rgba(0,0,0,.18);
+}
+.bco-z-card::-webkit-scrollbar-track{ background: transparent; }
+
 .bco-z-card h3{
   margin: 0 0 8px 0;
   font-size: 14px;
