@@ -1,13 +1,11 @@
-// app/webapp/static/zombies.core.js  [LUX COD-ZOMBIES-2D v1.2 | 3D-READY CORE]
-// Core = gameplay/physics/state ONLY. Renderer (2D now / 3D later) reads snapshots.
-// - Armor/plates, reload + ammo reserve
-// - Weapon pool + rarities + upgrades
-// - Loot drops/pickups + auto-pickup + magnet (lux feel)
-// - Events (Max Ammo / Double Points / Insta-Kill)
-// - Roguelike economy + progression (xp/level) inside run
-// - Boss hook compatible with zombies.bosses.js via CORE._onBulletHit
-// - Map bounds + collisions integration if optional modules exist
-// - Fixed-timestep simulation + stable snapshot API for 3D renderer
+// app/webapp/static/zombies.core.js  [LUX COD-ZOMBIES-2D v1.3 | 3D-READY CORE]
+// ✅ FIX PACK v1.3 (NO UI CHANGES):
+// - Roguelike truly works: coins/pickups/economy always active in roguelike
+// - Stable public API aliases (engine/app compatibility): setMode, setFire, setShooting, setInput, step
+// - Safer bullet/zombie kill handling (no double-splice / boss kill bugs)
+// - Pickups born-time uses sim time for consistency, life checks stable
+// - Better mode separation: Arcade = no economy/pickups; Roguelike = full loop
+// - Snapshot HUD includes ammo/weapon/perks/events/xp/level/coins/wave/kills
 (() => {
   "use strict";
 
@@ -67,16 +65,12 @@
   // Config
   // -------------------------
   const CFG = {
-    // Fixed sim timestep for determinism (3D-ready)
     tickHz: 60,
     dtFixed: 1 / 60,
-    dtMax: 1 / 18,              // clamp incoming frame dt (spikes)
-    maxSubSteps: 6,             // prevent spiral of death
+    dtMax: 1 / 18,
+    maxSubSteps: 6,
 
-    // fallback if map not loaded
     arenaRadius: 780,
-
-    // map edges if maps module provides w/h
     mapClampPadding: 80,
 
     player: {
@@ -85,11 +79,10 @@
       hitbox: 16,
       iFramesMs: 230,
 
-      // armor system (COD-style)
       armorMax: 150,
       plateValue: 50,
       platesMax: 3,
-      platesStart: 0,        // roguelike can start with 1 via world/perk/loot
+      platesStart: 0,
       plateUseMs: 680,
       armorDmgAbsorb: 0.72
     },
@@ -117,7 +110,6 @@
       spawnRingMax: 880
     },
 
-    // Weapons base templates
     weapons: {
       SMG:  { name: "SMG",    type: "smg",  rpm: 820, dmg: 10, spread: 0.080, bullets: 1, mag: 32, reserve: 160, reloadMs: 980,  movePenalty: 0.00, crit: 0.06, pierce: 0 },
       AR:   { name: "AR",     type: "ar",   rpm: 640, dmg: 14, spread: 0.050, bullets: 1, mag: 30, reserve: 180, reloadMs: 1100, movePenalty: 0.02, crit: 0.08, pierce: 0 },
@@ -219,7 +211,6 @@
   const CORE = {
     cfg: CFG,
 
-    // runtime
     running: false,
     startedAt: 0,
     lastFrameAt: 0,
@@ -260,7 +251,6 @@
       player: {
         id: 0,
         x: 0, y: 0, vx: 0, vy: 0,
-        // previous (for interpolation / 3D smoothing)
         px: 0, py: 0,
         hp: CFG.player.hpMax,
         armor: 0,
@@ -298,10 +288,56 @@
     },
 
     // -------------------------------------------------------
-    // Public control
+    // Public control (API)
     // -------------------------------------------------------
+    setMode(mode) {
+      const m = (String(mode || "").toLowerCase().includes("rogue")) ? "roguelike" : "arcade";
+      this.meta.mode = m;
+
+      // If already running and someone toggles mode, do a safe "rules refresh" (no UI changes)
+      if (this.running) {
+        // Arcade disables economy/pickups; Roguelike enables
+        if (m === "arcade") {
+          // keep vitals, but zero coins and clear pickups to avoid weird state
+          this.state.coins = 0;
+          this.state.pickups = [];
+          this.state.player.plates = 0;
+          this.state.player.armor = 0;
+        } else {
+          // ensure roguelike has some baseline to feel alive
+          if ((this.state.coins | 0) < 3) this.state.coins = 3;
+          if ((this.state.player.plates | 0) < 1) this.state.player.plates = 1;
+        }
+        this._clampVitals();
+        this._clampAmmoToEffective();
+      }
+      return this.meta.mode;
+    },
+
+    // Aliases for engine/app compatibility
+    setFire(on) { return this.setShooting(on); },
+    setShooting(on) { this.input.shooting = !!on; return true; },
+
+    setInput(inp) {
+      const o = inp || {};
+      const mv = o.move || o.m || null;
+      const am = o.aim || o.a || null;
+
+      if (mv) this.setMove(mv.x, mv.y);
+      if (am) this.setAim(am.x, am.y);
+
+      if (typeof o.firing === "boolean") this.setShooting(o.firing);
+      if (typeof o.shooting === "boolean") this.setShooting(o.shooting);
+      if (typeof o.fire === "boolean") this.setShooting(o.fire);
+      return true;
+    },
+
+    // Engine may call updateFrame; some code calls step()
+    step(tms) { return this.updateFrame(tms); },
+
     start(mode, w, h, opts = {}, tms = _now()) {
-      this.meta.mode = (String(mode || "").toLowerCase().includes("rogue")) ? "roguelike" : "arcade";
+      this.setMode(mode);
+
       this.state.w = Math.max(1, w | 0);
       this.state.h = Math.max(1, h | 0);
 
@@ -358,11 +394,6 @@
       return true;
     },
 
-    setShooting(on) {
-      this.input.shooting = !!on;
-      return true;
-    },
-
     setWeapon(key) {
       if (CFG.weapons[key]) this.meta.weaponKey = key;
 
@@ -377,14 +408,12 @@
 
           S.weapon = mkWeapon(this.meta.weaponKey, rar, up);
 
-          // keep ammo "not worse than 0", but clamp to new maxima
           const W = this._weaponEffective();
           S.weapon.mag = clamp(oldMag, 0, W.magMax);
           S.weapon.reserve = clamp(oldRes, 0, W.reserveMax);
           S.weapon.magMax = W.magMax;
           S.weapon.reserveMax = W.reserveMax;
 
-          // cancel reload on hard swap
           S.reload.active = false;
           S.reload.until = 0;
         }
@@ -474,7 +503,6 @@
         steps++;
       }
 
-      // interpolation factor for renderer
       this._alpha = clamp(this._acc / CFG.dtFixed, 0, 1);
       return true;
     },
@@ -490,7 +518,6 @@
         id: S.player.id,
         x: lerp(S.player.px, S.player.x),
         y: lerp(S.player.py, S.player.y),
-        // for 3D: z & yaw can be added by renderer (core is 2D logic)
         vx: S.player.vx,
         vy: S.player.vy,
         hp: S.player.hp,
@@ -570,12 +597,6 @@
     // -------------------------------------------------------
     // Internals
     // -------------------------------------------------------
-    _weapon() {
-      const w = this.state.weapon;
-      if (w) return { name: w.name, rpm: w.rpm, dmg: w.dmg, spread: w.spread, bullets: w.bullets };
-      return CFG.weapons[this.meta.weaponKey] || CFG.weapons.SMG;
-    },
-
     _effectiveStats() {
       const perks = this.state.perks || {};
       const jug = perks.Jug ? 1.40 : 1.0;
@@ -633,7 +654,13 @@
       S.timeMs = 0;
       S.wave = 1;
       S.kills = 0;
-      S.coins = 0;
+
+      // MODE DIFFERENCE (hard, real)
+      if (this.meta.mode === "roguelike") {
+        S.coins = 5; // ✅ baseline so shop/perks actually work instantly
+      } else {
+        S.coins = 0;
+      }
 
       S.xp = 0;
       S.level = 1;
@@ -647,7 +674,9 @@
       S.player.vx = 0; S.player.vy = 0;
       S.player.hp = st.hpMax;
       S.player.armor = 0;
-      S.player.plates = (this.meta.mode === "roguelike") ? CFG.player.platesStart : 0;
+
+      // plates only matter in roguelike
+      S.player.plates = (this.meta.mode === "roguelike") ? Math.max(0, CFG.player.platesStart | 0) : 0;
       S.player.plating = { active: false, until: 0 };
       S.player.lastHitAt = -99999;
 
@@ -935,8 +964,9 @@
       }
     },
 
-    _spawnPickup(kind, x, y, data) {
+    _spawnPickup(kind, x, y, data, tms) {
       const S = this.state;
+      const born = Number(tms) || _now();
       S.pickups.push({
         id: nextId(),
         kind,
@@ -944,14 +974,15 @@
         px: x, py: y,
         vx: rand(-18, 18),
         vy: rand(-18, 18),
-        born: _now(),
+        born,
         life: CFG.loot.pickupLifeMs,
         data: data || null,
         r: 10
       });
     },
 
-    _dropOnKill(z) {
+    _dropOnKill(z, tms) {
+      // ✅ Arcade has NO economy/drops (real difference)
       if (this.meta.mode !== "roguelike") return;
 
       const S = this.state;
@@ -973,16 +1004,16 @@
         const base = 1 + Math.floor(wave * 0.35);
         const elite = z.elite ? 1.6 : 1.0;
         const amt = Math.max(1, Math.round(base * elite));
-        this._spawnPickup("coins", x, y, { amount: amt });
+        this._spawnPickup("coins", x, y, { amount: amt }, tms);
       }
 
       if (Math.random() < ammoChance) {
         const amt = 10 + Math.floor(wave * 1.2);
-        this._spawnPickup("ammo", x, y, { amount: amt });
+        this._spawnPickup("ammo", x, y, { amount: amt }, tms);
       }
 
       if (Math.random() < plateChance) {
-        this._spawnPickup("plate", x, y, { amount: 1 });
+        this._spawnPickup("plate", x, y, { amount: 1 }, tms);
       }
 
       if (Math.random() < weaponChance) {
@@ -990,19 +1021,22 @@
         const keys = Object.keys(CFG.weapons);
         const wkey = pick(keys);
         const up = clamp(Math.floor((wave - 1) / 6), 0, 3);
-        this._spawnPickup("weapon", x, y, { weaponKey: wkey, rarity, upgrade: up });
+        this._spawnPickup("weapon", x, y, { weaponKey: wkey, rarity, upgrade: up }, tms);
       }
 
       if (Math.random() < eventChance) {
         const e = pick(["max_ammo", "double_points", "insta_kill"]);
-        this._spawnPickup("event", x, y, { event: e });
+        this._spawnPickup("event", x, y, { event: e }, tms);
       }
     },
 
-    _applyPickup(pu) {
+    _applyPickup(pu, tms) {
       const S = this.state;
       const st = this._effectiveStats();
       if (!pu) return false;
+
+      // ✅ Arcade does not apply pickup effects (even if something spawned by mistake)
+      if (this.meta.mode !== "roguelike") return false;
 
       if (pu.kind === "coins") {
         const ev = this._eventsActive();
@@ -1056,7 +1090,7 @@
       }
 
       if (pu.kind === "event") {
-        const t = _now();
+        const t = Number(tms) || _now();
         const e = String(pu.data?.event || "");
 
         if (e === "max_ammo") {
@@ -1091,6 +1125,13 @@
 
     _tickPickups(dt, tms) {
       const S = this.state;
+
+      // ✅ Arcade ignores pickups completely
+      if (this.meta.mode !== "roguelike") {
+        if (S.pickups.length) S.pickups = [];
+        return;
+      }
+
       if (!S.pickups || !S.pickups.length) return;
 
       const px = S.player.x, py = S.player.y;
@@ -1122,7 +1163,7 @@
         }
 
         if (d < CFG.loot.pickupRadius) {
-          if (this._applyPickup(pu)) S.pickups.splice(i, 1);
+          if (this._applyPickup(pu, tms)) S.pickups.splice(i, 1);
         }
       }
     },
@@ -1245,7 +1286,7 @@
         try { this._tickWorld(this, dt, tms); } catch {}
       }
 
-      // bullets vs zombies (+ bosses via hook)
+      // bullets vs zombies (+ bosses via hook)  ✅ SAFE KILL PATH
       for (let bi = S.bullets.length - 1; bi >= 0; bi--) {
         const b = S.bullets[bi];
         let consumed = false;
@@ -1259,50 +1300,54 @@
           if (dist < ((z.r || CFG.zombie.radius) + b.r)) {
             const isBoss = (z.kind === "boss_brute" || z.kind === "boss_spitter");
 
+            // bullet hit -> damage
             if (isBoss && typeof this._onBulletHit === "function") {
               try {
-                consumed = !!this._onBulletHit(this, z, b);
-              } catch {
-                z.hp -= b.dmg;
-                if (b.pierce > 0) b.pierce -= 1;
-                else consumed = true;
-              }
-            } else {
-              z.hp -= b.dmg;
+                // _onBulletHit can decide consumption; if it doesn't, we do default
+                const r = this._onBulletHit(this, z, b);
+                if (typeof r === "boolean") consumed = r;
+              } catch {}
+            }
 
-              if (z.hp <= 0) {
-                S.zombies.splice(zi, 1);
+            // default damage if hook didn't handle it
+            if (!isBoss || consumed === false) {
+              z.hp -= b.dmg;
+            }
+
+            // pierce / consume
+            if (b.pierce > 0) b.pierce -= 1;
+            else consumed = true;
+
+            // death
+            if (z.hp <= 0) {
+              // remove zombie now, safely
+              S.zombies.splice(zi, 1);
+
+              // rewards
+              if (isBoss) {
+                S.kills += 3;
+                this._awardXP(CFG.progress.xpBoss);
+
+                if (this.meta.mode === "roguelike") {
+                  this._spawnPickup("coins", z.x, z.y, { amount: 10 + Math.floor(S.wave * 1.2) }, tms);
+                  this._spawnPickup("event", z.x + 18, z.y, { event: pick(["max_ammo", "double_points", "insta_kill"]) }, tms);
+                  this._spawnPickup("weapon", z.x - 18, z.y, { weaponKey: pick(Object.keys(CFG.weapons)), rarity: rollRarity(S.wave + 6), upgrade: clamp(Math.floor((S.wave - 1) / 5), 1, 4) }, tms);
+                  this._spawnPickup("plate", z.x, z.y + 18, { amount: 1 }, tms);
+                }
+              } else {
                 S.kills += 1;
 
+                // small coin drip on kill (roguelike)
                 if (this.meta.mode === "roguelike") S.coins += (z.elite ? 2 : 1);
 
                 this._awardXP(CFG.progress.xpKill + (z.elite ? 4 : 0));
-                this._dropOnKill(z);
-
-                try { if (typeof this.hooks.onKill === "function") this.hooks.onKill(this, z); } catch {}
-              }
-
-              if (b.pierce > 0) b.pierce -= 1;
-              else consumed = true;
-            }
-
-            // boss death rewards (SAFE remove)
-            if (isBoss && z.hp <= 0) {
-              if (S.zombies[zi] === z) S.zombies.splice(zi, 1);
-
-              S.kills += 3;
-              this._awardXP(CFG.progress.xpBoss);
-
-              if (this.meta.mode === "roguelike") {
-                this._spawnPickup("coins", z.x, z.y, { amount: 10 + Math.floor(S.wave * 1.2) });
-                this._spawnPickup("event", z.x + 18, z.y, { event: pick(["max_ammo", "double_points", "insta_kill"]) });
-                this._spawnPickup("weapon", z.x - 18, z.y, { weaponKey: pick(Object.keys(CFG.weapons)), rarity: rollRarity(S.wave + 6), upgrade: clamp(Math.floor((S.wave - 1) / 5), 1, 4) });
-                this._spawnPickup("plate", z.x, z.y + 18, { amount: 1 });
+                this._dropOnKill(z, tms);
               }
 
               try { if (typeof this.hooks.onKill === "function") this.hooks.onKill(this, z); } catch {}
             }
 
+            // consumed bullet exits zombie loop
             if (consumed) break;
           }
         }
@@ -1322,9 +1367,10 @@
         if (this.meta.mode === "roguelike") {
           S.coins += 2 + Math.floor(S.wave * 0.35);
 
+          // small chance to spawn an event near player between waves
           if (Math.random() < clamp(0.05 + (S.wave - 1) * 0.003, 0.05, 0.12)) {
             const e = pick(["double_points", "insta_kill"]);
-            this._spawnPickup("event", S.player.x + rand(-40, 40), S.player.y + rand(-40, 40), { event: e });
+            this._spawnPickup("event", S.player.x + rand(-40, 40), S.player.y + rand(-40, 40), { event: e }, tms);
           }
         }
 
@@ -1341,6 +1387,7 @@
     }
   };
 
+  // Export
   window.BCO_ZOMBIES_CORE = CORE;
-  console.log("[Z_CORE] loaded (LUX COD-ZOMBIES-2D v1.2 | 3D-READY CORE)");
+  console.log("[Z_CORE] loaded (LUX COD-ZOMBIES-2D v1.3 | 3D-READY CORE)");
 })();
