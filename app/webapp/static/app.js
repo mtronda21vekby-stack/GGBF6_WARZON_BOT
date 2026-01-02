@@ -56,11 +56,12 @@
   }
 
   // =========================================================
-  // ✅ FAST TAP (iOS WebView SAFE)
+  // ✅ FAST TAP (iOS WebView SAFE) — NO DOUBLE FIRE
   // =========================================================
   function onTap(el, handler) {
     if (!el) return;
 
+    // lock to prevent double tap bursts
     let locked = false;
     const lock = () => {
       locked = true;
@@ -73,13 +74,15 @@
       try { handler(e); } catch {}
     };
 
-    // PointerEvent exists on iOS modern; keep both pointerup and click,
-    // but guard with lock (prevents double-fire).
+    // IMPORTANT:
+    // If PointerEvent supported — use pointerup ONLY.
+    // Do NOT also add click, иначе на iOS иногда будет двойной триггер.
     if (window.PointerEvent) {
       el.addEventListener("pointerup", fire, { passive: true });
-      el.addEventListener("click", fire, { passive: true });
       return;
     }
+
+    // No pointer: touchend + click fallback
     el.addEventListener("touchend", fire, { passive: true });
     el.addEventListener("click", fire, { passive: true });
   }
@@ -266,52 +269,6 @@
     };
   }
 
-  // ✅ safer truncation: never slice JSON mid-string
-  function packWithinLimit(pack, maxLen = 15000) {
-    const tryStringify = (obj) => {
-      try { return JSON.stringify(obj); } catch { return ""; }
-    };
-
-    let s = tryStringify(pack);
-    if (s.length <= maxLen) return { ok: true, json: s, pack };
-
-    // shrink common big fields first
-    const clone = JSON.parse(JSON.stringify(pack || {}));
-    const shrinkField = (path, limit) => {
-      try {
-        let ref = clone;
-        for (let i = 0; i < path.length - 1; i++) ref = ref?.[path[i]];
-        const k = path[path.length - 1];
-        if (typeof ref?.[k] === "string") ref[k] = ref[k].slice(0, limit);
-      } catch {}
-    };
-
-    shrinkField(["text"], 2500);
-    shrinkField(["note"], 2500);
-    shrinkField(["meta", "note"], 2000);
-
-    // history can be big in some payloads
-    if (Array.isArray(clone.history)) clone.history = clone.history.slice(-10);
-
-    s = tryStringify(clone);
-    if (s.length <= maxLen) return { ok: true, json: s, pack: clone };
-
-    // last resort: drop non-critical
-    if (clone.meta) {
-      clone.meta = { ...clone.meta, dropped: true };
-    }
-    delete clone.history;
-    delete clone.note;
-    delete clone.text;
-
-    s = tryStringify(clone);
-    if (s.length <= maxLen) return { ok: true, json: s, pack: clone };
-
-    // absolute last: minimal ping
-    const min = { v: VERSION, t: now(), type: "ping" };
-    return { ok: false, json: tryStringify(min), pack: min };
-  }
-
   function sendToBot(payload) {
     try {
       const fixed = { ...(payload || {}) };
@@ -322,7 +279,14 @@
       }
 
       const pack = enrichPayload(fixed);
-      const bounded = packWithinLimit(pack, 15000);
+      let data = JSON.stringify(pack);
+
+      const MAX = 15000;
+      if (data.length > MAX) {
+        if (typeof pack.text === "string") pack.text = pack.text.slice(0, 4000);
+        if (typeof pack.note === "string") pack.note = pack.note.slice(0, 4000);
+        data = JSON.stringify(pack).slice(0, MAX);
+      }
 
       if (!tg?.sendData) {
         haptic("notif", "error");
@@ -330,9 +294,8 @@
         return;
       }
 
-      tg.sendData(bounded.json);
+      tg.sendData(data);
       haptic("notif", "success");
-
       const statSession = qs("#statSession");
       if (statSession) statSession.textContent = "SENT";
       toast("Отправлено в бота 🚀");
@@ -375,7 +338,6 @@
     if (tgButtonsWired) return;
     tgButtonsWired = true;
 
-    // Wire once, but keep stable references
     tgMainHandler = () => {
       haptic("impact", "medium");
 
@@ -401,11 +363,10 @@
       selectTab("home");
     };
 
-    // ensure no duplicates
     try { tg.MainButton.offClick?.(tgMainHandler); } catch {}
-    try { tg.BackButton.offClick?.(tgBackHandler); } catch {}
-
     try { tg.MainButton.onClick?.(tgMainHandler); } catch {}
+
+    try { tg.BackButton.offClick?.(tgBackHandler); } catch {}
     try { tg.BackButton.onClick?.(tgBackHandler); } catch {}
   }
 
@@ -606,24 +567,12 @@
       toast("Сохранено ✅");
     };
 
-    if (window.PointerEvent) {
-      root.addEventListener("pointerup", (e) => {
-        const btn = e.target.closest(".seg-btn");
-        if (!btn) return;
-        handler(btn);
-      }, { passive: true });
-      root.addEventListener("click", (e) => {
-        const btn = e.target.closest(".seg-btn");
-        if (!btn) return;
-        handler(btn);
-      }, { passive: true });
-    } else {
-      root.addEventListener("click", (e) => {
-        const btn = e.target.closest(".seg-btn");
-        if (!btn) return;
-        handler(btn);
-      }, { passive: true });
-    }
+    // delegate through onTap on the root:
+    onTap(root, (e) => {
+      const btn = e.target?.closest?.(".seg-btn");
+      if (!btn) return;
+      handler(btn);
+    });
   }
 
   // ---------- Nav wiring ----------
@@ -832,7 +781,6 @@
       { id: "StaminUp",  name: "🏃 Stamin-Up",  desc: "+Move speed",     cost: 14, apply: (run) => { run.moveMul *= 1.16; } },
       { id: "DoubleTap", name: "🔥 Double Tap", desc: "+Damage",         cost: 18, apply: (run) => { run.dmgMul *= 1.16; } },
       { id: "Deadshot",  name: "🎯 Deadshot",   desc: "+Crit chance",    cost: 16, apply: (run) => { run.critChance = Math.min(0.35, run.critChance + 0.08); } },
-      // ✅ perk "Armor" оставили, но теперь броня "настоящая" — через plates.
       { id: "Armor",     name: "🛡 Armor+",     desc: "+Armor points",   cost: 14, apply: (run) => { run.armor = Math.min(run.armor + 35, run.armorMax); run._syncPlates(); } },
       { id: "Mag",       name: "📦 Mag+",       desc: "+Mag size",       cost: 15, apply: (run) => { run.magMul *= 1.18; } },
       { id: "Pierce",    name: "🗡 Pierce",     desc: "Bullets pierce",  cost: 20, apply: (run) => { run.pierceBonus += 1; } },
@@ -883,12 +831,12 @@
       maxHp: 100,
 
       // ✅ REAL ARMOR (plates)
-      armor: 0,           // armor points
-      armorMax: 150,      // 3 plates * 50
-      plates: 0,          // number of plates equipped
+      armor: 0,
+      armorMax: 150,
+      plates: 0,
       platesMax: 3,
       plateValue: 50,
-      plateCostBase: 10,  // base cost; grows with wave a bit
+      plateCostBase: 10,
 
       perks: [],
       dmgMul: 1,
@@ -1040,7 +988,10 @@
           border: 1px solid rgba(255,255,255,.10);
           backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
         }
-        .bcoz-canvas{ position:absolute; inset:0; width:100%; height:100%; }
+        .bcoz-canvas{
+          position:absolute; inset:0;
+          width:100%; height:100%;
+        }
         .bcoz-joybase{
           position:absolute;
           left: 18px;
@@ -1057,7 +1008,7 @@
           bottom: calc(18px + env(safe-area-inset-bottom,0px));
           width: 120px; height: 120px;
           border-radius: 999px;
-          pointer-events:none;
+          pointer-events:auto;
         }
         .bcoz-joyknob{
           position:absolute;
@@ -1067,6 +1018,7 @@
           background: linear-gradient(135deg, rgba(139,92,246,.40), rgba(34,211,238,.18));
           border: 1px solid rgba(255,255,255,.14);
           box-shadow: 0 14px 35px rgba(0,0,0,.35);
+          pointer-events:none;
         }
         .bcoz-right{
           position:absolute;
@@ -1184,19 +1136,8 @@
       if (!arr.find(s => s.id === state.skin)) state.skin = (arr[0]?.id || "default");
     }
 
-    function syncAssetsIfAny() {
-      // Optional: if you подключишь zombies.assets.js, синхронизируем выбор скина безопасно.
-      try {
-        const A = window.BCO_ZOMBIES_ASSETS;
-        if (!A) return;
-        // API is optional; call only if functions exist.
-        if (typeof A.setPlayerSkin === "function") A.setPlayerSkin(state.character, state.skin);
-      } catch {}
-    }
-
     function getSkin() {
       ensureSkinValid();
-      syncAssetsIfAny();
       const arr = SKINS[state.character] || [];
       return arr.find(s => s.id === state.skin) || arr[0] || { id: "default", colors: ["#9ca3af", "#111827"] };
     }
@@ -1259,7 +1200,6 @@
       run.maxHp = 100;
       run.hp = 100;
 
-      // ✅ plates reset
       run.armor = 0;
       run.plates = 0;
       run._syncPlates();
@@ -1294,8 +1234,6 @@
       input.joyActive = false;
       input.joyX = 0; input.joyY = 0;
       input.shootHeld = false;
-
-      // Default aim: forward
       input.aimX = centerX + 80;
       input.aimY = centerY;
     }
@@ -1337,7 +1275,7 @@
         hp,
         maxHp: hp,
         spd: (run.mode === "roguelike" ? 58 : 52) + run.wave * 0.95 + Math.random() * 10,
-        dmg: (run.mode === "roguelike" ? 10 : 8) + run.wave * 0.12, // DPS-ish
+        dmg: (run.mode === "roguelike" ? 10 : 8) + run.wave * 0.12,
         id: Math.random().toString(16).slice(2)
       };
       run.zombies.push(z);
@@ -1479,13 +1417,12 @@
       for (const z of run.zombies) {
         const d = dist2(x, y, z.x, z.y);
         if (d <= r2) {
-          const tt = 1 - Math.sqrt(d) / radius;
-          z.hp -= dmg * (0.45 + 0.55 * tt);
+          const t = 1 - Math.sqrt(d) / radius;
+          z.hp -= dmg * (0.45 + 0.55 * t);
         }
       }
     }
 
-    // ✅ REAL ARMOR DAMAGE: armor absorbs same units as HP (no multipliers)
     function applyPlayerDamage(dmg) {
       let left = dmg;
       if (run.armor > 0) {
@@ -1497,7 +1434,6 @@
       if (left > 0) run.hp -= left;
     }
 
-    // ✅ plates shop
     function plateCost() {
       const extra = Math.floor(run.wave * 0.6);
       return clamp(run.plateCostBase + extra, 10, 26);
@@ -1530,7 +1466,7 @@
       run.x = clamp(run.x + input.joyX * moveSpeed * dt, 18, run.w - 18);
       run.y = clamp(run.y + input.joyY * moveSpeed * dt, 18 + 90, run.h - 24);
 
-      if ((!input.aimX && !input.aimY) || (Number.isNaN(input.aimX) || Number.isNaN(input.aimY))) {
+      if (!input.aimX && !input.aimY) {
         input.aimX = run.x + 80;
         input.aimY = run.y;
       }
@@ -1645,7 +1581,6 @@
 
       ctx.clearRect(0, 0, run.w, run.h);
 
-      // grid
       ctx.save();
       ctx.globalAlpha = 0.08;
       ctx.strokeStyle = "rgba(255,255,255,.25)";
@@ -1664,7 +1599,6 @@
       }
       ctx.restore();
 
-      // particles
       for (const p of run.particles) {
         const k = 1 - (p.t / p.life);
         ctx.save();
@@ -1676,7 +1610,6 @@
         ctx.restore();
       }
 
-      // bullets
       ctx.save();
       for (const b of run.bullets) {
         ctx.globalAlpha = 0.95;
@@ -1687,7 +1620,6 @@
       }
       ctx.restore();
 
-      // zombies
       for (const z of run.zombies) {
         ctx.save();
         ctx.globalAlpha = 0.95;
@@ -1717,7 +1649,6 @@
         ctx.restore();
       }
 
-      // player
       const skin = getSkin();
       const c1 = skin.colors[0] || "#9ca3af";
       const c2 = skin.colors[1] || "#111827";
@@ -1735,7 +1666,6 @@
       ctx.arc(run.x, run.y, run.r, 0, Math.PI * 2);
       ctx.fill();
 
-      // ✅ armor ring shows fill fraction (0..1)
       if (run.armor > 0) {
         ctx.globalAlpha = 0.85;
         ctx.strokeStyle = "rgba(59,130,246,.9)";
@@ -1759,7 +1689,6 @@
         ctx.fillText("👑", run.x - 10, run.y - 18);
       }
 
-      // Aim line (yes: aim+shoot on map)
       ctx.globalAlpha = 0.22;
       ctx.strokeStyle = "rgba(255,255,255,.65)";
       ctx.lineWidth = 2;
@@ -1770,7 +1699,6 @@
 
       ctx.restore();
 
-      // vignette
       ctx.save();
       const g = ctx.createRadialGradient(run.w * 0.5, run.h * 0.45, 10, run.w * 0.5, run.h * 0.45, Math.max(run.w, run.h) * 0.65);
       g.addColorStop(0, "rgba(0,0,0,0)");
@@ -1883,7 +1811,6 @@
             pierce: run.pierceBonus,
             critChance: +run.critChance.toFixed(3),
             coinMul: +run.coinMul.toFixed(3),
-
             armor: Math.round(run.armor),
             armorMax: run.armorMax,
             plates: run.plates,
@@ -2145,7 +2072,6 @@
 
       onTap(ui.btnReload, () => startReload(now()));
 
-      // FIRE button: hold to shoot; also updates aim
       const shootBtn = ui.btnShoot;
       if (shootBtn) {
         const down = (e) => {
@@ -2167,7 +2093,6 @@
         }
       }
 
-      // Left joystick: movement
       const joy = qs("#bcozJoy");
       const onJoyDown = (e) => {
         const p = pointerToOverlayXY(e);
@@ -2219,7 +2144,6 @@
         }
       }
 
-      // Canvas aim: tap sets aim; drag updates aim while firing (so yes: aim+shoot on map)
       if (canvas) {
         const aimMove = (e) => {
           const p = pointerToOverlayXY(e);
@@ -2367,7 +2291,6 @@
       renderWeaponShop();
       renderCharSelect();
       updateHud();
-      syncAssetsIfAny();
     }
 
     function destroyOverlay() {
@@ -2528,9 +2451,6 @@
     onTap(qs("#btnZBuyJug"), () => { Z.open(); Z.setMode("roguelike"); Z.start(); Z.buyPerk("Jug"); });
     onTap(qs("#btnZBuySpeed"), () => { Z.open(); Z.setMode("roguelike"); Z.start(); Z.buyPerk("Speed"); });
     onTap(qs("#btnZBuyAmmo"), () => { Z.open(); Z.setMode("roguelike"); Z.start(); Z.buyPerk("Mag"); });
-
-    // (если хочешь отдельную кнопку Plate — добавим в HTML или повесим на Ammo)
-    // onTap(qs("#btnZBuyAmmo"), () => { Z.open(); Z.setMode("roguelike"); Z.start(); Z.buyPlate(); });
   }
 
   // ---------- Build tag ----------
@@ -2547,10 +2467,13 @@
 
   // ---------- Init Telegram ----------
   function initTelegram() {
+    const dbgUser = qs("#dbgUser");
+    const dbgChat = qs("#dbgChat");
+    const dbgInit = qs("#dbgInit");
+    const statOnline = qs("#statOnline");
+
     if (!tg) {
-      const statOnline = qs("#statOnline");
       if (statOnline) statOnline.textContent = "BROWSER";
-      const dbgInit = qs("#dbgInit");
       if (dbgInit) dbgInit.textContent = "no tg";
       return;
     }
@@ -2561,15 +2484,17 @@
     applyTelegramTheme();
     try { tg.onEvent("themeChanged", applyTelegramTheme); } catch {}
 
-    const dbgUser = qs("#dbgUser");
-    const dbgChat = qs("#dbgChat");
-    const dbgInit = qs("#dbgInit");
-    const statOnline = qs("#statOnline");
+    // IMPORTANT: tg exists, but initData may be empty if opened not from bot context
+    const hasInit = !!(tg.initData && String(tg.initData).length > 10);
+    const hasUser = !!tg.initDataUnsafe?.user?.id;
 
     if (dbgUser) dbgUser.textContent = tg.initDataUnsafe?.user?.id ?? "—";
     if (dbgChat) dbgChat.textContent = tg.initDataUnsafe?.chat?.id ?? "—";
-    if (dbgInit) dbgInit.textContent = (tg.initData ? "ok" : "empty");
-    if (statOnline) statOnline.textContent = "ONLINE";
+    if (dbgInit) dbgInit.textContent = hasInit ? "ok" : "empty";
+
+    if (statOnline) {
+      statOnline.textContent = hasUser ? "TG_WEBVIEW" : (hasInit ? "TG_NOUSER" : "NO_INITDATA");
+    }
 
     updateTelegramButtons();
   }
