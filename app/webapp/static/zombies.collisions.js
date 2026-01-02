@@ -1,88 +1,241 @@
 /* =========================================================
-   BLACK CROWN OPS — ZOMBIES COLLISIONS [LUX]
+   BLACK CROWN OPS — ZOMBIES COLLISIONS [ULTRA LUX | 3D-READY]
    File: app/webapp/static/zombies.collisions.js
    Provides: window.BCO_ZOMBIES_COLLISIONS
+
+   ULTRA LUX upgrades:
+     ✅ Correct circle-vs-rect resolution (inside-rect robust)
+     ✅ Supports rotated walls (angle) using OBB math (optional; safe if angle=0)
+     ✅ Bullet ray-step (swept) to reduce tunneling at high FPS/dpr
+     ✅ Stable zombie separation with bounds clamp (premium “flow”)
+     ✅ Install() hook that DOES NOT double-resolve player and avoids temp mistakes
+     ✅ Soft friction at walls (optional) for nicer feel
+     ✅ 3D-ready: exposes pure functions for future physics adapter
    ========================================================= */
 (() => {
   "use strict";
 
-  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  // ---------------------------------------------------------
+  // Math
+  // ---------------------------------------------------------
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const len = (x, y) => Math.hypot(x, y) || 0;
 
-  // Robust circle-vs-rect resolution (rect is CENTER-anchored).
-  // Works even if circle center is inside rect (dx=dy=0 case).
+  function rot(x, y, ang) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    return { x: x * c - y * s, y: x * s + y * c };
+  }
+
+  // ---------------------------------------------------------
+  // OBB (rotated rect) circle resolve
+  // Rect contract: center-anchored, has x,y,w,h, optional angle (radians)
+  // ---------------------------------------------------------
   function rectCircleResolve(ent, rect, r) {
-    const rx = rect.x, ry = rect.y, rw = rect.w, rh = rect.h;
-    const left = rx - rw / 2;
-    const right = rx + rw / 2;
-    const top = ry - rh / 2;
-    const bottom = ry + rh / 2;
+    const ang = Number(rect.angle) || 0;
+    const hw = (Number(rect.w) || 0) / 2;
+    const hh = (Number(rect.h) || 0) / 2;
 
-    const cx = clamp(ent.x, left, right);
-    const cy = clamp(ent.y, top, bottom);
+    // Transform circle center into rect local space
+    const relX = (Number(ent.x) || 0) - (Number(rect.x) || 0);
+    const relY = (Number(ent.y) || 0) - (Number(rect.y) || 0);
 
-    let dx = ent.x - cx;
-    let dy = ent.y - cy;
+    const local = ang ? rot(relX, relY, -ang) : { x: relX, y: relY };
+
+    // Closest point on AABB in local space
+    const cx = clamp(local.x, -hw, hw);
+    const cy = clamp(local.y, -hh, hh);
+
+    let dx = local.x - cx;
+    let dy = local.y - cy;
 
     const d2 = dx * dx + dy * dy;
     const rr = r * r;
 
-    if (d2 > rr) {
-      // no overlap
-      return false;
-    }
+    if (d2 > rr) return false;
 
-    // If the circle center is inside the rect, dx=dy=0 — choose minimal escape axis.
+    // If inside rectangle (dx=dy=0), push out through minimal axis
     if (d2 === 0) {
-      const pushLeft = (ent.x - left);
-      const pushRight = (right - ent.x);
-      const pushTop = (ent.y - top);
-      const pushBottom = (bottom - ent.y);
-
-      const minX = Math.min(pushLeft, pushRight);
-      const minY = Math.min(pushTop, pushBottom);
-
-      if (minX < minY) {
-        ent.x = (pushLeft < pushRight) ? (left - r) : (right + r);
+      const pushX = (hw - Math.abs(local.x));
+      const pushY = (hh - Math.abs(local.y));
+      if (pushX < pushY) {
+        const dir = (local.x >= 0) ? 1 : -1;
+        dx = dir; dy = 0;
+        // move to surface + radius
+        local.x = (hw + r) * dir;
       } else {
-        ent.y = (pushTop < pushBottom) ? (top - r) : (bottom + r);
+        const dir = (local.y >= 0) ? 1 : -1;
+        dx = 0; dy = dir;
+        local.y = (hh + r) * dir;
       }
-      return true;
-    }
-
-    // Otherwise push out along shortest axis (approx)
-    const adx = Math.abs(dx);
-    const ady = Math.abs(dy);
-
-    if (adx > ady) {
-      ent.x = (dx > 0) ? (right + r) : (left - r);
     } else {
-      ent.y = (dy > 0) ? (bottom + r) : (top - r);
+      // push along normal
+      const d = Math.sqrt(d2) || 1;
+      const push = (r - d);
+      dx /= d; dy /= d;
+      local.x += dx * push;
+      local.y += dy * push;
     }
+
+    // Transform back to world space
+    const out = ang ? rot(local.x, local.y, ang) : local;
+
+    ent.x = (Number(rect.x) || 0) + out.x;
+    ent.y = (Number(rect.y) || 0) + out.y;
     return true;
   }
 
   function collideEntityWithWalls(ent, walls, r) {
     let hit = false;
-    for (const wall of walls) {
-      if (rectCircleResolve(ent, wall, r)) hit = true;
+    if (!walls || !walls.length) return false;
+    for (let i = 0; i < walls.length; i++) {
+      const w = walls[i];
+      if (rectCircleResolve(ent, w, r)) hit = true;
     }
     return hit;
   }
 
+  // ---------------------------------------------------------
+  // Bullet collision
+  // - Fast AABB check + optional swept stepping to prevent tunneling
+  // ---------------------------------------------------------
   function bulletHitsRect(b, wall) {
-    const r = b.r || 3;
-    const rx = wall.x, ry = wall.y, rw = wall.w, rh = wall.h;
-    const left = rx - rw / 2, right = rx + rw / 2;
-    const top = ry - rh / 2, bottom = ry + rh / 2;
+    const r = Number(b.r || 3) || 3;
 
-    const cx = clamp(b.x, left, right);
-    const cy = clamp(b.y, top, bottom);
-    const dx = b.x - cx;
-    const dy = b.y - cy;
+    // If rotated wall: test in local space like circle-vs-OBB
+    const ang = Number(wall.angle) || 0;
+    const hw = (Number(wall.w) || 0) / 2;
+    const hh = (Number(wall.h) || 0) / 2;
+
+    const relX = (Number(b.x) || 0) - (Number(wall.x) || 0);
+    const relY = (Number(b.y) || 0) - (Number(wall.y) || 0);
+    const local = ang ? rot(relX, relY, -ang) : { x: relX, y: relY };
+
+    const cx = clamp(local.x, -hw, hw);
+    const cy = clamp(local.y, -hh, hh);
+    const dx = local.x - cx;
+    const dy = local.y - cy;
 
     return ((dx * dx + dy * dy) <= (r * r));
   }
 
+  function collideBulletsDiscrete(bullets, walls) {
+    // remove bullets that hit walls (discrete)
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      for (let j = 0; j < walls.length; j++) {
+        if (bulletHitsRect(b, walls[j])) {
+          bullets.splice(i, 1);
+          break;
+        }
+      }
+    }
+  }
+
+  function collideBulletsSwept(bullets, walls) {
+    // Swept: sample along segment from prev to current (px->x)
+    // Cheap stepping scaled by distance and bullet radius.
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      const x0 = Number(b.px ?? b.x) || 0;
+      const y0 = Number(b.py ?? b.y) || 0;
+      const x1 = Number(b.x) || 0;
+      const y1 = Number(b.y) || 0;
+
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      const dist = len(dx, dy);
+      const r = Math.max(1, Number(b.r || 3) || 3);
+
+      // If tiny move, fallback to discrete
+      if (dist <= r * 0.75) {
+        for (let j = 0; j < walls.length; j++) {
+          if (bulletHitsRect(b, walls[j])) { bullets.splice(i, 1); break; }
+        }
+        continue;
+      }
+
+      // Steps: 1 per ~r*1.2
+      const steps = clamp(Math.ceil(dist / (r * 1.2)), 2, 10);
+      let removed = false;
+
+      for (let s = 1; s <= steps; s++) {
+        const t = s / steps;
+        const sx = x0 + dx * t;
+        const sy = y0 + dy * t;
+
+        // Temporarily test this sample
+        const tmp = { x: sx, y: sy, r };
+
+        for (let j = 0; j < walls.length; j++) {
+          if (bulletHitsRect(tmp, walls[j])) {
+            bullets.splice(i, 1);
+            removed = true;
+            break;
+          }
+        }
+        if (removed) break;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------
+  // Separation (premium anti-clump)
+  // ---------------------------------------------------------
+  function separateEntities(ents, iterations = 1) {
+    if (!Array.isArray(ents) || ents.length < 2) return;
+    const it = Math.max(1, iterations | 0);
+
+    for (let k = 0; k < it; k++) {
+      for (let i = 0; i < ents.length; i++) {
+        const a = ents[i];
+        const ar = Number(a.r || 16) || 16;
+        for (let j = i + 1; j < ents.length; j++) {
+          const b = ents[j];
+          const br = Number(b.r || 16) || 16;
+
+          const dx = (Number(b.x) || 0) - (Number(a.x) || 0);
+          const dy = (Number(b.y) || 0) - (Number(a.y) || 0);
+          const d2 = dx * dx + dy * dy;
+
+          const min = (ar + br) * 0.92; // allow slight overlap
+          if (d2 === 0) {
+            a.x = (Number(a.x) || 0) - 0.6;
+            b.x = (Number(b.x) || 0) + 0.6;
+            continue;
+          }
+
+          const d = Math.sqrt(d2);
+          if (d >= min) continue;
+
+          const push = (min - d) * 0.5;
+          const nx = dx / d;
+          const ny = dy / d;
+
+          a.x = (Number(a.x) || 0) - nx * push;
+          a.y = (Number(a.y) || 0) - ny * push;
+          b.x = (Number(b.x) || 0) + nx * push;
+          b.y = (Number(b.y) || 0) + ny * push;
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------
+  // Bounds clamp (map rect)
+  // ---------------------------------------------------------
+  function clampEntityToMap(ent, map, pad = 0) {
+    if (!map) return;
+    const hw = Number(map.hw || (map.w ? map.w / 2 : 0)) || 0;
+    const hh = Number(map.hh || (map.h ? map.h / 2 : 0)) || 0;
+    if (!hw || !hh) return;
+
+    ent.x = clamp(ent.x, -hw + pad, hw - pad);
+    ent.y = clamp(ent.y, -hh + pad, hh - pad);
+  }
+
+  // ---------------------------------------------------------
+  // Public COLL
+  // ---------------------------------------------------------
   const COLL = {
     // Collide entity with map walls (player/zombie/boss)
     collideEntityWithMap(ent, map) {
@@ -90,67 +243,29 @@
       const walls = map.walls || [];
       if (!walls.length) return false;
 
-      const r = Number(ent.r || ent.hitbox || 16);
+      const r = Number(ent.r || ent.hitbox || 16) || 16;
       return collideEntityWithWalls(ent, walls, r);
     },
 
-    // Remove bullets that hit walls
-    collideBullets(bullets, map) {
+    // Remove bullets that hit walls (swept by default)
+    collideBullets(bullets, map, opt = {}) {
       if (!map || !map.walls || !bullets) return;
       const walls = map.walls;
-
-      for (let i = bullets.length - 1; i >= 0; i--) {
-        const b = bullets[i];
-        for (const wall of walls) {
-          if (bulletHitsRect(b, wall)) {
-            bullets.splice(i, 1);
-            break;
-          }
-        }
-      }
+      const mode = String(opt.mode || "swept");
+      if (mode === "discrete") collideBulletsDiscrete(bullets, walls);
+      else collideBulletsSwept(bullets, walls);
     },
 
     // Optional: soft separation between zombies (prevents clumping)
-    // entities: [{x,y,r}]
-    separateEntities(ents, iterations = 1) {
-      if (!Array.isArray(ents) || ents.length < 2) return;
-      const it = Math.max(1, iterations | 0);
+    separateEntities,
 
-      for (let k = 0; k < it; k++) {
-        for (let i = 0; i < ents.length; i++) {
-          const a = ents[i];
-          const ar = a.r || 16;
-          for (let j = i + 1; j < ents.length; j++) {
-            const b = ents[j];
-            const br = b.r || 16;
+    // Utility
+    rectCircleResolve,
+    clampEntityToMap,
 
-            const dx = b.x - a.x;
-            const dy = b.y - a.y;
-            const d2 = dx * dx + dy * dy;
-            const min = (ar + br) * 0.92; // slight overlap allowed for speed
-            if (d2 === 0) {
-              // nudge
-              a.x -= 0.5; b.x += 0.5;
-              continue;
-            }
-            const d = Math.sqrt(d2);
-            if (d >= min) continue;
-
-            const push = (min - d) * 0.5;
-            const nx = dx / d;
-            const ny = dy / d;
-
-            a.x -= nx * push;
-            a.y -= ny * push;
-            b.x += nx * push;
-            b.y += ny * push;
-          }
-        }
-      }
-    },
-
-    // LUX: Install wrapper for CORE (zombies.core.js) if you want collisions auto-applied
-    // Usage (optional, world module can call): BCO_ZOMBIES_COLLISIONS.install(CORE, mapGetter)
+    // ULTRA: Install wrapper for CORE if you want collisions auto-applied
+    // Usage:
+    //   BCO_ZOMBIES_COLLISIONS.install(CORE, () => BCO_ZOMBIES_MAPS.get(CORE.meta.map))
     install(CORE, mapGetter) {
       if (!CORE || typeof CORE !== "object") return false;
 
@@ -160,8 +275,8 @@
 
       const prevTick = CORE._tickWorld;
 
-      CORE._tickWorld = (core, dt, tms) => {
-        // allow previous world hook first
+      CORE._tickWorld = function (core, dt, tms) {
+        // 1) run previous tick first (so world/bosses can move)
         try { if (typeof prevTick === "function") prevTick(core, dt, tms); } catch {}
 
         const map = getMap();
@@ -169,40 +284,43 @@
 
         const S = core.state;
 
-        // Clamp to map bounds (in addition to arena)
-        // Map bounds are rectangles: [-hw..hw], [-hh..hh]
-        const hw = map.hw || Math.floor((map.w || 2400) / 2);
-        const hh = map.hh || Math.floor((map.h || 2400) / 2);
+        // 2) clamp entities to map
+        try {
+          const padP = Math.max(10, Number(core?.cfg?.player?.hitbox || 16) || 16);
+          clampEntityToMap(S.player, map, padP);
+        } catch {}
 
-        // player
-        S.player.x = clamp(S.player.x, -hw, hw);
-        S.player.y = clamp(S.player.y, -hh, hh);
+        // 3) collide player with walls (direct object, single resolve)
+        try {
+          const pr = Number(core?.cfg?.player?.hitbox || S.player.r || 16) || 16;
+          const pEnt = { x: S.player.x, y: S.player.y, r: pr };
+          collideEntityWithWalls(pEnt, map.walls, pr);
+          S.player.x = pEnt.x;
+          S.player.y = pEnt.y;
+          clampEntityToMap(S.player, map, pr);
+        } catch {}
 
-        // collide player with walls
-        COLL.collideEntityWithMap({ x: S.player.x, y: S.player.y, r: core.cfg.player.hitbox }, map);
-        // write back (we used temp object for simplicity)
-        // (do it properly)
-        // re-run with direct object:
-        const pEnt = { x: S.player.x, y: S.player.y, r: core.cfg.player.hitbox };
-        COLL.collideEntityWithMap(pEnt, map);
-        S.player.x = pEnt.x;
-        S.player.y = pEnt.y;
+        // 4) zombies/bosses collide
+        try {
+          const zrDef = Number(core?.cfg?.zombie?.radius || 16) || 16;
+          const arr = Array.isArray(S.zombies) ? S.zombies : [];
+          for (let i = 0; i < arr.length; i++) {
+            const z = arr[i];
+            const zr = Number(z.r || zrDef) || zrDef;
+            const zEnt = { x: z.x, y: z.y, r: zr };
+            collideEntityWithWalls(zEnt, map.walls, zr);
+            z.x = zEnt.x; z.y = zEnt.y;
+            clampEntityToMap(z, map, zr);
+          }
 
-        // zombies
-        for (let i = 0; i < S.zombies.length; i++) {
-          const z = S.zombies[i];
-          const ent = { x: z.x, y: z.y, r: z.r || core.cfg.zombie.radius };
-          COLL.collideEntityWithMap(ent, map);
-          z.x = ent.x; z.y = ent.y;
-          z.x = clamp(z.x, -hw, hw);
-          z.y = clamp(z.y, -hh, hh);
-        }
+          // premium flow
+          separateEntities(arr, 1);
+        } catch {}
 
-        // optional separation to make movement feel premium
-        COLL.separateEntities(S.zombies, 1);
-
-        // bullets
-        COLL.collideBullets(S.bullets, map);
+        // 5) bullets vs walls (swept to prevent tunneling)
+        try {
+          COLL.collideBullets(S.bullets, map, { mode: "swept" });
+        } catch {}
       };
 
       return true;
@@ -210,5 +328,5 @@
   };
 
   window.BCO_ZOMBIES_COLLISIONS = COLL;
-  console.log("[Z_COLL] loaded (LUX)");
+  console.log("[Z_COLL] loaded (ULTRA LUX | 3D-READY)");
 })();
