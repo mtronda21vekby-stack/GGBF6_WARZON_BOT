@@ -1,10 +1,14 @@
 // app/webapp/static/zombies.game.js  [ULTRA LUX vNext | Dual-Stick + iOS Fix + Start Fix]
 // IMPORTANT: UI не меняем — только логика, клики, запуск.
-// - Dual-stick: LEFT = move, RIGHT = aim + hold-to-shoot
-// - FIRE button: auto-hide when right stick exists (kept for backward compat)
-// - Fix: game loop always starts, canvas resizes, safe-area, iOS dead taps, prevent zoom
-// - Fullscreen: tries Telegram.WebApp fullscreen APIs if available (no hard dependency)
-// - CRITICAL FIX: do NOT kill global scrolling; lock scrolling ONLY while game is running.
+// FIXES:
+// - Scrolling in menu/tab screens works (no global kill).
+// - Scroll inside modals works.
+// - Game always starts (API contract aligned with zombies.init.js).
+// - Dual-stick: LEFT=move, RIGHT=aim + hold-to-shoot.
+// - FIRE legacy button: auto-hide when right stick exists.
+// - iOS dead taps: pointer events + proper capture.
+// - Prevent pinch/zoom ONLY while in game takeover.
+// - Fullscreen takeover best-effort via Telegram WebApp API.
 
 (() => {
   "use strict";
@@ -27,7 +31,7 @@
     return null;
   }
 
-  // Canvas (main game surface)
+  // Main game canvas (must exist on Game tab screen)
   const canvas = pickEl([
     "#zombiesCanvas",
     "#zCanvas",
@@ -36,7 +40,7 @@
     "canvas"
   ]);
 
-  // Left/right sticks containers (your UI already has 2 circles)
+  // Left/right joystick containers (UI already has circles)
   const stickL = pickEl([
     "#joyL", "#stickLeft", ".joy.left", ".joystick.left", ".joy-left", ".stick-left",
     "[data-joy='left']"
@@ -47,14 +51,14 @@
     "[data-joy='right']"
   ]);
 
-  // FIRE button (we will hide if right stick exists)
+  // Legacy FIRE button (optional)
   const btnFire = pickEl([
     "#btnFire", "#fire", ".btn-fire", ".fire",
     "button[data-action='fire']",
     ".z-fire"
   ]);
 
-  // Start Fullscreen button (if exists)
+  // Start fullscreen (optional)
   const btnStart = pickEl([
     "#btnStartFullscreen",
     "button[data-action='start_fullscreen']",
@@ -63,112 +67,115 @@
     ".start-fullscreen"
   ]);
 
-  // Optional: debug/health label
   const jsHealth = pickEl(["#jsHealth", ".jsHealth", "[data-js-health]"]);
-
-  function health(msg) {
-    if (!jsHealth) return;
-    try { jsHealth.textContent = String(msg || ""); } catch {}
-  }
+  function health(msg) { try { if (jsHealth) jsHealth.textContent = String(msg || ""); } catch {} }
 
   // -------------------------
-  // Helpers
+  // STATE
   // -------------------------
-  const CORE = () => window.BCO_ZOMBIES_CORE || null;
+  const STATE = {
+    inGame: false,
+    mode: "arcade",
+    map: "Ashes",
+    character: "male",
+    skin: "default",
+    weaponKey: "SMG",
+    lastSnapshot: null,
+    snapshotSubs: new Set(),
+    _raf: 0
+  };
 
-  function isGameRunning() {
-    const c = CORE();
-    return !!(c && c.running);
-  }
+  function CORE() { return window.BCO_ZOMBIES_CORE || null; }
 
-  function markScrollZones() {
-    // We do NOT redesign UI. We only mark known modal bodies as scroll-allowed
-    // so touchmove handler can pass them through on iOS.
+  // -------------------------
+  // iOS / WebView hardening
+  // IMPORTANT: DO NOT KILL SCROLL globally.
+  // We apply strict "no scroll / no pinch" ONLY during game takeover.
+  // -------------------------
+  function setHardening(on) {
     try {
-      const nodes = Array.from(document.querySelectorAll(
-        ".modal, .modal-body, .sheet, .sheet-body, .dialog, .dialog-body, [data-allow-scroll], .allow-scroll"
-      ));
-      for (const n of nodes) {
-        if (!n || !n.classList) continue;
-        if (!n.classList.contains("allow-scroll")) n.classList.add("allow-scroll");
-        // allow vertical scrolling inside these containers
-        try { n.style.touchAction = n.style.touchAction || "pan-y"; } catch {}
-        try { n.style.webkitOverflowScrolling = "touch"; } catch {}
-      }
-    } catch {}
-  }
+      const root = document.documentElement;
+      const body = document.body;
 
-  function isInsideScrollZone(ev) {
-    try {
-      const path = (ev && ev.composedPath && ev.composedPath()) || [];
-      for (const n of path) {
-        if (!n) continue;
-        if (n.classList && (n.classList.contains("allow-scroll") || n.classList.contains("modal") || n.classList.contains("modal-body"))) {
-          return true;
+      if (!root || !body) return;
+
+      if (on) {
+        body.classList.add("bco-game-active");
+
+        // prevent selection / callout
+        body.style.userSelect = "none";
+        body.style.webkitUserSelect = "none";
+        body.style.webkitTouchCallout = "none";
+
+        // stop overscroll bounce
+        root.style.overscrollBehavior = "none";
+        body.style.overscrollBehavior = "none";
+
+        // IMPORTANT: lock gestures only in game
+        root.style.touchAction = "none";
+        body.style.touchAction = "none";
+
+        // ensure main controls receive pointer events
+        if (canvas) { canvas.style.touchAction = "none"; canvas.style.pointerEvents = "auto"; }
+        for (const el of [stickL, stickR, btnFire, btnStart]) {
+          if (!el) continue;
+          el.style.touchAction = "none";
+          el.style.pointerEvents = "auto";
         }
-        // any element with scrollable overflow should be allowed
-        if (n instanceof HTMLElement) {
-          const st = window.getComputedStyle(n);
-          const oy = st && st.overflowY;
-          if ((oy === "auto" || oy === "scroll") && (n.scrollHeight > n.clientHeight + 2)) return true;
+      } else {
+        body.classList.remove("bco-game-active");
+
+        // restore to allow scroll everywhere
+        body.style.userSelect = "";
+        body.style.webkitUserSelect = "";
+        body.style.webkitTouchCallout = "";
+
+        root.style.overscrollBehavior = "";
+        body.style.overscrollBehavior = "";
+
+        root.style.touchAction = "";
+        body.style.touchAction = "";
+
+        if (canvas) { canvas.style.touchAction = ""; canvas.style.pointerEvents = ""; }
+        for (const el of [stickL, stickR, btnFire, btnStart]) {
+          if (!el) continue;
+          el.style.touchAction = "";
+          el.style.pointerEvents = "";
         }
       }
-    } catch {}
-    return false;
+    } catch (e) {
+      warn("setHardening failed", e);
+    }
   }
 
-  // -------------------------
-  // iOS / WebView touch hardening (NO dead taps)
-  // CRITICAL: do NOT disable global scrolling when not playing.
-  // -------------------------
-  function applyIosHardening() {
+  // prevent pinch zoom ONLY in game
+  function installGestureBlockers() {
     try {
-      // Prevent long-press selection/callout (safe globally)
-      document.body.style.userSelect = "none";
-      document.body.style.webkitUserSelect = "none";
-      document.body.style.webkitTouchCallout = "none";
-
-      // IMPORTANT: DO NOT set touchAction:none on body/html globally.
-      // Keep normal scrolling in app screens.
-      try { document.body.style.touchAction = "manipulation"; } catch {}
-      try { document.documentElement.style.touchAction = "manipulation"; } catch {}
-
-      // Canvas + sticks must be crisp for pointer events
-      if (canvas) {
-        canvas.style.touchAction = "none";
-        canvas.style.pointerEvents = "auto";
-      }
-      for (const el of [stickL, stickR, btnFire, btnStart]) {
-        if (!el) continue;
-        el.style.touchAction = "none";
-        el.style.pointerEvents = "auto";
-      }
-
-      // Hard prevent pinch zoom gesture (global)
-      const prevent = (e) => { try { e.preventDefault(); } catch {} };
+      const prevent = (e) => {
+        if (!STATE.inGame) return;
+        try { e.preventDefault(); } catch {}
+      };
       document.addEventListener("gesturestart", prevent, { passive: false });
       document.addEventListener("gesturechange", prevent, { passive: false });
       document.addEventListener("gestureend", prevent, { passive: false });
 
-      // Only prevent scroll while GAME is actually running AND touch is outside scroll zones.
+      // allow scroll in modals ALWAYS; block only during game and only outside modals
       document.addEventListener("touchmove", (e) => {
-        if (!isGameRunning()) return;             // <-- KEY FIX
-        if (isInsideScrollZone(e)) return;        // allow modals / scroll areas
-        try { e.preventDefault(); } catch {}
+        if (!STATE.inGame) return; // <- menu scroll works
+        const path = (e.composedPath && e.composedPath()) || [];
+        for (const n of path) {
+          if (!n) continue;
+          const cls = n.classList;
+          if (cls && (cls.contains("modal") || cls.contains("modal-body") || cls.contains("allow-scroll"))) {
+            return; // allow modal scrolling even in game
+          }
+        }
+        e.preventDefault();
       }, { passive: false });
 
-      // Also guard wheel scrolling when in game (desktop)
-      document.addEventListener("wheel", (e) => {
-        if (!isGameRunning()) return;
-        if (isInsideScrollZone(e)) return;
-        try { e.preventDefault(); } catch {}
-      }, { passive: false });
-
-      markScrollZones();
-
-      log("iOS hardening applied (safe)");
+      log("gesture blockers installed");
     } catch (e) {
-      warn("iOS hardening failed", e);
+      warn("installGestureBlockers failed", e);
     }
   }
 
@@ -178,12 +185,13 @@
   function requestTakeover() {
     try {
       if (!TG) return;
+      try { TG.ready && TG.ready(); } catch {}
+      try { TG.expand && TG.expand(); } catch {}
 
-      try { TG.expand(); } catch {}
       try { TG.MainButton && TG.MainButton.hide && TG.MainButton.hide(); } catch {}
       try { TG.BackButton && TG.BackButton.hide && TG.BackButton.hide(); } catch {}
 
-      // evolving APIs
+      // evolving API - safe calls
       try { TG.requestFullscreen && TG.requestFullscreen(); } catch {}
       try { TG.setHeaderColor && TG.setHeaderColor("#000000"); } catch {}
       try { TG.setBackgroundColor && TG.setBackgroundColor("#000000"); } catch {}
@@ -203,7 +211,7 @@
     const dpr = Math.max(1, Math.min(3, (window.devicePixelRatio || 1)));
     const rect = canvas.getBoundingClientRect();
 
-    // If canvas has no explicit size yet, stretch to parent
+    // stretch if not sized
     if (!rect.width || !rect.height) {
       const p = canvas.parentElement || document.body;
       const pr = p.getBoundingClientRect();
@@ -218,7 +226,7 @@
     if (canvas.width !== w) canvas.width = w;
     if (canvas.height !== h) canvas.height = h;
 
-    // Notify CORE about logical size in CSS pixels (not DPR)
+    // notify CORE about logical size in CSS px
     try {
       const c = CORE();
       if (c && c.resize) c.resize(Math.floor(r2.width), Math.floor(r2.height));
@@ -261,12 +269,19 @@
       if (knob) knob.style.transform = "translate(0px, 0px)";
     }
 
+    function pushToCore(nx, ny) {
+      const c = CORE();
+      if (!c) return;
+      if (kind === "move") c.setMove && c.setMove(nx, ny);
+      else c.setAim && c.setAim(nx, ny);
+    }
+
     function onDown(e) {
       try { e.preventDefault(); } catch {}
       recalc();
       active = true;
       pid = e.pointerId;
-      el.setPointerCapture && el.setPointerCapture(pid);
+      try { el.setPointerCapture && el.setPointerCapture(pid); } catch {}
       onMove(e);
     }
 
@@ -277,21 +292,15 @@
       const vx = (e.clientX - cx);
       const vy = (e.clientY - cy);
       const L = Math.hypot(vx, vy) || 0;
+
       const nx = L > 0 ? (vx / Math.max(L, radius)) : 0;
       const ny = L > 0 ? (vy / Math.max(L, radius)) : 0;
 
       const clx = Math.max(-1, Math.min(1, nx));
       const cly = Math.max(-1, Math.min(1, ny));
+
       setKnob(clx, cly);
-
-      const c = CORE();
-      if (!c) return;
-
-      if (kind === "move") {
-        c.setMove && c.setMove(clx, cly);
-      } else {
-        c.setAim && c.setAim(clx, cly);
-      }
+      pushToCore(clx, cly);
     }
 
     function onUp(e) {
@@ -303,9 +312,8 @@
       try { el.releasePointerCapture && el.releasePointerCapture(e.pointerId); } catch {}
       resetKnob();
 
-      const c = CORE();
-      if (c && kind === "move") c.setMove && c.setMove(0, 0);
-      if (c && kind === "aim") c.setAim && c.setAim(0, 0);
+      // center
+      pushToCore(0, 0);
     }
 
     el.addEventListener("pointerdown", onDown, { passive: false });
@@ -325,10 +333,10 @@
   }
 
   // -------------------------
-  // FIRE behavior (legacy)
+  // FIRE legacy behavior
   // -------------------------
   function setupFireBehavior() {
-    // If dual-stick exists -> FIRE is redundant. Hide it.
+    // If dual-stick exists -> FIRE redundant. Hide it.
     if (stickR && btnFire) {
       btnFire.style.display = "none";
       btnFire.style.pointerEvents = "none";
@@ -356,11 +364,10 @@
   }
 
   // -------------------------
-  // Auto-shoot on RIGHT stick hold (Dual-stick)
+  // Auto-shoot on RIGHT stick hold
   // -------------------------
   function setupDualStickShooting(aimStick) {
     if (!aimStick) return;
-
     function tick() {
       const c = CORE();
       if (c && c.setShooting) {
@@ -380,12 +387,21 @@
     if (!c || !c.getFrameData) return;
 
     const snap = c.getFrameData();
+    STATE.lastSnapshot = snap;
+
+    // notify subscribers
+    if (STATE.snapshotSubs.size) {
+      for (const cb of STATE.snapshotSubs) {
+        try { cb(snap); } catch {}
+      }
+    }
 
     const R = window.BCO_ZOMBIES_RENDER || window.BCO_ZOMBIES_RENDERER || window.BCO_ZOMBIES_DRAW;
     if (R && typeof R.draw === "function") {
-      try { R.draw(canvas, snap); return; } catch (e) { /* fallback below */ }
+      try { R.draw(canvas, snap); return; } catch (e) { /* fallback */ }
     }
 
+    // minimal fallback
     const ctx = canvas ? canvas.getContext("2d") : null;
     if (!ctx) return;
 
@@ -421,16 +437,15 @@
   }
 
   // -------------------------
-  // Main loop (guaranteed start)
+  // Loop (guaranteed start)
   // -------------------------
-  let _raf = 0;
   function startLoop() {
-    if (_raf) return true;
+    if (STATE._raf) return true;
 
     const c = CORE();
     if (!c || !c.updateFrame || !c.getFrameData) {
       health("Core not loaded");
-      warn("BCO_ZOMBIES_CORE missing or incomplete");
+      warn("BCO_ZOMBIES_CORE missing/incomplete");
       return false;
     }
 
@@ -443,50 +458,91 @@
         warn("frame error", e);
         health("frame error");
       }
-      _raf = requestAnimationFrame(frame);
+      STATE._raf = requestAnimationFrame(frame);
     }
 
-    _raf = requestAnimationFrame(frame);
+    STATE._raf = requestAnimationFrame(frame);
     health("loop ok");
     log("loop started");
     return true;
   }
 
   function stopLoop() {
-    if (_raf) {
-      try { cancelAnimationFrame(_raf); } catch {}
-      _raf = 0;
-    }
+    if (!STATE._raf) return true;
+    try { cancelAnimationFrame(STATE._raf); } catch {}
+    STATE._raf = 0;
     return true;
   }
 
   // -------------------------
-  // Start game (calls CORE.start safely)
+  // GAME lifecycle (contract for zombies.init.js)
   // -------------------------
-  function startGame(forceTakeover = false, modeOverride = null, optsOverride = null) {
+  function open() {
+    // If you already have overlay open/close logic elsewhere – keep it there.
+    // Here: just mark state; do not change UI layout.
+    return true;
+  }
+
+  function close() {
+    return true;
+  }
+
+  function setMode(mode) {
+    STATE.mode = String(mode || "arcade");
+    return STATE.mode;
+  }
+
+  function setMap(map) {
+    STATE.map = String(map || "Ashes");
+    return STATE.map;
+  }
+
+  function setCharacter(character, skin) {
+    STATE.character = String(character || "male");
+    STATE.skin = String(skin || "default");
+    return { character: STATE.character, skin: STATE.skin };
+  }
+
+  function setWeapon(key) {
+    STATE.weaponKey = String(key || "SMG");
+    try { CORE()?.setWeapon?.(STATE.weaponKey); } catch {}
+    return STATE.weaponKey;
+  }
+
+  function start(mode = "arcade", opts = {}) {
     const c = CORE();
     if (!c || !c.start) {
       health("Core not ready");
       return false;
     }
 
-    if (forceTakeover) requestTakeover();
+    // apply opts -> local state
+    if (opts && typeof opts === "object") {
+      if (opts.map) STATE.map = String(opts.map);
+      if (opts.character) STATE.character = String(opts.character);
+      if (opts.skin) STATE.skin = String(opts.skin);
+      if (opts.weaponKey) STATE.weaponKey = String(opts.weaponKey);
+    }
+    STATE.mode = String(mode || STATE.mode || "arcade");
 
+    // enter game mode (hardening ON)
+    STATE.inGame = true;
+    setHardening(true);
+
+    // best effort takeover
+    requestTakeover();
+
+    // ensure canvas sized
     const r = resizeCanvas() || { cssW: window.innerWidth, cssH: window.innerHeight };
 
-    const mode = (modeOverride != null)
-      ? modeOverride
-      : (window.BCO_ZOMBIES_MODE || window.__Z_MODE__ || c.meta?.mode || "arcade");
-
-    const map = (optsOverride && optsOverride.map) ? optsOverride.map : (window.BCO_ZOMBIES_MAP || window.__Z_MAP__ || c.meta?.map || "Ashes");
-    const character = (optsOverride && optsOverride.character) ? optsOverride.character : (window.BCO_ZOMBIES_CHARACTER || c.meta?.character || "male");
-    const skin = (optsOverride && optsOverride.skin) ? optsOverride.skin : (window.BCO_ZOMBIES_SKIN || c.meta?.skin || "default");
-    const weaponKey = (optsOverride && optsOverride.weaponKey) ? optsOverride.weaponKey : (c.meta?.weaponKey || "SMG");
-
-    const opts = { map, character, skin, weaponKey };
-
     try {
-      c.start(String(mode), Math.floor(r.cssW), Math.floor(r.cssH), opts);
+      c.start(STATE.mode, Math.floor(r.cssW), Math.floor(r.cssH), {
+        map: STATE.map,
+        character: STATE.character,
+        skin: STATE.skin,
+        weaponKey: STATE.weaponKey
+      });
+
       startLoop();
       health("running");
       return true;
@@ -497,164 +553,123 @@
     }
   }
 
-  // -------------------------
-  // API expected by zombies.init.js (contract compatibility)
-  // -------------------------
-  let _mode = "arcade";
-  let _map = null;
-  let _character = null;
-  let _skin = null;
-  let _weaponKey = null;
-
-  function open() {
-    // If you have overlay container, this is where you would show it.
-    // We keep it safe: no UI changes. Return true for compatibility.
-    markScrollZones();
-    return true;
-  }
-
-  function close() {
-    // No-op (no UI change). Compatibility.
-    return true;
-  }
-
-  function start(mode = "arcade", opts = {}) {
-    _mode = String(mode || "arcade");
-    _map = opts.map ?? _map;
-    _character = opts.character ?? _character;
-    _skin = opts.skin ?? _skin;
-    _weaponKey = opts.weaponKey ?? _weaponKey;
-
-    return startGame(true, _mode, {
-      map: _map,
-      character: _character,
-      skin: _skin,
-      weaponKey: _weaponKey
-    });
-  }
-
   function stop(reason = "manual") {
     const c = CORE();
-    if (c && c.stop) {
-      try { c.stop(reason); } catch {}
-    } else if (c) {
-      try { c.running = false; } catch {}
-    }
+    try { c?.stop?.(reason); } catch {}
+
+    // exit game mode (hardening OFF -> scroll returns)
+    STATE.inGame = false;
+    setHardening(false);
+
     stopLoop();
     health("stopped");
     return true;
   }
 
-  function setMode(mode) { _mode = String(mode || "arcade"); return _mode; }
-  function setMap(name) { _map = String(name || "Ashes"); return _map; }
-  function setCharacter(character, skin) {
-    _character = String(character || "male");
-    if (skin != null) _skin = String(skin);
-    return { character: _character, skin: _skin ?? "default" };
-  }
-  function setWeapon(key) {
-    _weaponKey = String(key || "SMG");
-    const c = CORE();
-    if (c && c.setWeapon) try { c.setWeapon(_weaponKey); } catch {}
-    return _weaponKey;
-  }
+  // Shop passthrough (contract)
+  function buyPerk(id) { try { return !!CORE()?.buyPerk?.(id); } catch { return false; } }
+  function reload() { try { return !!CORE()?.reload?.(); } catch { return false; } }
+  function usePlate() { try { return !!CORE()?.usePlate?.(); } catch { return false; } }
 
-  function buyPerk(id) {
-    const c = CORE();
-    if (c && c.buyPerk) return !!c.buyPerk(id);
-    return false;
-  }
-
-  function reload() {
-    const c = CORE();
-    if (c && c.reload) return !!c.reload();
-    return false;
-  }
-
-  function usePlate() {
-    const c = CORE();
-    if (c && c.usePlate) return !!c.usePlate();
-    return false;
-  }
-
-  function sendResult(reason = "manual") {
-    // If you already have bot sendData in app.js, you can hook it there.
-    // Keep compatibility only:
-    log("sendResult (compat)", reason);
+  function getSnapshot() { return STATE.lastSnapshot || (CORE()?.getFrameData?.() ?? null); }
+  function onSnapshot(cb) {
+    if (typeof cb !== "function") return false;
+    STATE.snapshotSubs.add(cb);
     return true;
   }
 
   function getInput() {
     const c = CORE();
-    return c ? { ...c.input } : null;
+    if (!c) return null;
+    return { ...c.input };
   }
 
   function setInput(obj) {
     const c = CORE();
     if (!c || !obj) return false;
     try {
-      if ("moveX" in obj || "moveY" in obj) c.setMove(obj.moveX ?? c.input.moveX, obj.moveY ?? c.input.moveY);
-      if ("aimX" in obj || "aimY" in obj) c.setAim(obj.aimX ?? c.input.aimX, obj.aimY ?? c.input.aimY);
-      if ("shooting" in obj) c.setShooting(!!obj.shooting);
+      if (typeof obj.moveX === "number" || typeof obj.moveY === "number") c.setMove?.(obj.moveX || 0, obj.moveY || 0);
+      if (typeof obj.aimX === "number" || typeof obj.aimY === "number") c.setAim?.(obj.aimX || 0, obj.aimY || 0);
+      if (typeof obj.shooting === "boolean") c.setShooting?.(obj.shooting);
       return true;
     } catch { return false; }
+  }
+
+  function sendResult(reason = "manual") {
+    // If you already have app.js sendData -> use it there.
+    // Here we just provide a hook.
+    try {
+      const snap = getSnapshot();
+      if (!snap) return false;
+      const payload = {
+        action: "game_result",
+        game: "zombies",
+        reason,
+        mode: snap.meta?.mode || STATE.mode,
+        map: snap.meta?.map || STATE.map,
+        wave: snap.hud?.wave || 1,
+        kills: snap.hud?.kills || 0,
+        coins: snap.hud?.coins || 0,
+        duration: snap.hud?.timeMs || 0,
+        relics: snap.hud?.relics || 0,
+        wonderUnlocked: !!snap.hud?.wonderUnlocked
+      };
+
+      // telegram sendData if available
+      if (TG && TG.sendData) {
+        TG.sendData(JSON.stringify(payload));
+        return true;
+      }
+    } catch {}
+    return false;
   }
 
   // -------------------------
   // Init
   // -------------------------
   function init() {
-    applyIosHardening();
-    markScrollZones();
+    installGestureBlockers();
 
+    // sticks
     const moveStick = makeStick(stickL, "move");
     const aimStick  = makeStick(stickR, "aim");
 
     if (aimStick) setupDualStickShooting(aimStick);
     setupFireBehavior();
 
+    // start button (optional)
     if (btnStart) {
       btnStart.addEventListener("pointerdown", (e) => {
         try { e.preventDefault(); } catch {}
-        // contract: start game in current selected mode/options
-        start(_mode || "arcade", {
-          map: _map,
-          character: _character,
-          skin: _skin,
-          weaponKey: _weaponKey
-        });
+        start(STATE.mode || "arcade", { map: STATE.map, character: STATE.character, skin: STATE.skin, weaponKey: STATE.weaponKey });
       }, { passive: false });
     }
 
+    // tap canvas to start (only when not running)
     if (canvas) {
       canvas.addEventListener("pointerdown", (e) => {
         const c = CORE();
         if (!c || c.running) return;
         try { e.preventDefault(); } catch {}
-        start(_mode || "arcade", {
-          map: _map,
-          character: _character,
-          skin: _skin,
-          weaponKey: _weaponKey
-        });
+        start(STATE.mode || "arcade", { map: STATE.map, character: STATE.character, skin: STATE.skin, weaponKey: STATE.weaponKey });
       }, { passive: false });
     }
 
-    window.addEventListener("resize", () => {
-      resizeCanvas();
-      markScrollZones();
-    });
+    // resize
+    window.addEventListener("resize", () => { resizeCanvas(); });
 
+    // Telegram ready/expand (does not takeover)
     if (TG) {
       try { TG.ready && TG.ready(); } catch {}
       try { TG.expand && TG.expand(); } catch {}
     }
 
-    // If core already running -> ensure loop
-    try {
-      const c = CORE();
-      if (c && c.running) startLoop();
-    } catch {}
+    // ensure loop if core already running
+    try { if (CORE()?.running) startLoop(); } catch {}
+
+    // start in menu mode -> hardening OFF so scroll works
+    STATE.inGame = false;
+    setHardening(false);
 
     health("ready");
     log("init ok", { hasCanvas: !!canvas, hasL: !!stickL, hasR: !!stickR, hasFire: !!btnFire, hasStart: !!btnStart });
@@ -666,38 +681,25 @@
     init();
   }
 
-  // Expose full API expected by init.js
+  // Export CONTRACT API (this is what zombies.init.js expects)
   window.BCO_ZOMBIES_GAME = {
-    // overlay (compat)
     open,
     close,
-
-    // run control (contract)
     start,
     stop,
-
-    // settings (contract)
     setMode,
     setMap,
     setCharacter,
     setWeapon,
-
-    // actions (contract)
     buyPerk,
     reload,
     usePlate,
     sendResult,
-
-    // loop/tools
-    startLoop,
-    stopLoop,
-    resizeCanvas,
-
-    // io
+    getSnapshot,
+    onSnapshot,
     getInput,
     setInput,
-
-    // raw (legacy)
-    startGame
+    resizeCanvas,
+    startLoop
   };
 })();
