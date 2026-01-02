@@ -1,12 +1,7 @@
-/* =========================================================
-   BLACK CROWN OPS — ZOMBIES CORE (Engine)
-   File: app/webapp/static/zombies.core.js
-   Provides: window.BCO_ZOMBIES_CORE
-   ========================================================= */
+// app/webapp/static/zombies.core.js
 (() => {
   "use strict";
 
-  const now = () => performance.now();
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const len = (x, y) => Math.hypot(x, y) || 0;
   const norm = (x, y) => {
@@ -48,7 +43,9 @@
       baseCount: 7,
       countGrowth: 2,
       hpGrowth: 1.08,
-      speedGrowth: 1.03
+      speedGrowth: 1.03,
+      spawnRingMin: 520,
+      spawnRingMax: 880
     },
 
     weapons: {
@@ -69,8 +66,8 @@
 
     // runtime
     running: false,
-    startedAt: 0,
-    lastT: 0,
+    startedAt: 0,   // ms (rAF/perf clock)
+    lastT: 0,       // ms (rAF/perf clock)
 
     // input
     input: {
@@ -79,7 +76,7 @@
       shooting: false
     },
 
-    // world select
+    // meta
     meta: {
       mode: "arcade",
       map: "Ashes",
@@ -88,13 +85,11 @@
       weaponKey: "SMG"
     },
 
-    // main state
+    // state
     state: {
-      // screen
       w: 0, h: 0,
       camX: 0, camY: 0,
 
-      // run stats
       timeMs: 0,
       wave: 1,
       kills: 0,
@@ -117,7 +112,7 @@
     // -------------------------------------------------------
     // Public control
     // -------------------------------------------------------
-    start(mode, w, h, opts = {}) {
+    start(mode, w, h, opts = {}, tms = performance.now()) {
       this.meta.mode = (String(mode || "").toLowerCase().includes("rogue")) ? "roguelike" : "arcade";
       this.state.w = Math.max(1, w | 0);
       this.state.h = Math.max(1, h | 0);
@@ -130,7 +125,7 @@
       this._resetRun();
 
       this.running = true;
-      this.startedAt = now();
+      this.startedAt = Number(tms) || performance.now();
       this.lastT = 0;
 
       return true;
@@ -180,6 +175,7 @@
       if (!p) return false;
 
       if (this.meta.mode !== "roguelike") return false;
+      if (this.state.perks[id]) return false;
       if (this.state.coins < p.cost) return false;
 
       this.state.coins -= p.cost;
@@ -199,18 +195,18 @@
       return true;
     },
 
-    updateFrame(t) {
-      if (!this.running) return;
+    updateFrame(tms) {
+      if (!this.running) return false;
+
+      const t = Number(tms) || performance.now();
 
       if (!this.lastT) this.lastT = t;
       let dt = (t - this.lastT) / 1000;
       this.lastT = t;
+
       dt = Math.min(CFG.dtMax, Math.max(0, dt));
 
-      const tms = (this.startedAt ? (this.startedAt + (t - this.lastT)) : now());
-      // we'll use "t" from rAF as ms clock too:
       this._tick(dt, t);
-
       return true;
     },
 
@@ -269,7 +265,7 @@
 
       for (let i = 0; i < count; i++) {
         const ang = rand(0, Math.PI * 2);
-        const r = rand(520, 880);
+        const r = rand(CFG.wave.spawnRingMin, CFG.wave.spawnRingMax);
         const x = S.player.x + Math.cos(ang) * r;
         const y = S.player.y + Math.sin(ang) * r;
 
@@ -322,7 +318,6 @@
 
     _hitPlayer(tms) {
       const S = this.state;
-      const st = this._effectiveStats();
       if (tms - S.player.lastHitAt < CFG.player.iFramesMs) return;
 
       S.player.lastHitAt = tms;
@@ -335,7 +330,9 @@
 
     _tick(dt, tms) {
       const S = this.state;
-      S.timeMs = Math.max(0, (now() - this.startedAt) | 0);
+
+      // run clock
+      S.timeMs = Math.max(0, (tms - this.startedAt));
 
       // movement
       const st = this._effectiveStats();
@@ -430,7 +427,7 @@
         this._spawnWave(S.wave);
       }
 
-      // camera (simple follow)
+      // camera follow
       S.camX = S.player.x;
       S.camY = S.player.y;
     }
