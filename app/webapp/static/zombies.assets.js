@@ -104,7 +104,6 @@
           loadImage(PATHS.quad.q4)
         ]);
 
-        // assume quadrants same size
         const qw = q1.naturalWidth || q1.width;
         const qh = q1.naturalHeight || q1.height;
 
@@ -138,9 +137,6 @@
   // =========================
   // Sprite map (EDIT HERE later)
   // =========================
-  // ⚠️ Это стартовый “безопасный” мэппинг.
-  // ТЫ ПОТОМ ПОДГОНИШЬ x,y,w,h под свой лист.
-  // Важно: игра НЕ УПАДЁТ, даже если мэппинг кривой — просто картинка будет не та.
   const SPRITES = {
     // player
     player_male_idle:   { x: 40,  y: 40,  w: 180, h: 220, anchorX: 0.5, anchorY: 0.72 },
@@ -172,7 +168,6 @@
     ctx.translate(x, y);
     if (rot) ctx.rotate(rot);
 
-    // draw with anchor
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(
       Atlas.img,
@@ -186,7 +181,7 @@
   }
 
   // =========================
-  // Fallback vector drawings (твои текущие)
+  // Fallback vector drawings
   // =========================
   const Fallback = {
     player: {
@@ -241,7 +236,7 @@
   };
 
   // =========================
-  // Public Assets API
+  // Public Assets API state
   // =========================
   let currentPlayer = "male";   // male | female
   let currentZombie = "basic";  // basic | brute
@@ -260,42 +255,50 @@
   }
 
   // =========================
-  // Core draw hooks
+  // Service draw functions (для app.js)
+  // =========================
+  function drawPlayer(ctx, x, y, dirX, dirY, opts = {}) {
+    const rot = Math.atan2(dirY || 0, dirX || 1);
+    const sex = opts.player || currentPlayer;
+    const key = (sex === "female") ? "player_female_idle" : "player_male_idle";
+    const ok = drawSprite(ctx, key, x, y, { scale: (opts.scale ?? 0.34), rot });
+    if (!ok) {
+      const skin = Fallback.player[sex] || Fallback.player.male;
+      skin.draw(ctx, x, y, dirX || 1, dirY || 0);
+    }
+    return ok;
+  }
+
+  function drawZombie(ctx, x, y, opts = {}) {
+    const kind = opts.zombie || currentZombie;
+    const key = (kind === "brute") ? "zombie_brute_walk" : "zombie_basic_walk";
+    const ok = drawSprite(ctx, key, x, y, { scale: (opts.scale ?? 0.34), rot: 0 });
+    if (!ok) {
+      const skin = Fallback.zombies[kind] || Fallback.zombies.basic;
+      skin.draw(ctx, x, y);
+    }
+    return ok;
+  }
+
+  // =========================
+  // Core draw hooks (для zombies.js)
   // =========================
   const core = window.BCO_ZOMBIES;
 
   core._drawPlayer = function (ctx, player) {
-    // aim rotation
-    const rot = Math.atan2(player.dirY || 0, player.dirX || 1);
-
-    // try sprite
-    const key = (currentPlayer === "female") ? "player_female_idle" : "player_male_idle";
-    const ok = drawSprite(ctx, key, player.x, player.y, { scale: 0.34, rot });
-
-    // fallback
-    if (!ok) {
-      const skin = Fallback.player[currentPlayer] || Fallback.player.male;
-      skin.draw(ctx, player.x, player.y, player.dirX || 1, player.dirY || 0);
-    }
+    return drawPlayer(ctx, player.x, player.y, player.dirX || 1, player.dirY || 0, { player: currentPlayer, scale: 0.34 });
   };
 
   core._drawZombie = function (ctx, zombie) {
-    const key = (currentZombie === "brute") ? "zombie_brute_walk" : "zombie_basic_walk";
-    const ok = drawSprite(ctx, key, zombie.x, zombie.y, { scale: 0.34, rot: 0 });
-
-    if (!ok) {
-      const skin = Fallback.zombies[currentZombie] || Fallback.zombies.basic;
-      skin.draw(ctx, zombie.x, zombie.y);
-    }
+    return drawZombie(ctx, zombie.x, zombie.y, { zombie: currentZombie, scale: 0.34 });
   };
 
   // =========================
-  // Debug helper (optional)
+  // Debug helper
   // =========================
   let debugDrawAtlas = false;
   function setDebugAtlas(on) { debugDrawAtlas = !!on; }
 
-  // This can be called from your core render loop if you want.
   core._assetsDebugOverlay = function (ctx, w, h) {
     if (!debugDrawAtlas || !Atlas.ready || !Atlas.img) return;
     ctx.save();
@@ -303,10 +306,10 @@
     const scale = 0.18;
     ctx.drawImage(Atlas.img, 12, 12, Atlas.w * scale, Atlas.h * scale);
     ctx.fillStyle = "rgba(0,0,0,.55)";
-    ctx.fillRect(12, 12 + Atlas.h * scale + 8, 260, 26);
+    ctx.fillRect(12, 12 + Atlas.h * scale + 8, 320, 26);
     ctx.fillStyle = "rgba(255,255,255,.92)";
     ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-    ctx.fillText(`atlas: ${Atlas.w}x${Atlas.h} (${Atlas.mode})`, 18, 12 + Atlas.h * scale + 26);
+    ctx.fillText(`atlas: ${Atlas.w}x${Atlas.h} (${Atlas.mode}) ready=${Atlas.ready}`, 18, 12 + Atlas.h * scale + 26);
     ctx.restore();
   };
 
@@ -329,6 +332,9 @@
     setAtlasMode,
     setDebugAtlas,
     getAtlasState: () => ({ ready: Atlas.ready, failed: Atlas.failed, mode: Atlas.mode, w: Atlas.w, h: Atlas.h }),
+    drawSprite,    // ✅ теперь доступно извне
+    drawPlayer,    // ✅ вот это и нужно app.js
+    drawZombie,    // ✅ и это
     SPRITES
   };
 
