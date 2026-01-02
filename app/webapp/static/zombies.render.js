@@ -1,206 +1,157 @@
 /* =========================================================
-   BLACK CROWN OPS — ZOMBIES RENDERER + INPUT (FULLSCREEN)
+   BLACK CROWN OPS — ZOMBIES RENDER
    File: app/webapp/static/zombies.render.js
+   Provides: window.BCO_ZOMBIES_RENDER
    ========================================================= */
-
 (() => {
   "use strict";
 
-  if (!window.BCO_ZOMBIES_CORE) {
-    console.error("[Z_RENDER] core missing");
-    return;
-  }
-
-  const CORE = window.BCO_ZOMBIES_CORE;
   const ASSETS = () => window.BCO_ZOMBIES_ASSETS || null;
-  const tg = window.Telegram?.WebApp || null;
 
-  // =========================================================
-  // DOM / OVERLAY
-  // =========================================================
-  const mount = document.getElementById("zOverlayMount");
-  if (!mount) {
-    console.error("[Z_RENDER] zOverlayMount missing");
-    return;
-  }
+  const RENDER = {
+    render(ctx, CORE, input, view) {
+      const S = CORE.state;
+      const w = view.w, h = view.h;
 
-  const overlay = document.createElement("div");
-  overlay.id = "bco-z-overlay";
-  overlay.style.cssText = `
-    position:fixed; inset:0; z-index:999999;
-    background:#05070c;
-    touch-action:none;
-  `;
+      ctx.clearRect(0, 0, w, h);
 
-  const canvas = document.createElement("canvas");
-  canvas.style.cssText = `
-    position:absolute; inset:0;
-    width:100%; height:100%;
-    touch-action:none;
-  `;
+      // background vignette
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,.18)";
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
 
-  overlay.appendChild(canvas);
-  mount.appendChild(overlay);
+      // world transform (camera centered)
+      const camX = S.camX, camY = S.camY;
 
-  const ctx = canvas.getContext("2d");
-  let W = 0, H = 0, DPR = 1;
+      // map (optional)
+      try {
+        const MAPS = window.BCO_ZOMBIES_MAPS;
+        const map = MAPS?.get?.(CORE.meta.map);
+        if (map) {
+          // simple dark tile back
+          ctx.save();
+          ctx.translate(w / 2, h / 2);
+          ctx.translate(-camX, -camY);
+          ctx.globalAlpha = 0.18;
+          ctx.fillStyle = "#ffffff";
+          const step = 64;
+          const minX = (camX - w / 2 - 200) | 0;
+          const minY = (camY - h / 2 - 200) | 0;
+          const maxX = (camX + w / 2 + 200) | 0;
+          const maxY = (camY + h / 2 + 200) | 0;
+          for (let x = Math.floor(minX / step) * step; x < maxX; x += step) {
+            for (let y = Math.floor(minY / step) * step; y < maxY; y += step) {
+              ctx.fillRect(x + 1, y + 1, 1, 1);
+            }
+          }
+          ctx.restore();
+        }
+      } catch {}
 
-  function resize() {
-    DPR = Math.min(3, window.devicePixelRatio || 1);
-    W = window.innerWidth;
-    H = window.innerHeight;
-    canvas.width = Math.floor(W * DPR);
-    canvas.height = Math.floor(H * DPR);
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  }
-  window.addEventListener("resize", resize);
-  resize();
+      // arena ring (fallback visual)
+      ctx.save();
+      ctx.translate(w / 2, h / 2);
+      ctx.strokeStyle = "rgba(255,255,255,.10)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, 360, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
 
-  // =========================================================
-  // INPUT (DUAL STICK)
-  // =========================================================
-  const input = {
-    joy: { active:false, id:null, bx:0, by:0, x:0, y:0 },
-    aim: { active:false, id:null },
-    firing:false
+      // draw entities
+      ctx.save();
+      ctx.translate(w / 2, h / 2);
+      ctx.translate(-camX, -camY);
+
+      // bullets
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = "rgba(255,255,255,.92)";
+      for (const b of S.bullets) {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // zombies
+      for (const z of S.zombies) {
+        const A = ASSETS();
+        if (A?.drawZombie) {
+          try { A.drawZombie(ctx, z.x, z.y, { zombie: z.kind || "basic" }); }
+          catch { fallbackZombie(ctx, z.x, z.y); }
+        } else fallbackZombie(ctx, z.x, z.y);
+      }
+
+      // player
+      const A = ASSETS();
+      if (A?.drawPlayer) {
+        try { A.drawPlayer(ctx, S.player.x, S.player.y, input.aimX, input.aimY, { player: CORE.meta.character, skin: CORE.meta.skin }); }
+        catch { fallbackPlayer(ctx, S.player.x, S.player.y); }
+      } else fallbackPlayer(ctx, S.player.x, S.player.y);
+
+      ctx.restore();
+
+      // aim reticle (lux)
+      drawReticle(ctx, CORE, input, view);
+    }
   };
 
-  function joyValue(x, y) {
-    const dx = x - input.joy.bx;
-    const dy = y - input.joy.by;
-    const d = Math.hypot(dx, dy);
-    if (!d) return {x:0,y:0};
-    const r = Math.min(1, d / 60);
-    return { x:(dx/d)*r, y:(dy/d)*r };
-  }
-
-  function aimFrom(px, py) {
-    const st = CORE.state;
-    const sx = W/2 + st.player.x * -1;
-    const sy = H/2 + st.player.y * -1;
-    CORE.setAim(px - sx, py - sy);
-  }
-
-  canvas.addEventListener("pointerdown", e => {
-    e.preventDefault();
-    if (e.clientX < W * 0.45) {
-      input.joy.active = true;
-      input.joy.id = e.pointerId;
-      input.joy.bx = e.clientX;
-      input.joy.by = e.clientY;
-    } else {
-      input.aim.active = true;
-      input.aim.id = e.pointerId;
-      input.firing = true;
-      aimFrom(e.clientX, e.clientY);
-      CORE.setShooting(true);
-    }
-  }, { passive:false });
-
-  canvas.addEventListener("pointermove", e => {
-    if (input.joy.active && e.pointerId === input.joy.id) {
-      const v = joyValue(e.clientX, e.clientY);
-      CORE.setMove(v.x, v.y);
-    }
-    if (input.aim.active && e.pointerId === input.aim.id) {
-      aimFrom(e.clientX, e.clientY);
-    }
-  }, { passive:false });
-
-  canvas.addEventListener("pointerup", e => {
-    if (e.pointerId === input.joy.id) {
-      input.joy.active = false;
-      CORE.setMove(0,0);
-    }
-    if (e.pointerId === input.aim.id) {
-      input.aim.active = false;
-      input.firing = false;
-      CORE.setShooting(false);
-    }
-  }, { passive:false });
-
-  canvas.addEventListener("pointercancel", () => {
-    input.joy.active = false;
-    input.aim.active = false;
-    input.firing = false;
-    CORE.setMove(0,0);
-    CORE.setShooting(false);
-  });
-
-  // =========================================================
-  // RENDER
-  // =========================================================
-  function drawArena() {
-    ctx.strokeStyle = "rgba(255,255,255,.08)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(W/2, H/2, 420, 0, Math.PI*2);
-    ctx.stroke();
-  }
-
-  function render() {
-    const st = CORE.state;
-    ctx.clearRect(0,0,W,H);
-
-    drawArena();
-
+  function fallbackPlayer(ctx, x, y) {
     ctx.save();
-    ctx.translate(W/2 - st.player.x, H/2 - st.player.y);
-
-    // bullets
-    ctx.fillStyle = "#fff";
-    for (const b of st.bullets) {
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 3, 0, Math.PI*2);
-      ctx.fill();
-    }
-
-    // zombies
-    for (const z of st.zombies) {
-      const A = ASSETS();
-      if (A?.drawZombie) A.drawZombie(ctx, z.x, z.y, {});
-      else {
-        ctx.fillStyle="#3f3";
-        ctx.beginPath(); ctx.arc(z.x,z.y,18,0,Math.PI*2); ctx.fill();
-      }
-    }
-
-    // player
-    const A = ASSETS();
-    if (A?.drawPlayer) {
-      A.drawPlayer(ctx, st.player.x, st.player.y, st.input?.aimX||1, st.input?.aimY||0, {});
-    } else {
-      ctx.fillStyle="#4af";
-      ctx.beginPath(); ctx.arc(st.player.x, st.player.y, 18, 0, Math.PI*2); ctx.fill();
-    }
-
+    ctx.translate(x, y);
+    ctx.fillStyle = "rgba(255,255,255,.92)";
+    ctx.beginPath();
+    ctx.arc(0, 0, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,.22)";
+    ctx.beginPath();
+    ctx.arc(6, -6, 5, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
-  // =========================================================
-  // LOOP
-  // =========================================================
-  let raf = 0;
-  function loop(t) {
-    CORE.updateFrame(t);
-    render();
-    raf = requestAnimationFrame(loop);
+  function fallbackZombie(ctx, x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = "rgba(160,255,160,.82)";
+    ctx.beginPath();
+    ctx.arc(0, 0, 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(0,0,0,.35)";
+    ctx.beginPath();
+    ctx.arc(-5, -4, 3, 0, Math.PI * 2);
+    ctx.arc(5, -4, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
-  // =========================================================
-  // PUBLIC API
-  // =========================================================
-  window.BCO_ZOMBIES_RENDER = {
-    start() {
-      CORE.start();
-      loop(performance.now());
-      try { tg?.expand?.(); } catch {}
-    },
-    stop() {
-      cancelAnimationFrame(raf);
-      overlay.remove();
-    }
-  };
+  function drawReticle(ctx, CORE, input, view) {
+    const S = CORE.state;
+    const w = view.w, h = view.h;
+    const sx = (S.player.x - S.camX) + w / 2;
+    const sy = (S.player.y - S.camY) + h / 2;
 
+    const ax = input.aimX, ay = input.aimY;
+    const r1 = 28, r2 = 56;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = "rgba(255,255,255,.80)";
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.moveTo(ax * r1, ay * r1);
+    ctx.lineTo(ax * r2, ay * r2);
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.18;
+    ctx.beginPath();
+    ctx.arc(ax * r2, ay * r2, 9, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  window.BCO_ZOMBIES_RENDER = RENDER;
   console.log("[Z_RENDER] loaded");
 })();
