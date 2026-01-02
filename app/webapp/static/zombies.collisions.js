@@ -1,64 +1,79 @@
 /* =========================================================
-   app/webapp/static/zombies.collisions.js
-   COLLISIONS: entity vs walls + bullet vs walls
+   BLACK CROWN OPS — ZOMBIES COLLISIONS
+   File: app/webapp/static/zombies.collisions.js
+   Provides: window.BCO_ZOMBIES_COLLISIONS
    ========================================================= */
 (() => {
   "use strict";
 
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
-  function resolveCircleRect(cx, cy, r, rx, ry, rw, rh) {
-    const nx = clamp(cx, rx, rx + rw);
-    const ny = clamp(cy, ry, ry + rh);
-    const dx = cx - nx;
-    const dy = cy - ny;
+  function rectCircleResolve(ent, rect, r) {
+    // rect: center-based? we use x/y as center coords. Keep simple:
+    // Treat rect x/y as center of rect
+    const rx = rect.x, ry = rect.y, rw = rect.w, rh = rect.h;
+
+    const left = rx - rw / 2;
+    const right = rx + rw / 2;
+    const top = ry - rh / 2;
+    const bottom = ry + rh / 2;
+
+    const cx = clamp(ent.x, left, right);
+    const cy = clamp(ent.y, top, bottom);
+
+    const dx = ent.x - cx;
+    const dy = ent.y - cy;
     const d2 = dx * dx + dy * dy;
-    if (d2 >= r * r || d2 === 0) return null;
+    const rr = r * r;
 
-    const d = Math.sqrt(d2);
-    const push = (r - d);
-    return { px: (dx / d) * push, py: (dy / d) * push };
-  }
+    if (d2 >= rr) return;
 
-  function collideEntityWithMap(ent, map, w, h) {
-    if (!ent || !map) return;
+    // push out (minimal axis)
+    const adx = Math.abs(dx);
+    const ady = Math.abs(dy);
 
-    const r = Math.max(6, ent.r || ent.radius || 14);
-
-    // держим в пределах карты
-    ent.x = clamp(ent.x, r, w - r);
-    ent.y = clamp(ent.y, r, h - r);
-
-    for (const wall of map.walls || []) {
-      const res = resolveCircleRect(ent.x, ent.y, r, wall.x, wall.y, wall.w, wall.h);
-      if (!res) continue;
-      ent.x += res.px;
-      ent.y += res.py;
+    if (adx > ady) {
+      ent.x = (dx > 0) ? (right + r) : (left - r);
+    } else {
+      ent.y = (dy > 0) ? (bottom + r) : (top - r);
     }
   }
 
-  function collideBullets(bullets, map) {
-    if (!bullets || !map) return;
+  const COLL = {
+    collideEntityWithMap(ent, map) {
+      if (!map || !map.walls) return;
 
-    for (let i = bullets.length - 1; i >= 0; i--) {
-      const b = bullets[i];
-      if (!b) continue;
+      const r = ent.r || 16;
+      for (const wall of map.walls) rectCircleResolve(ent, wall, r);
+    },
 
-      // простая AABB проверка по стенам
-      let hit = false;
-      for (const w of map.walls || []) {
-        if (b.x >= w.x && b.x <= w.x + w.w && b.y >= w.y && b.y <= w.y + w.h) {
-          hit = true; break;
+    collideBullets(bullets, map) {
+      if (!map || !map.walls || !bullets) return;
+
+      // remove bullets that hit walls
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        const r = b.r || 3;
+
+        for (const wall of map.walls) {
+          const rx = wall.x, ry = wall.y, rw = wall.w, rh = wall.h;
+          const left = rx - rw / 2, right = rx + rw / 2;
+          const top = ry - rh / 2, bottom = ry + rh / 2;
+
+          const cx = clamp(b.x, left, right);
+          const cy = clamp(b.y, top, bottom);
+          const dx = b.x - cx;
+          const dy = b.y - cy;
+
+          if ((dx * dx + dy * dy) < (r * r)) {
+            bullets.splice(i, 1);
+            break;
+          }
         }
       }
-      if (hit) bullets.splice(i, 1);
     }
-  }
-
-  window.BCO_ZOMBIES_COLLISIONS = {
-    collideEntityWithMap,
-    collideBullets
   };
 
-  console.log("[BCO_ZOMBIES_COLLISIONS] loaded");
+  window.BCO_ZOMBIES_COLLISIONS = COLL;
+  console.log("[Z_COLL] loaded");
 })();
