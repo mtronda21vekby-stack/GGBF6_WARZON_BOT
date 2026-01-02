@@ -1,76 +1,56 @@
-// =========================================================
-// ZOMBIES COLLISIONS SYSTEM (walls + bounds + entities)
-// File: app/webapp/static/zombies.collisions.js
-// =========================================================
+/* =========================================================
+   app/webapp/static/zombies.collisions.js
+   ========================================================= */
 (() => {
   "use strict";
 
-  // requires:
-  // - window.BCO_ZOMBIES_MAPS
-  // - used inside main loop (tick)
-
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-
-  function rectCircleCollide(cx, cy, r, rx, ry, rw, rh) {
-    const nx = clamp(cx, rx, rx + rw);
-    const ny = clamp(cy, ry, ry + rh);
+  function rectCircleCollide(rx, ry, rw, rh, cx, cy, cr) {
+    const nx = Math.max(rx, Math.min(cx, rx + rw));
+    const ny = Math.max(ry, Math.min(cy, ry + rh));
     const dx = cx - nx;
     const dy = cy - ny;
-    return (dx * dx + dy * dy) < (r * r);
+    return (dx * dx + dy * dy) < cr * cr;
   }
 
-  function resolveCircleRect(entity, rect) {
-    const cx = entity.x;
-    const cy = entity.y;
-    const r = entity.r;
+  function resolveCircleRect(e, r) {
+    const cx = e.x;
+    const cy = e.y;
+    const cr = e.r || 16;
 
-    const nx = clamp(cx, rect.x, rect.x + rect.w);
-    const ny = clamp(cy, rect.y, rect.y + rect.h);
+    const nx = Math.max(r.x, Math.min(cx, r.x + r.w));
+    const ny = Math.max(r.y, Math.min(cy, r.y + r.h));
 
     const dx = cx - nx;
     const dy = cy - ny;
 
-    const dist = Math.hypot(dx, dy) || 0.0001;
-    const overlap = r - dist;
+    if (dx === 0 && dy === 0) return;
 
-    if (overlap > 0) {
-      entity.x += (dx / dist) * overlap;
-      entity.y += (dy / dist) * overlap;
-      return true;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      e.x += dx > 0 ? (cr - dx) : -(cr + dx);
+    } else {
+      e.y += dy > 0 ? (cr - dy) : -(cr + dy);
     }
-    return false;
   }
 
-  function applyMapBounds(entity, map, w, h) {
-    const pad = 6;
-    entity.x = clamp(entity.x, pad, w - pad);
-    entity.y = clamp(entity.y, pad + 90, h - pad);
-  }
-
-  function collideEntityWithMap(entity, map, w, h) {
+  function collideEntityWithMap(entity, map, maxW, maxH) {
     if (!map || !map.walls) return;
 
-    for (const wall of map.walls) {
-      if (rectCircleCollide(entity.x, entity.y, entity.r, wall.x, wall.y, wall.w, wall.h)) {
-        resolveCircleRect(entity, wall);
+    entity.x = Math.max(entity.r, Math.min(entity.x, maxW - entity.r));
+    entity.y = Math.max(entity.r, Math.min(entity.y, maxH - entity.r));
+
+    for (const w of map.walls) {
+      if (rectCircleCollide(w.x, w.y, w.w, w.h, entity.x, entity.y, entity.r)) {
+        resolveCircleRect(entity, w);
       }
     }
-
-    applyMapBounds(entity, map, w, h);
   }
 
   function collideBullets(bullets, map) {
     if (!map || !map.walls) return;
-
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
       for (const w of map.walls) {
-        if (
-          b.x > w.x &&
-          b.x < w.x + w.w &&
-          b.y > w.y &&
-          b.y < w.y + w.h
-        ) {
+        if (b.x > w.x && b.x < w.x + w.w && b.y > w.y && b.y < w.y + w.h) {
           bullets.splice(i, 1);
           break;
         }
@@ -78,20 +58,8 @@
     }
   }
 
-  function drawDebug(ctx, map) {
-    if (!map || !map.walls) return;
-    ctx.save();
-    ctx.strokeStyle = "rgba(255,0,0,.6)";
-    ctx.lineWidth = 2;
-    for (const w of map.walls) {
-      ctx.strokeRect(w.x, w.y, w.w, w.h);
-    }
-    ctx.restore();
-  }
-
   window.BCO_ZOMBIES_COLLISIONS = {
     collideEntityWithMap,
-    collideBullets,
-    drawDebug
+    collideBullets
   };
 })();
