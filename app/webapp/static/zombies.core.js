@@ -1181,7 +1181,6 @@
                 if (b.pierce > 0) b.pierce -= 1;
                 else consumed = true;
               }
-
             } else {
               // ---- Default damage path (all non-boss, or boss without hook) ----
               z.hp -= b.dmg;
@@ -1202,10 +1201,10 @@
               else consumed = true;
             }
 
-            // If boss died (hook or fallback), remove + reward + drops
+            // If boss died (hook or fallback), remove + reward + drops (SAFE remove)
             if (isBoss && z.hp <= 0) {
-              // remove if still present
-              try { S.zombies.splice(zi, 1); } catch {}
+              if (S.zombies[zi] === z) S.zombies.splice(zi, 1);
+
               S.kills += 3;
               this._awardXP(CFG.progress.xpBoss);
 
