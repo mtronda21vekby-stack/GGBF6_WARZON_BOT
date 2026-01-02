@@ -1,60 +1,57 @@
 /* =========================================================
    app/webapp/static/zombies.collisions.js
+   COLLISIONS: entity vs walls + bullet vs walls
    ========================================================= */
 (() => {
   "use strict";
 
-  function rectCircleCollide(rx, ry, rw, rh, cx, cy, cr) {
-    const nx = Math.max(rx, Math.min(cx, rx + rw));
-    const ny = Math.max(ry, Math.min(cy, ry + rh));
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+  function resolveCircleRect(cx, cy, r, rx, ry, rw, rh) {
+    const nx = clamp(cx, rx, rx + rw);
+    const ny = clamp(cy, ry, ry + rh);
     const dx = cx - nx;
     const dy = cy - ny;
-    return (dx * dx + dy * dy) < cr * cr;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= r * r || d2 === 0) return null;
+
+    const d = Math.sqrt(d2);
+    const push = (r - d);
+    return { px: (dx / d) * push, py: (dy / d) * push };
   }
 
-  function resolveCircleRect(e, r) {
-    const cx = e.x;
-    const cy = e.y;
-    const cr = e.r || 16;
+  function collideEntityWithMap(ent, map, w, h) {
+    if (!ent || !map) return;
 
-    const nx = Math.max(r.x, Math.min(cx, r.x + r.w));
-    const ny = Math.max(r.y, Math.min(cy, r.y + r.h));
+    const r = Math.max(6, ent.r || ent.radius || 14);
 
-    const dx = cx - nx;
-    const dy = cy - ny;
+    // держим в пределах карты
+    ent.x = clamp(ent.x, r, w - r);
+    ent.y = clamp(ent.y, r, h - r);
 
-    if (dx === 0 && dy === 0) return;
-
-    if (Math.abs(dx) > Math.abs(dy)) {
-      e.x += dx > 0 ? (cr - dx) : -(cr + dx);
-    } else {
-      e.y += dy > 0 ? (cr - dy) : -(cr + dy);
-    }
-  }
-
-  function collideEntityWithMap(entity, map, maxW, maxH) {
-    if (!map || !map.walls) return;
-
-    entity.x = Math.max(entity.r, Math.min(entity.x, maxW - entity.r));
-    entity.y = Math.max(entity.r, Math.min(entity.y, maxH - entity.r));
-
-    for (const w of map.walls) {
-      if (rectCircleCollide(w.x, w.y, w.w, w.h, entity.x, entity.y, entity.r)) {
-        resolveCircleRect(entity, w);
-      }
+    for (const wall of map.walls || []) {
+      const res = resolveCircleRect(ent.x, ent.y, r, wall.x, wall.y, wall.w, wall.h);
+      if (!res) continue;
+      ent.x += res.px;
+      ent.y += res.py;
     }
   }
 
   function collideBullets(bullets, map) {
-    if (!map || !map.walls) return;
+    if (!bullets || !map) return;
+
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
-      for (const w of map.walls) {
-        if (b.x > w.x && b.x < w.x + w.w && b.y > w.y && b.y < w.y + w.h) {
-          bullets.splice(i, 1);
-          break;
+      if (!b) continue;
+
+      // простая AABB проверка по стенам
+      let hit = false;
+      for (const w of map.walls || []) {
+        if (b.x >= w.x && b.x <= w.x + w.w && b.y >= w.y && b.y <= w.y + w.h) {
+          hit = true; break;
         }
       }
+      if (hit) bullets.splice(i, 1);
     }
   }
 
@@ -62,4 +59,6 @@
     collideEntityWithMap,
     collideBullets
   };
+
+  console.log("[BCO_ZOMBIES_COLLISIONS] loaded");
 })();
