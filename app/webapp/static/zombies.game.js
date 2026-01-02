@@ -1,13 +1,11 @@
 /* =========================================================
-   BLACK CROWN OPS — ZOMBIES GAME (UI + RENDER + INPUT) [LUX+]
+   BLACK CROWN OPS — ZOMBIES GAME (UI + RENDER + INPUT) [LUX FIX]
    File: app/webapp/static/zombies.game.js
    Requires:
      - zombies.core.js
      - zombies.render.js
      - zombies.assets.js (optional)
      - zombies.world.js (optional)
-     - zombies.bosses.js (optional, LUX recommended)
-     - zombies.perks.js  (optional)
    Provides:
      - window.BCO_ZOMBIES_GAME
    ========================================================= */
@@ -35,8 +33,13 @@
   let raf = 0;
   let dpr = 1;
 
-  // Track bosses to grant premium drops even if CORE doesn't call _onBulletHit
-  let _bossPrev = new Set();
+  // sticks refs
+  let joyL = null;
+  let joyR = null;
+  let topHud = null;
+  let shop = null;
+  let shopBtns = {};
+  let btnClose = null;
 
   const input = {
     moveX: 0, moveY: 0,
@@ -62,60 +65,24 @@
   }
 
   // ---------------------------------------------------------
-  // Optional modules
+  // Orientation helpers (best-effort)
   // ---------------------------------------------------------
-  const BOSSES = () => window.BCO_ZOMBIES_BOSSES || null;
-  const MAPS = () => window.BCO_ZOMBIES_MAPS || null;
-  const PERKS = () => window.BCO_ZOMBIES_PERKS || null;
-
-  function mapGet() {
-    try { return MAPS()?.get?.(CORE.meta.map) || null; } catch { return null; }
-  }
-
-  function bossesEnsureInstalled() {
-    const B = BOSSES();
-    if (!B || !B.install) return false;
-
-    if (CORE._bcoBossesInstalled === true) return true;
+  async function tryLockLandscape() {
     try {
-      const ok = !!B.install(CORE, () => mapGet());
-      CORE._bcoBossesInstalled = ok;
-      if (ok) console.log("[Z_GAME] bosses installed");
-      return ok;
-    } catch {
-      return false;
-    }
-  }
-
-  // Premium drop fallback (if CORE doesn't call boss onBulletHit)
-  function bossesDropFallback(count = 1) {
-    // Soft-scaling: big but not insane
-    try {
-      const w = Math.max(1, Number(CORE.state.wave || 1) | 0);
-      const base = 8;
-      const mul = 1.22;
-      const add = Math.round(base * Math.pow(mul, Math.max(0, w - 1))) * Math.max(1, count | 0);
-      CORE.state.coins = (CORE.state.coins | 0) + add;
+      const scr = window.screen;
+      if (scr?.orientation?.lock) {
+        await scr.orientation.lock("landscape");
+        return true;
+      }
     } catch {}
+    return false;
   }
 
-  function bossIs(x) {
-    return !!x && (x.kind === "boss_brute" || x.kind === "boss_spitter");
+  function hideTelegramMainButton() {
+    try { tg?.MainButton?.hide?.(); } catch {}
   }
-
-  function snapshotBosses() {
-    const arr = CORE?.state?.zombies;
-    const set = new Set();
-    if (Array.isArray(arr)) {
-      for (const z of arr) if (bossIs(z)) set.add(z);
-    }
-    return set;
-  }
-
-  function countDeadBosses(prev, next) {
-    let dead = 0;
-    prev.forEach((b) => { if (!next.has(b)) dead++; });
-    return dead;
+  function showTelegramMainButton() {
+    try { tg?.MainButton?.show?.(); } catch {}
   }
 
   // ---------------------------------------------------------
@@ -144,19 +111,20 @@
     ctx = canvas.getContext("2d", { alpha: true });
 
     // Top HUD
-    const top = document.createElement("div");
-    top.style.cssText = `
+    topHud = document.createElement("div");
+    topHud.style.cssText = `
       position:absolute; left:0; right:0; top:0;
       height:68px; display:flex; align-items:center; justify-content:space-between;
-      padding:10px 12px; box-sizing:border-box;
+      padding: calc(10px + env(safe-area-inset-top)) 12px 10px 12px;
+      box-sizing:border-box;
       pointer-events:auto;
       backdrop-filter: blur(14px);
-      background: linear-gradient(180deg, rgba(0,0,0,.45), rgba(0,0,0,0));
+      background: linear-gradient(180deg, rgba(0,0,0,.55), rgba(0,0,0,0));
       border-bottom:1px solid rgba(255,255,255,.08);
     `;
 
     const left = document.createElement("div");
-    left.style.cssText = `display:flex; gap:10px; align-items:center;`;
+    left.style.cssText = `display:flex; gap:10px; align-items:center; min-width: 240px;`;
 
     const badge = document.createElement("div");
     badge.textContent = "🧟";
@@ -165,12 +133,18 @@
       display:flex; align-items:center; justify-content:center;
       background: rgba(255,255,255,.08);
       border:1px solid rgba(255,255,255,.12);
+      flex: 0 0 auto;
     `;
 
     const title = document.createElement("div");
+    title.style.cssText = `min-width: 0;`;
     title.innerHTML = `
-      <div style="font:900 14px/1.1 Inter,system-ui; letter-spacing:.2px;">Zombies Survival</div>
-      <div id="bco-z-sub" style="font:700 12px/1.1 Inter,system-ui; opacity:.72;">ARCADE • Ashes</div>
+      <div style="font:900 14px/1.1 Inter,system-ui; letter-spacing:.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+        Zombies Survival
+      </div>
+      <div id="bco-z-sub" style="font:700 12px/1.1 Inter,system-ui; opacity:.72; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+        ARCADE • Ashes
+      </div>
     `;
 
     left.appendChild(badge);
@@ -188,10 +162,13 @@
       border:1px solid rgba(255,255,255,.12);
       color: rgba(255,255,255,.92);
       white-space: nowrap;
+      max-width: 58vw;
+      overflow: hidden;
+      text-overflow: ellipsis;
     `;
     pill.textContent = `❤️ 100 • ☠️ 0 • 💰 0 • 🔫 SMG`;
 
-    const btnClose = document.createElement("button");
+    btnClose = document.createElement("button");
     btnClose.type = "button";
     btnClose.textContent = "✖";
     btnClose.style.cssText = `
@@ -201,37 +178,38 @@
       color: rgba(255,255,255,.92);
       font:900 16px/1 Inter,system-ui;
       touch-action: manipulation;
+      flex: 0 0 auto;
     `;
     btnClose.addEventListener("click", () => API.close(), { passive: true });
 
     right.appendChild(pill);
     right.appendChild(btnClose);
 
-    top.appendChild(left);
-    top.appendChild(right);
-    overlay.appendChild(top);
+    topHud.appendChild(left);
+    topHud.appendChild(right);
+    overlay.appendChild(topHud);
 
-    // Bottom controls
+    // Bottom controls container
     const bottom = document.createElement("div");
+    bottom.id = "bco-z-bottom";
     bottom.style.cssText = `
       position:absolute; left:0; right:0; bottom:0;
-      height:220px;
-      padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+      height: 260px;
+      padding:10px 12px calc(12px + env(safe-area-inset-bottom));
       box-sizing:border-box;
       pointer-events:none;
-      background: linear-gradient(0deg, rgba(0,0,0,.58), rgba(0,0,0,0));
+      background: linear-gradient(0deg, rgba(0,0,0,.62), rgba(0,0,0,0));
     `;
     overlay.appendChild(bottom);
 
     // Dual sticks (big, iOS-friendly)
-    const joyL = mkStick("left");
-    const joyR = mkStick("right");
-
+    joyL = mkStick("left");
+    joyR = mkStick("right");
     bottom.appendChild(joyL.base);
     bottom.appendChild(joyR.base);
 
     // Shop bar (roguelike)
-    const shop = document.createElement("div");
+    shop = document.createElement("div");
     shop.id = "bco-z-shop";
     shop.style.cssText = `
       position:absolute;
@@ -244,11 +222,10 @@
     `;
     bottom.appendChild(shop);
 
-    const mkBtn = (perkId, fallbackText) => {
+    const mkBtn = (id, txt, on) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.dataset.perkId = perkId;
-      b.textContent = fallbackText;
+      b.textContent = txt;
       b.style.cssText = `
         padding:12px 14px; border-radius:16px;
         border:1px solid rgba(255,255,255,.14);
@@ -257,42 +234,21 @@
         font:900 12px/1 Inter,system-ui;
         letter-spacing:.2px;
         touch-action: manipulation;
+        white-space: nowrap;
       `;
-      b.addEventListener("click", () => {
-        // allow perks module to own logic if it exposes buy()
-        const P = PERKS();
-        let ok = false;
-
-        try {
-          if (P?.buy) ok = !!P.buy(perkId, CORE);
-          else ok = !!CORE.buyPerk(perkId);
-        } catch {
-          ok = !!CORE.buyPerk(perkId);
-        }
-
-        if (ok) {
-          // if perks module is "function table", call perk handler after purchase
-          try {
-            const P2 = PERKS();
-            if (P2 && typeof P2[perkId] === "function") P2[perkId](CORE);
-          } catch {}
-
-          haptic("notif", "success");
-          syncShop(shop);
-        } else {
-          haptic("notif", "warning");
-          syncShop(shop);
-        }
-      }, { passive: true });
+      b.addEventListener("click", on, { passive: true });
+      shopBtns[id] = b;
       return b;
     };
 
-    shop.appendChild(mkBtn("Jug",   "🧪 Jug (12)"));
-    shop.appendChild(mkBtn("Speed", "⚡ Speed (10)"));
-    shop.appendChild(mkBtn("Mag",   "🔫 Ammo (8)"));
+    shop.appendChild(mkBtn("Jug",   "🧪 Jug",   () => API.buyPerk("Jug")));
+    shop.appendChild(mkBtn("Speed", "⚡ Speed", () => API.buyPerk("Speed")));
+    shop.appendChild(mkBtn("Mag",   "🔫 Ammo",  () => API.buyPerk("Mag")));
 
     function mkStick(side) {
       const base = document.createElement("div");
+      base.className = "bco-z-stick";
+      base.dataset.side = side;
       base.style.cssText = `
         position:absolute;
         bottom: calc(12px + env(safe-area-inset-bottom));
@@ -318,7 +274,7 @@
       `;
       base.appendChild(knob);
 
-      return { base, knob, id: null, side };
+      return { base, knob, id: null, side, maxR: 56 };
     }
 
     // Prevent scroll/pinch
@@ -331,7 +287,6 @@
 
     // Resize + wire
     resize();
-
     wireStick(joyL, (x, y) => {
       input.moveX = x; input.moveY = y;
       CORE.setMove(x, y);
@@ -356,15 +311,11 @@
       });
     } catch {}
 
+    // IMPORTANT: hide Telegram MainButton so it doesn't block controls
+    hideTelegramMainButton();
+
     // show shop depending on mode
-    shop.style.opacity = (CORE.meta.mode === "roguelike") ? "1" : "0";
-
-    // local refs
-    overlay._bco = { shop };
-    syncShop(shop);
-
-    // Attempt install bosses (lux)
-    bossesEnsureInstalled();
+    syncShopUI();
   }
 
   function destroyOverlay() {
@@ -373,97 +324,12 @@
     overlay = null;
     canvas = null;
     ctx = null;
-  }
-
-  // ---------------------------------------------------------
-  // Shop sync (lux labels, disable owned, respect perks module if present)
-  // ---------------------------------------------------------
-  function perkOwned(id) {
-    try { return !!CORE?.state?.perks?.[id]; } catch { return false; }
-  }
-
-  function perkCost(id) {
-    // 1) PERKS module cost()
-    try {
-      const P = PERKS();
-      if (P?.cost) {
-        const c = Number(P.cost(id, CORE));
-        if (Number.isFinite(c)) return c;
-      }
-    } catch {}
-
-    // 2) CORE cfg perks table
-    try {
-      const p = CORE?.cfg?.perks?.[id];
-      const c = Number(p?.cost);
-      if (Number.isFinite(c)) return c;
-    } catch {}
-
-    // 3) fallback defaults
-    if (id === "Jug") return 12;
-    if (id === "Speed") return 10;
-    if (id === "Mag") return 8;
-    return 999;
-  }
-
-  function perkLabel(id) {
-    const defs = {
-      Jug:   { base: "🧪 Jug" },
-      Speed: { base: "⚡ Speed" },
-      Mag:   { base: "🔫 Ammo" }
-    };
-
-    // 1) PERKS module label()
-    try {
-      const P = PERKS();
-      if (P?.label) {
-        const s = P.label(id, CORE);
-        if (s) return String(s);
-      }
-    } catch {}
-
-    // 2) default
-    const cost = perkCost(id);
-    const base = defs[id]?.base || String(id);
-    return `${base} (${cost})`;
-  }
-
-  function canBuyPerk(id) {
-    if (CORE.meta.mode !== "roguelike") return false;
-    if (perkOwned(id)) return false;
-
-    // 1) PERKS module canBuy()
-    try {
-      const P = PERKS();
-      if (P?.canBuy) return !!P.canBuy(id, CORE);
-    } catch {}
-
-    // 2) CORE coins vs cost
-    try {
-      const c = perkCost(id);
-      return (CORE.state.coins | 0) >= (c | 0);
-    } catch {
-      return false;
-    }
-  }
-
-  function syncShop(shopEl) {
-    if (!shopEl) return;
-
-    const btns = shopEl.querySelectorAll("button[data-perk-id]");
-    for (const b of btns) {
-      const id = String(b.dataset.perkId || "");
-      const owned = perkOwned(id);
-
-      let txt = perkLabel(id);
-      if (owned) txt = `${txt} ✓`;
-
-      b.textContent = txt;
-
-      const ok = canBuyPerk(id);
-      b.disabled = owned || !ok;
-      b.style.opacity = owned ? "0.55" : (ok ? "1" : "0.65");
-    }
+    joyL = null;
+    joyR = null;
+    topHud = null;
+    shop = null;
+    shopBtns = {};
+    btnClose = null;
   }
 
   // ---------------------------------------------------------
@@ -471,13 +337,12 @@
   // ---------------------------------------------------------
   function wireStick(stick, onMove) {
     const dead = 0.10;
-    const maxR = 56;
 
     const rect = () => stick.base.getBoundingClientRect();
 
     function setKnob(nx, ny) {
       stick.knob.style.transform =
-        `translate(calc(-50% + ${nx * maxR}px), calc(-50% + ${ny * maxR}px))`;
+        `translate(calc(-50% + ${nx * stick.maxR}px), calc(-50% + ${ny * stick.maxR}px))`;
     }
 
     function down(e) {
@@ -526,18 +391,106 @@
   }
 
   // ---------------------------------------------------------
-  // Resize
+  // Shop UI sync (coins + costs + mode)
+  // ---------------------------------------------------------
+  function perkCost(id) {
+    // CORE cfg is source of truth if present
+    try {
+      const c = CORE?.cfg?.perks?.[id]?.cost;
+      if (Number.isFinite(c)) return c;
+    } catch {}
+    // fallback
+    if (id === "Jug") return 12;
+    if (id === "Speed") return 10;
+    if (id === "Mag") return 8;
+    return 999;
+  }
+
+  function syncShopUI() {
+    if (!overlay || !shop) return;
+
+    const isRogue = (String(CORE?.meta?.mode || "") === "roguelike");
+    shop.style.opacity = isRogue ? "1" : "0";
+    shop.style.pointerEvents = isRogue ? "auto" : "none";
+
+    // update labels + enabled state
+    const coins = Number(CORE?.state?.coins || 0);
+
+    for (const id of ["Jug", "Speed", "Mag"]) {
+      const b = shopBtns[id];
+      if (!b) continue;
+
+      const cost = perkCost(id);
+      const owned = !!CORE?.state?.perks?.[id];
+      const can = (!owned && coins >= cost && isRogue);
+
+      const base =
+        id === "Jug" ? "🧪 Jug" :
+        id === "Speed" ? "⚡ Speed" :
+        "🔫 Ammo";
+
+      b.textContent = `${base} (${cost})${owned ? " ✓" : ""}`;
+      b.disabled = !can;
+      b.style.opacity = owned ? "0.55" : (can ? "1" : "0.55");
+    }
+  }
+
+  // ---------------------------------------------------------
+  // Resize (adaptive portrait/landscape)
   // ---------------------------------------------------------
   function resize() {
-    if (!canvas || !ctx) return;
+    if (!overlay || !canvas || !ctx) return;
+
     const r = overlay.getBoundingClientRect();
+    const w = Math.max(1, r.width);
+    const h = Math.max(1, r.height);
+
     dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-    canvas.width = Math.floor(r.width * dpr);
-    canvas.height = Math.floor(r.height * dpr);
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    CORE.resize(r.width, r.height);
+
+    CORE.resize(w, h);
+
+    // adaptive sticks sizing
+    const portrait = h > w;
+    const stickSize = portrait ? 148 : 170;
+    const knobSize  = portrait ? 58  : 66;
+    const pad = portrait ? 10 : 12;
+
+    if (joyL && joyR) {
+      joyL.base.style.width = stickSize + "px";
+      joyL.base.style.height = stickSize + "px";
+      joyR.base.style.width = stickSize + "px";
+      joyR.base.style.height = stickSize + "px";
+
+      joyL.base.style.left = pad + "px";
+      joyR.base.style.right = pad + "px";
+
+      // raise sticks a bit in portrait (avoid bottom overlays)
+      const bottomY = portrait ? 22 : 12;
+      joyL.base.style.bottom = `calc(${bottomY}px + env(safe-area-inset-bottom))`;
+      joyR.base.style.bottom = `calc(${bottomY}px + env(safe-area-inset-bottom))`;
+
+      joyL.knob.style.width = knobSize + "px";
+      joyL.knob.style.height = knobSize + "px";
+      joyR.knob.style.width = knobSize + "px";
+      joyR.knob.style.height = knobSize + "px";
+
+      joyL.maxR = portrait ? 46 : 56;
+      joyR.maxR = portrait ? 46 : 56;
+    }
+
+    if (shop) {
+      shop.style.bottom = `calc(${portrait ? 10 : 12}px + env(safe-area-inset-bottom))`;
+    }
   }
+
   window.addEventListener("resize", resize, { passive: true });
+  window.addEventListener("orientationchange", () => {
+    setTimeout(() => resize(), 80);
+    setTimeout(() => resize(), 220);
+  }, { passive: true });
 
   // ---------------------------------------------------------
   // Loop
@@ -547,40 +500,21 @@
 
     if (!overlay || !ctx) return;
 
-    // Ensure bosses installed even if module loaded after
-    bossesEnsureInstalled();
-
-    // Snapshot bosses before tick for drop fallback
-    const prevBosses = snapshotBosses();
-
     if (CORE.running) CORE.updateFrame(t);
 
-    // Snapshot after tick
-    const nextBosses = snapshotBosses();
-    const deadBossCount = countDeadBosses(prevBosses, nextBosses);
-    if (deadBossCount > 0) {
-      bossesDropFallback(deadBossCount);
-      haptic("impact", "light");
-    }
-
-    const view = { w: overlay.getBoundingClientRect().width, h: overlay.getBoundingClientRect().height };
+    const r = overlay.getBoundingClientRect();
+    const view = { w: Math.max(1, r.width), h: Math.max(1, r.height) };
     RENDER.render(ctx, CORE, CORE.input, view);
 
     updateHud();
+    syncShopUI();
     checkDeathAutoSend();
-
-    // Keep shop synced (prices/coins/owned)
-    const shop = overlay?._bco?.shop;
-    if (shop) syncShop(shop);
-
-    _bossPrev = nextBosses;
   }
 
   let _sentDeath = false;
 
   function checkDeathAutoSend() {
     if (!CORE.running) {
-      // if player hp 0 -> send result once
       if (!_sentDeath && CORE.state.player.hp <= 0) {
         _sentDeath = true;
         sendResult("dead");
@@ -596,12 +530,11 @@
     const st = CORE._effectiveStats ? CORE._effectiveStats() : { hpMax: 100 };
     const hp = Math.max(0, Math.min(CORE.state.player.hp, st.hpMax));
 
-    const mapName = String(CORE.meta.map || "Ashes");
-    if (sub) sub.textContent = `${String(CORE.meta.mode || "arcade").toUpperCase()} • ${mapName}`;
-    if (hud) hud.textContent = `❤️ ${hp|0}/${st.hpMax|0} • ☠️ ${CORE.state.kills|0} • 💰 ${CORE.state.coins|0} • 🔫 ${CORE._weapon().name}`;
-
-    const shop = overlay?._bco?.shop;
-    if (shop) shop.style.opacity = (CORE.meta.mode === "roguelike") ? "1" : "0";
+    if (sub) sub.textContent = `${CORE.meta.mode.toUpperCase()} • ${CORE.meta.map}`;
+    if (hud) {
+      const weap = CORE._weapon ? CORE._weapon().name : (CORE.meta.weaponKey || "SMG");
+      hud.textContent = `❤️ ${hp|0}/${st.hpMax|0} • ☠️ ${CORE.state.kills|0} • 💰 ${CORE.state.coins|0} • 🔫 ${weap}`;
+    }
   }
 
   // ---------------------------------------------------------
@@ -650,6 +583,13 @@
       ensureOverlay();
       resize();
       if (!raf) raf = requestAnimationFrame(loop);
+
+      // best effort lock landscape
+      tryLockLandscape();
+
+      // critical: keep MainButton hidden
+      hideTelegramMainButton();
+
       haptic("impact", "medium");
       return true;
     },
@@ -661,7 +601,12 @@
       _sentDeath = false;
 
       try { tg?.BackButton?.hide?.(); } catch {}
+
       destroyOverlay();
+
+      // restore MainButton (your app decides later if it needs it)
+      showTelegramMainButton();
+
       return true;
     },
 
@@ -670,19 +615,18 @@
       resize();
       _sentDeath = false;
 
-      // ensure bosses installed before run start
-      bossesEnsureInstalled();
+      // critical: hide MainButton so it doesn't cover controls
+      hideTelegramMainButton();
+
+      // best effort lock landscape
+      tryLockLandscape();
 
       CORE.start(mode, overlay.getBoundingClientRect().width, overlay.getBoundingClientRect().height, opts);
 
-      // reset boss tracking
-      _bossPrev = snapshotBosses();
+      // ensure shop state reflects mode immediately
+      syncShopUI();
 
       if (!raf) raf = requestAnimationFrame(loop);
-
-      // resync shop after mode change
-      const shop = overlay?._bco?.shop;
-      if (shop) syncShop(shop);
 
       haptic("notif", "success");
       return true;
@@ -698,17 +642,13 @@
     setMode(mode) {
       const m = String(mode || "").toLowerCase();
       CORE.meta.mode = (m.includes("rogue")) ? "roguelike" : "arcade";
+      syncShopUI();
       updateHud();
-
-      const shop = overlay?._bco?.shop;
-      if (shop) syncShop(shop);
-
       return CORE.meta.mode;
     },
 
     setMap(mapName) {
       CORE.meta.map = String(mapName || "Ashes");
-      // world module will load next tick
       updateHud();
       return CORE.meta.map;
     },
@@ -717,7 +657,6 @@
       if (character) CORE.meta.character = String(character);
       if (skin) CORE.meta.skin = String(skin);
 
-      // assets module may support skins
       try {
         const A = window.BCO_ZOMBIES_ASSETS;
         if (A?.setPlayerSkin) A.setPlayerSkin(CORE.meta.skin);
@@ -731,31 +670,11 @@
     },
 
     buyPerk(id) {
-      // allow PERKS module to own buy if it supports it
-      let ok = false;
-      try {
-        const P = PERKS();
-        if (P?.buy) ok = !!P.buy(id, CORE);
-        else ok = !!CORE.buyPerk(id);
-      } catch {
-        ok = !!CORE.buyPerk(id);
-      }
-
-      if (ok) {
-        // if perks module is a function-table, call handler
-        try {
-          const P2 = PERKS();
-          if (P2 && typeof P2[id] === "function") P2[id](CORE);
-        } catch {}
-
-        haptic("notif", "success");
-      } else {
-        haptic("notif", "warning");
-      }
-
-      const shop = overlay?._bco?.shop;
-      if (shop) syncShop(shop);
-
+      const ok = CORE.buyPerk(id);
+      if (ok) haptic("notif", "success");
+      else haptic("notif", "warning");
+      syncShopUI();
+      updateHud();
       return ok;
     },
 
@@ -766,5 +685,5 @@
   };
 
   window.BCO_ZOMBIES_GAME = API;
-  console.log("[Z_GAME] ready (LUX+)");
+  console.log("[Z_GAME] ready (LUX FIX)");
 })();
