@@ -11,6 +11,10 @@
      ✅ Helpers: listMaps/listWeapons/listPerks/getState/getMeta/getSnapshot/onSnapshot/health
      ✅ Backward compatible with existing calls
 
+   LUX PATCHES (requested):
+     ✅ Player skins scale smaller x1.5  (playerScale = 1/1.5)
+     ✅ Player feels faster vs zombies (player speed up, zombie speed down)
+
    Requires (typical):
      - zombies.core.js
      - zombies.game.js
@@ -33,6 +37,63 @@
 
   function safe(fn, fallback) {
     try { return fn(); } catch { return fallback; }
+  }
+
+  // --------------------------
+  // LUX PATCHES (NO UI change)
+  // --------------------------
+  function applyLuxPatches(core) {
+    return safe(() => {
+      if (!core || !core.cfg) return false;
+      if (core._bcoLuxPatched) return true;
+
+      // 1) SCALE: skins/player render smaller by 1.5x
+      // Renderer/Assets may consume these globals. We don't assume their existence.
+      const scale = window.BCO_ZOMBIES_SCALE || {};
+      scale.player = 1 / 1.5;     // ~0.6667
+      scale.zombie = scale.zombie ?? 1.0;
+      scale.pickup = scale.pickup ?? 1.0;
+      window.BCO_ZOMBIES_SCALE = scale;
+
+      // Best-effort: if renderer/assets expose setters, call them safely.
+      try {
+        const R = window.BCO_ZOMBIES_RENDER || window.BCO_ZOMBIES_RENDERER || window.BCO_ZOMBIES_DRAW;
+        if (R && typeof R.setScale === "function") R.setScale(scale);
+        if (R && typeof R.setPlayerScale === "function") R.setPlayerScale(scale.player);
+      } catch {}
+
+      try {
+        const A = window.BCO_ZOMBIES_ASSETS;
+        if (A && typeof A.setPlayerScale === "function") A.setPlayerScale(scale.player);
+        if (A && typeof A.setScale === "function") A.setScale(scale);
+      } catch {}
+
+      // 2) SPEED FEEL: player faster vs zombies (balance-friendly)
+      // Keep it soft, but noticeable.
+      const cfg = core.cfg;
+
+      if (cfg.player && Number.isFinite(cfg.player.speed)) {
+        cfg.player.speed = Math.round(cfg.player.speed * 1.18);
+      }
+
+      if (cfg.zombie && Number.isFinite(cfg.zombie.baseSpeed)) {
+        cfg.zombie.baseSpeed = Math.round(cfg.zombie.baseSpeed * 0.92);
+      }
+
+      // Also: if there are already spawned zombies with z.sp, adjust current run speed a bit
+      try {
+        const S = core.state;
+        if (S && Array.isArray(S.zombies)) {
+          for (const z of S.zombies) {
+            if (!z || !Number.isFinite(z.sp)) continue;
+            z.sp = z.sp * 0.92;
+          }
+        }
+      } catch {}
+
+      core._bcoLuxPatched = true;
+      return true;
+    }, false);
   }
 
   function onceInstallBosses(core) {
@@ -106,6 +167,9 @@
     const core = CORE();
     if (!core) return false;
 
+    // LUX patches first (safe)
+    applyLuxPatches(core);
+
     // 1) Bosses (optional)
     onceInstallBosses(core);
 
@@ -125,6 +189,9 @@
     // (safe: checks flags)
     const core = CORE();
     if (core) {
+      // Re-apply lux patches if something reloaded core/cfg
+      applyLuxPatches(core);
+
       onceInstallBosses(core);
       onceWirePerks(core);
       onceWireWorld(core);
@@ -185,7 +252,10 @@
       bosses: !!window.BCO_ZOMBIES_BOSSES,
       perks: !!window.BCO_ZOMBIES_PERKS,
       world: !!window.BCO_ZOMBIES_WORLD,
-      assets: !!window.BCO_ZOMBIES_ASSETS
+      assets: !!window.BCO_ZOMBIES_ASSETS,
+
+      // expose LUX scalars for quick debug
+      scale: window.BCO_ZOMBIES_SCALE || null
     };
   }
 
@@ -298,5 +368,5 @@
   ensureInstalled();
 
   window.BCO_ZOMBIES = API;
-  console.log("[Z_INIT] BCO_ZOMBIES exported (LUX | 3D-ready)");
+  console.log("[Z_INIT] BCO_ZOMBIES exported (LUX | 3D-ready) | patches:", window.BCO_ZOMBIES_SCALE || null);
 })();
