@@ -3,85 +3,28 @@
   "use strict";
 
   // =========================================================
-  //  BLACK CROWN OPS — Zombies Survival (Fullscreen)
-  //  Move: left joystick
-  //  Aim: touch/drag on canvas (right side recommended)
-  //  Shoot: hold Fire button (works while moving + aiming)
+  // BLACK CROWN OPS — Zombies Survival (UI + Render wrapper)
+  // Engine: window.BCO_ZOMBIES_CORE (required)
+  // Optional: window.BCO_ZOMBIES_ASSETS, window.BCO_ZOMBIES_PERKS
+  //
+  // ✅ Dual-stick:
+  //   - LEFT joystick = movement
+  //   - RIGHT aim joystick = FIRE button drag (direction) + hold = shooting
+  //   - You can move + aim + shoot одновременно
   // =========================================================
 
   const tg = window.Telegram?.WebApp || null;
+  const CORE = () => window.BCO_ZOMBIES_CORE || null;
+  const ASSETS = () => window.BCO_ZOMBIES_ASSETS || null;
+  const PERKS = () => window.BCO_ZOMBIES_PERKS || null;
 
-  const CFG = {
-    tickHz: 60,
-    dtMax: 1 / 20,
-
-    // world scale in "world units" (we use pixels as world units with camera)
-    arenaRadius: 1400,
-
-    // player
-    player: {
-      speed: 320,
-      hpMax: 100,
-      hitbox: 18,
-      iFramesMs: 220
-    },
-
-    // bullets
-    bullet: {
-      speed: 980,
-      lifeMs: 900,
-      radius: 4,
-      pierce: 0
-    },
-
-    // zombies
-    zombie: {
-      baseSpeed: 150,
-      baseHp: 34,
-      radius: 18,
-      damage: 10,
-      touchDpsMs: 350
-    },
-
-    // waves
-    wave: {
-      baseCount: 7,
-      countGrowth: 2,
-      hpGrowth: 1.08,
-      speedGrowth: 1.03,
-      spawnRingMin: 520,
-      spawnRingMax: 880
-    },
-
-    // weapons
-    weapons: {
-      SMG: { name: "SMG", rpm: 820, dmg: 10, spread: 0.08, recoil: 0.06, bullets: 1 },
-      AR:  { name: "AR",  rpm: 640, dmg: 14, spread: 0.05, recoil: 0.08, bullets: 1 },
-      SG:  { name: "SG",  rpm: 120, dmg: 8,  spread: 0.22, recoil: 0.12, bullets: 6 }
-    },
-
-    // UI
-    ui: {
-      safePad: 12,
-      joystick: { outer: 62, inner: 28, dead: 0.08 },
-      fire: { r: 44 },
-      hudH: 68
-    }
-  };
-
-  // =========================================================
-  // Utils
-  // =========================================================
-  const now = () => performance.now();
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const len2 = (x, y) => Math.sqrt(x * x + y * y) || 0;
+  const len = (x, y) => Math.hypot(x, y) || 0;
   const norm = (x, y) => {
-    const L = len2(x, y);
+    const L = len(x, y);
     if (!L) return { x: 0, y: 0, L: 0 };
     return { x: x / L, y: y / L, L };
   };
-  const rand = (a, b) => a + Math.random() * (b - a);
-  const fmt = (n) => (Number(n) || 0).toFixed(0);
 
   function haptic(type = "impact", style = "medium") {
     try {
@@ -104,23 +47,7 @@
   }
 
   // =========================================================
-  // Assets bridge (optional)
-  // =========================================================
-  const ASSETS = () => window.BCO_ZOMBIES_ASSETS || null;
-
-  // =========================================================
-  // Perks bridge (optional) — SOURCE OF TRUTH
-  // Expecting window.BCO_ZOMBIES_PERKS with optional methods:
-  //   cost(perkId, run) -> number
-  //   canBuy(perkId, run) -> boolean
-  //   buy(perkId, run) -> boolean  (should mutate run, decrease coins itself OR return {spent:n})
-  //   apply(perkId, run) -> void
-  //   tick(run, dt, tms) -> void
-  // =========================================================
-  const PERKS = () => window.BCO_ZOMBIES_PERKS || null;
-
-  // =========================================================
-  // DOM / Overlay
+  // Overlay mount
   // =========================================================
   const mount = () => document.getElementById("zOverlayMount");
 
@@ -128,109 +55,85 @@
   let canvas = null;
   let ctx = null;
   let dpr = 1;
-
-  // UI elements
-  let hudTop = null;
-  let btnClose = null;
-  let hudBottom = null;
-
-  // joystick + fire
-  let joy = null;
-  let fireBtn = null;
-  let shopBar = null;
-
-  // sizing
   let W = 0;
   let H = 0;
 
-  // shop buttons refs (for dynamic label update)
+  let hudTop = null;
+  let hudBottom = null;
+  let btnClose = null;
+
+  let joy = null;
+  let joyInner = null;
+
+  let fireBtn = null;
+  let fireInner = null;
+  let shopBar = null;
+
   const shopBtns = {};
 
+  // ui config (lux touch zones)
+  const UI = {
+    safePad: 12,
+    hudH: 68,
+    bottomH: 170,
+    joystick: { outer: 66, inner: 28, dead: 0.08 },
+    fire: { outer: 54, inner: 24, dead: 0.05 }
+  };
+
   // =========================================================
-  // Input state
+  // Input (Dual-stick)
   // =========================================================
   const input = {
-    // joystick
+    // left movement stick
     joyActive: false,
     joyId: null,
     joyBaseX: 0,
     joyBaseY: 0,
-    joyX: 0,
-    joyY: 0,
     moveX: 0,
     moveY: 0,
 
-    // aim
+    // right aim stick (on FIRE)
     aimActive: false,
     aimId: null,
+    aimBaseX: 0,
+    aimBaseY: 0,
     aimX: 1,
     aimY: 0,
 
-    // fire
+    // shooting
     firing: false
   };
 
-  // =========================================================
-  // Game state
-  // =========================================================
-  let openFlag = false;
-  let running = false;
-  let rafId = 0;
-
-  const game = {
-    mode: "arcade", // "roguelike"
-    startedAtMs: 0,
-    timeMs: 0,
-
-    wave: 1,
-    kills: 0,
-    coins: 0,
-
-    perks: {
-      Jug: 0,
-      Speed: 0,
-      Mag: 0
-    },
-
-    weaponKey: "SMG",
-
-    // cosmetics
-    character: "male",
-    skin: "default",
-
-    // player
-    p: {
-      x: 0,
-      y: 0,
-      vx: 0,
-      vy: 0,
-      hp: CFG.player.hpMax,
-      lastHitAt: -99999
-    },
-
-    bullets: [],
-    zombies: [],
-
-    // shooting
-    shootAcc: {
-      lastShotAt: 0
-    }
-  };
-
-  function weapon() {
-    return CFG.weapons[game.weaponKey] || CFG.weapons.SMG;
+  function setJoyVisual(nx, ny) {
+    if (!joyInner) return;
+    const r = UI.joystick.outer - UI.joystick.inner - 6;
+    joyInner.style.transform = `translate(calc(-50% + ${nx * r}px), calc(-50% + ${ny * r}px))`;
   }
 
-  function effectiveStats() {
-    // NOTE: base fallback perks, but PERKS module can override via tick/apply
-    const jug = game.perks.Jug ? 1.35 : 1.0;
-    const speed = game.perks.Speed ? 1.18 : 1.0;
-    const mag = game.perks.Mag ? 1.0 : 1.0; // placeholder hook
-    return {
-      hpMax: Math.round(CFG.player.hpMax * jug),
-      speed: CFG.player.speed * speed,
-      mag
-    };
+  function setFireVisual(nx, ny) {
+    if (!fireInner) return;
+    const r = UI.fire.outer - UI.fire.inner - 8;
+    fireInner.style.transform = `translate(calc(-50% + ${nx * r}px), calc(-50% + ${ny * r}px))`;
+  }
+
+  function joyReset() {
+    input.joyActive = false;
+    input.joyId = null;
+    input.moveX = 0;
+    input.moveY = 0;
+    setJoyVisual(0, 0);
+    const C = CORE();
+    if (C) C.setMove(0, 0);
+  }
+
+  function aimReset() {
+    input.aimActive = false;
+    input.aimId = null;
+    input.aimX = 1;
+    input.aimY = 0;
+    setFireVisual(0, 0);
+    const C = CORE();
+    if (C) C.setAim(1, 0);
   }
 
   // =========================================================
@@ -249,8 +152,8 @@
       position: fixed;
       inset: 0;
       z-index: 999999;
-      background: radial-gradient(1200px 800px at 50% 35%, rgba(255,255,255,.06), rgba(0,0,0,.75)),
-                  linear-gradient(180deg, rgba(6,6,10,.88), rgba(0,0,0,.92));
+      background: radial-gradient(1200px 800px at 50% 35%, rgba(255,255,255,.06), rgba(0,0,0,.78)),
+                  linear-gradient(180deg, rgba(6,6,10,.90), rgba(0,0,0,.94));
       overflow: hidden;
       touch-action: none;
       -webkit-user-select: none;
@@ -261,18 +164,17 @@
     hudTop = document.createElement("div");
     hudTop.style.cssText = `
       position: absolute;
-      left: 0;
-      right: 0;
-      top: 0;
-      height: ${CFG.ui.hudH}px;
+      left: 0; right: 0; top: 0;
+      height: ${UI.hudH}px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 10px 12px;
       box-sizing: border-box;
       pointer-events: auto;
-      backdrop-filter: blur(14px);
-      background: linear-gradient(180deg, rgba(0,0,0,.45), rgba(0,0,0,0));
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      background: linear-gradient(180deg, rgba(0,0,0,.52), rgba(0,0,0,0));
       border-bottom: 1px solid rgba(255,255,255,.08);
     `;
 
@@ -290,8 +192,8 @@
 
     const title = document.createElement("div");
     title.innerHTML = `
-      <div style="font: 800 14px/1.1 Inter, system-ui; letter-spacing:.2px;">Zombies Survival</div>
-      <div id="bco-z-sub" style="font: 600 12px/1.1 Inter, system-ui; opacity:.7;">ARCADE • Wave 1</div>
+      <div style="font: 900 14px/1.1 Inter, system-ui; letter-spacing:.2px;">Zombies Survival</div>
+      <div id="bco-z-sub" style="font: 700 12px/1.1 Inter, system-ui; opacity:.72;">ARCADE • Wave 1</div>
     `;
 
     left.appendChild(badge);
@@ -305,13 +207,13 @@
     pill.style.cssText = `
       padding: 10px 12px;
       border-radius: 14px;
-      font: 700 12px/1 Inter, system-ui;
+      font: 800 12px/1 Inter, system-ui;
       background: rgba(255,255,255,.08);
       border: 1px solid rgba(255,255,255,.12);
       color: rgba(255,255,255,.92);
       white-space: nowrap;
     `;
-    pill.textContent = `❤️ ${CFG.player.hpMax} • ☠️ 0 • 💰 0 • 🔫 ${weapon().name}`;
+    pill.textContent = `❤️ 100 • ☠️ 0 • 💰 0 • 🔫 SMG`;
 
     btnClose = document.createElement("button");
     btnClose.type = "button";
@@ -321,7 +223,7 @@
       border: 1px solid rgba(255,255,255,.14);
       background: rgba(255,255,255,.08);
       color: rgba(255,255,255,.92);
-      font: 800 16px/1 Inter, system-ui;
+      font: 900 16px/1 Inter, system-ui;
       cursor: pointer;
       touch-action: manipulation;
     `;
@@ -342,76 +244,95 @@
       width: 100%;
       height: 100%;
       touch-action: none;
-      display:block;
+      display: block;
     `;
 
-    // bottom hud / controls
+    // bottom controls
     hudBottom = document.createElement("div");
     hudBottom.style.cssText = `
       position: absolute;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      height: 160px;
+      left: 0; right: 0; bottom: 0;
+      height: ${UI.bottomH}px;
       padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
       box-sizing: border-box;
       pointer-events: none;
-      background: linear-gradient(0deg, rgba(0,0,0,.55), rgba(0,0,0,0));
+      background: linear-gradient(0deg, rgba(0,0,0,.58), rgba(0,0,0,0));
     `;
 
-    // joystick
+    // left joystick
     joy = document.createElement("div");
     joy.id = "bco-z-joy";
     joy.style.cssText = `
       position: absolute;
-      left: ${CFG.ui.safePad}px;
-      bottom: calc(${CFG.ui.safePad}px + env(safe-area-inset-bottom));
-      width: ${CFG.ui.joystick.outer * 2}px;
-      height: ${CFG.ui.joystick.outer * 2}px;
+      left: ${UI.safePad}px;
+      bottom: calc(${UI.safePad}px + env(safe-area-inset-bottom));
+      width: ${UI.joystick.outer * 2}px;
+      height: ${UI.joystick.outer * 2}px;
       border-radius: 999px;
       background: rgba(255,255,255,.06);
       border: 1px solid rgba(255,255,255,.10);
-      backdrop-filter: blur(10px);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       pointer-events: auto;
       touch-action: none;
     `;
 
-    const joyInner = document.createElement("div");
+    joyInner = document.createElement("div");
     joyInner.id = "bco-z-joy-inner";
     joyInner.style.cssText = `
       position:absolute;
       left: 50%; top: 50%;
-      width: ${CFG.ui.joystick.inner * 2}px;
-      height: ${CFG.ui.joystick.inner * 2}px;
+      width: ${UI.joystick.inner * 2}px;
+      height: ${UI.joystick.inner * 2}px;
       border-radius: 999px;
       transform: translate(-50%,-50%);
       background: rgba(255,255,255,.14);
       border: 1px solid rgba(255,255,255,.16);
       box-shadow: 0 12px 30px rgba(0,0,0,.35);
+      pointer-events: none;
     `;
-
     joy.appendChild(joyInner);
 
-    // fire button
-    fireBtn = document.createElement("button");
-    fireBtn.type = "button";
-    fireBtn.textContent = "FIRE";
+    // right FIRE (aim stick)
+    fireBtn = document.createElement("div");
+    fireBtn.id = "bco-z-fire";
     fireBtn.style.cssText = `
       position: absolute;
-      right: ${CFG.ui.safePad}px;
-      bottom: calc(${CFG.ui.safePad}px + env(safe-area-inset-bottom));
-      width: ${CFG.ui.fire.r * 2}px;
-      height: ${CFG.ui.fire.r * 2}px;
+      right: ${UI.safePad}px;
+      bottom: calc(${UI.safePad}px + env(safe-area-inset-bottom));
+      width: ${UI.fire.outer * 2}px;
+      height: ${UI.fire.outer * 2}px;
       border-radius: 999px;
       border: 1px solid rgba(255,255,255,.18);
       background: radial-gradient(circle at 35% 30%, rgba(255,255,255,.18), rgba(255,255,255,.06));
-      color: rgba(255,255,255,.92);
-      font: 900 13px/1 Inter, system-ui;
-      letter-spacing:.6px;
+      box-shadow: 0 18px 40px rgba(0,0,0,.45);
       pointer-events: auto;
       touch-action: none;
-      box-shadow: 0 18px 40px rgba(0,0,0,.45);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color: rgba(255,255,255,.92);
+      font: 950 13px/1 Inter, system-ui;
+      letter-spacing: .6px;
     `;
+    fireBtn.textContent = "FIRE";
+
+    fireInner = document.createElement("div");
+    fireInner.id = "bco-z-fire-inner";
+    fireInner.style.cssText = `
+      position:absolute;
+      left: 50%; top: 50%;
+      width: ${UI.fire.inner * 2}px;
+      height: ${UI.fire.inner * 2}px;
+      border-radius: 999px;
+      transform: translate(-50%,-50%);
+      background: linear-gradient(135deg, rgba(139,92,246,.35), rgba(34,211,238,.18));
+      border: 1px solid rgba(255,255,255,.18);
+      box-shadow: 0 14px 35px rgba(0,0,0,.35);
+      pointer-events: none;
+      opacity: .95;
+    `;
+    fireBtn.appendChild(fireInner);
 
     // shop bar (roguelike)
     shopBar = document.createElement("div");
@@ -425,7 +346,7 @@
       gap: 10px;
       pointer-events: auto;
       touch-action: none;
-      opacity: .0;
+      opacity: 0;
       transition: opacity .18s ease;
     `;
 
@@ -440,7 +361,7 @@
         border: 1px solid rgba(255,255,255,.14);
         background: rgba(255,255,255,.08);
         color: rgba(255,255,255,.92);
-        font: 800 12px/1 Inter, system-ui;
+        font: 900 12px/1 Inter, system-ui;
         letter-spacing: .2px;
         touch-action: manipulation;
       `;
@@ -469,32 +390,40 @@
     overlay.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
     overlay.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false });
 
-    // Wire input handlers
-    wireControls(joyInner);
+    wireControls();
 
-    // shop labels sync on mount
+    resize();
     syncShopLabels();
+    updateHud();
   }
 
   function destroyOverlay() {
     if (!overlay) return;
     try { overlay.remove(); } catch {}
+
     overlay = null;
     canvas = null;
     ctx = null;
+    dpr = 1;
+    W = 0;
+    H = 0;
+
     hudTop = null;
     hudBottom = null;
     btnClose = null;
+
     joy = null;
+    joyInner = null;
     fireBtn = null;
+    fireInner = null;
     shopBar = null;
   }
 
   // =========================================================
-  // Sizing / DPR
+  // DPR sizing
   // =========================================================
   function resize() {
-    if (!canvas) return;
+    if (!canvas || !ctx) return;
     const rect = canvas.getBoundingClientRect();
     W = Math.max(1, rect.width);
     H = Math.max(1, rect.height);
@@ -502,71 +431,20 @@
 
     canvas.width = Math.floor(W * dpr);
     canvas.height = Math.floor(H * dpr);
-
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const C = CORE();
+    if (C) C.resize(W, H);
   }
 
   // =========================================================
-  // Controls wiring (pointer first, fallback touch)
+  // Controls: pointer first, touch fallback
   // =========================================================
-  function setJoyVisual(nx, ny) {
-    const inner = document.getElementById("bco-z-joy-inner");
-    if (!inner) return;
-    const r = CFG.ui.joystick.outer - CFG.ui.joystick.inner - 6;
-    inner.style.transform = `translate(calc(-50% + ${nx * r}px), calc(-50% + ${ny * r}px))`;
-  }
-
-  function joyReset() {
-    input.joyActive = false;
-    input.joyId = null;
-    input.moveX = 0;
-    input.moveY = 0;
-    setJoyVisual(0, 0);
-  }
-
-  function aimSetFromScreen(px, py) {
-    const cam = camera();
-    const sx = (game.p.x - cam.x) + W / 2;
-    const sy = (game.p.y - cam.y) + H / 2;
-
-    const dx = px - sx;
-    const dy = py - sy;
-    const n = norm(dx, dy);
-    if (n.L > 3) {
-      input.aimX = n.x;
-      input.aimY = n.y;
-    }
-  }
-
   function wireControls() {
-    if (!canvas) return;
+    if (!canvas || !joy || !fireBtn) return;
 
-    // FIRE button: hold to shoot
-    if (fireBtn) {
-      const down = (e) => {
-        e.preventDefault?.();
-        input.firing = true;
-        haptic("impact", "light");
-      };
-      const up = (e) => {
-        e.preventDefault?.();
-        input.firing = false;
-      };
-
-      if (window.PointerEvent) {
-        fireBtn.addEventListener("pointerdown", down, { passive: false });
-        fireBtn.addEventListener("pointerup", up, { passive: false });
-        fireBtn.addEventListener("pointercancel", up, { passive: false });
-        fireBtn.addEventListener("pointerleave", up, { passive: false });
-      } else {
-        fireBtn.addEventListener("touchstart", down, { passive: false });
-        fireBtn.addEventListener("touchend", up, { passive: false });
-        fireBtn.addEventListener("touchcancel", up, { passive: false });
-      }
-    }
-
-    // Joystick
     const joyRect = () => joy.getBoundingClientRect();
+    const fireRect = () => fireBtn.getBoundingClientRect();
 
     const joyDown = (id, x, y) => {
       input.joyActive = true;
@@ -574,37 +452,29 @@
       const r = joyRect();
       input.joyBaseX = r.left + r.width / 2;
       input.joyBaseY = r.top + r.height / 2;
-
-      const dx = x - input.joyBaseX;
-      const dy = y - input.joyBaseY;
-
-      const outer = CFG.ui.joystick.outer;
-      const n = norm(dx, dy);
-      const mag = clamp(n.L / outer, 0, 1);
-
-      const dead = CFG.ui.joystick.dead;
-      const m = mag < dead ? 0 : (mag - dead) / (1 - dead);
-
-      input.moveX = n.x * m;
-      input.moveY = n.y * m;
-      setJoyVisual(input.moveX, input.moveY);
+      joyMove(id, x, y);
     };
 
     const joyMove = (id, x, y) => {
       if (!input.joyActive || input.joyId !== id) return;
+
       const dx = x - input.joyBaseX;
       const dy = y - input.joyBaseY;
 
-      const outer = CFG.ui.joystick.outer;
+      const outer = UI.joystick.outer;
       const n = norm(dx, dy);
       const mag = clamp(n.L / outer, 0, 1);
 
-      const dead = CFG.ui.joystick.dead;
+      const dead = UI.joystick.dead;
       const m = mag < dead ? 0 : (mag - dead) / (1 - dead);
 
       input.moveX = n.x * m;
       input.moveY = n.y * m;
+
       setJoyVisual(input.moveX, input.moveY);
+
+      const C = CORE();
+      if (C) C.setMove(input.moveX, input.moveY);
     };
 
     const joyUp = (id) => {
@@ -612,24 +482,60 @@
       joyReset();
     };
 
-    // Aim
     const aimDown = (id, x, y) => {
       input.aimActive = true;
       input.aimId = id;
-      aimSetFromScreen(x, y);
+
+      // anchor at FIRE center (right stick)
+      const r = fireRect();
+      input.aimBaseX = r.left + r.width / 2;
+      input.aimBaseY = r.top + r.height / 2;
+
+      input.firing = true;
+      aimMove(id, x, y);
+      const C = CORE();
+      if (C) C.setShooting(true);
+
+      haptic("impact", "light");
     };
 
     const aimMove = (id, x, y) => {
       if (!input.aimActive || input.aimId !== id) return;
-      aimSetFromScreen(x, y);
+
+      const dx = x - input.aimBaseX;
+      const dy = y - input.aimBaseY;
+
+      const outer = UI.fire.outer;
+      const n = norm(dx, dy);
+      const mag = clamp(n.L / outer, 0, 1);
+
+      const dead = UI.fire.dead;
+      const m = mag < dead ? 0 : (mag - dead) / (1 - dead);
+
+      // stick visual
+      setFireVisual(n.x * m, n.y * m);
+
+      // aim vector (direction)
+      if (n.L > 2) {
+        input.aimX = n.x;
+        input.aimY = n.y;
+        const C = CORE();
+        if (C) C.setAim(input.aimX, input.aimY);
+      }
     };
 
     const aimUp = (id) => {
       if (!input.aimActive || input.aimId !== id) return;
       input.aimActive = false;
       input.aimId = null;
+      input.firing = false;
+      setFireVisual(0, 0);
+
+      const C = CORE();
+      if (C) C.setShooting(false);
     };
 
+    // pointer
     if (window.PointerEvent) {
       joy.addEventListener("pointerdown", (e) => {
         e.preventDefault();
@@ -646,20 +552,21 @@
       joy.addEventListener("pointerup", (e) => { e.preventDefault(); joyUp(e.pointerId); }, { passive: false });
       joy.addEventListener("pointercancel", (e) => { e.preventDefault(); joyUp(e.pointerId); }, { passive: false });
 
-      canvas.addEventListener("pointerdown", (e) => {
+      fireBtn.addEventListener("pointerdown", (e) => {
         e.preventDefault();
-        canvas.setPointerCapture?.(e.pointerId);
+        fireBtn.setPointerCapture?.(e.pointerId);
         aimDown(e.pointerId, e.clientX, e.clientY);
       }, { passive: false });
 
-      canvas.addEventListener("pointermove", (e) => {
+      fireBtn.addEventListener("pointermove", (e) => {
         if (!input.aimActive) return;
         e.preventDefault();
         aimMove(e.pointerId, e.clientX, e.clientY);
       }, { passive: false });
 
-      canvas.addEventListener("pointerup", (e) => { e.preventDefault(); aimUp(e.pointerId); }, { passive: false });
-      canvas.addEventListener("pointercancel", (e) => { e.preventDefault(); aimUp(e.pointerId); }, { passive: false });
+      fireBtn.addEventListener("pointerup", (e) => { e.preventDefault(); aimUp(e.pointerId); }, { passive: false });
+      fireBtn.addEventListener("pointercancel", (e) => { e.preventDefault(); aimUp(e.pointerId); }, { passive: false });
+      fireBtn.addEventListener("pointerleave", (e) => { e.preventDefault(); aimUp(e.pointerId); }, { passive: false });
     } else {
       joy.addEventListener("touchstart", (e) => {
         e.preventDefault();
@@ -683,24 +590,24 @@
         for (const t of e.changedTouches) joyUp(t.identifier);
       }, { passive: false });
 
-      canvas.addEventListener("touchstart", (e) => {
+      fireBtn.addEventListener("touchstart", (e) => {
         e.preventDefault();
         const t = e.changedTouches[0];
         if (!t) return;
         aimDown(t.identifier, t.clientX, t.clientY);
       }, { passive: false });
 
-      canvas.addEventListener("touchmove", (e) => {
+      fireBtn.addEventListener("touchmove", (e) => {
         e.preventDefault();
         for (const t of e.changedTouches) aimMove(t.identifier, t.clientX, t.clientY);
       }, { passive: false });
 
-      canvas.addEventListener("touchend", (e) => {
+      fireBtn.addEventListener("touchend", (e) => {
         e.preventDefault();
         for (const t of e.changedTouches) aimUp(t.identifier);
       }, { passive: false });
 
-      canvas.addEventListener("touchcancel", (e) => {
+      fireBtn.addEventListener("touchcancel", (e) => {
         e.preventDefault();
         for (const t of e.changedTouches) aimUp(t.identifier);
       }, { passive: false });
@@ -710,328 +617,136 @@
   }
 
   // =========================================================
-  // Camera
+  // Render
   // =========================================================
-  function camera() {
-    return { x: game.p.x, y: game.p.y };
-  }
-
-  // =========================================================
-  // World hooks (compat for zombies.world.js)
-  // =========================================================
-  // These are intentionally on API, so world.js can wrap them:
-  //   const _tick = core._tickWorld; core._tickWorld = (run,dt,t)=>{...; if(_tick) _tick(...) }
-  //   const _buy  = core._buyPerk;  core._buyPerk  = (run,perk)=>{...; if(_buy) _buy(...) }
-  function tickWorld(run, dt, tms) {
-    // default noop (world.js can wrap)
-  }
-  function buyWorldPerk(run, perkId) {
-    // default noop (world.js can wrap)
-  }
-
-  // =========================================================
-  // Game control
-  // =========================================================
-  function resetRun() {
-    const st = effectiveStats();
-
-    game.startedAtMs = now();
-    game.timeMs = 0;
-    game.wave = 1;
-    game.kills = 0;
-    game.coins = 0;
-
-    game.perks = { Jug: 0, Speed: 0, Mag: 0 };
-    game.weaponKey = "SMG";
-
-    game.p.x = 0;
-    game.p.y = 0;
-    game.p.vx = 0;
-    game.p.vy = 0;
-    game.p.hp = st.hpMax;
-    game.p.lastHitAt = -99999;
-
-    game.bullets = [];
-    game.zombies = [];
-
-    game.shootAcc.lastShotAt = 0;
-
-    input.aimX = 1;
-    input.aimY = 0;
-
-    spawnWave(game.wave);
-
-    syncShopLabels();
-    updateHud();
-  }
-
-  function spawnWave(w) {
-    const count = CFG.wave.baseCount + (w - 1) * CFG.wave.countGrowth;
-    const hpMul = Math.pow(CFG.wave.hpGrowth, (w - 1));
-    const spMul = Math.pow(CFG.wave.speedGrowth, (w - 1));
-
-    for (let i = 0; i < count; i++) {
-      const ang = rand(0, Math.PI * 2);
-      const r = rand(CFG.wave.spawnRingMin, CFG.wave.spawnRingMax);
-      const x = game.p.x + Math.cos(ang) * r;
-      const y = game.p.y + Math.sin(ang) * r;
-
-      game.zombies.push({
-        x, y,
-        vx: 0, vy: 0,
-        hp: CFG.zombie.baseHp * hpMul,
-        sp: CFG.zombie.baseSpeed * spMul,
-        nextTouchAt: 0
-      });
-    }
-  }
-
-  function openOverlay() {
-    ensureOverlay();
-    resize();
-
-    openFlag = true;
-    overlay.style.display = "block";
-    overlay.style.opacity = "1";
-
-    try { tg?.BackButton?.show?.(); } catch {}
-    try { tg?.MainButton?.hide?.(); } catch {}
-    try { tg?.expand?.(); } catch {}
-
-    if (shopBar) shopBar.style.opacity = (game.mode === "roguelike") ? "1" : "0";
-
-    haptic("impact", "medium");
-  }
-
-  function closeOverlay() {
-    openFlag = false;
-    running = false;
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = 0;
-
-    joyReset();
-    input.aimActive = false;
-    input.aimId = null;
-    input.firing = false;
-
-    try { tg?.BackButton?.hide?.(); } catch {}
-    try { tg?.MainButton?.show?.(); } catch {}
-
-    destroyOverlay();
-  }
-
-  function startRun() {
-    if (!openFlag) openOverlay();
-
-    resetRun();
-    running = true;
-
-    loop(now());
-    haptic("notif", "success");
-  }
-
-  function stopRun(reason = "manual") {
-    running = false;
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = 0;
-
-    updateHud();
-    haptic("notif", reason === "dead" ? "error" : "warning");
-  }
-
-  // =========================================================
-  // Combat
-  // =========================================================
-  function canShoot(tms) {
-    const w = weapon();
-    const intervalMs = (60_000 / w.rpm);
-    return (tms - game.shootAcc.lastShotAt) >= intervalMs;
-  }
-
-  function shoot(tms) {
-    if (!canShoot(tms)) return;
-    const w = weapon();
-    game.shootAcc.lastShotAt = tms;
-
-    const sp = CFG.bullet.speed;
-
-    const ax = input.aimX;
-    const ay = input.aimY;
-
-    const spread = w.spread;
-    const bullets = w.bullets;
-
-    for (let i = 0; i < bullets; i++) {
-      const a = Math.atan2(ay, ax) + rand(-spread, spread);
-      const dx = Math.cos(a);
-      const dy = Math.sin(a);
-
-      game.bullets.push({
-        x: game.p.x + dx * 18,
-        y: game.p.y + dy * 18,
-        vx: dx * sp,
-        vy: dy * sp,
-        born: tms,
-        life: CFG.bullet.lifeMs,
-        dmg: w.dmg,
-        pierce: CFG.bullet.pierce
-      });
-    }
-  }
-
-  function hitPlayer(tms) {
-    const st = effectiveStats();
-    const ifr = CFG.player.iFramesMs;
-    if (tms - game.p.lastHitAt < ifr) return;
-
-    game.p.lastHitAt = tms;
-    game.p.hp = Math.max(0, game.p.hp - CFG.zombie.damage);
-    haptic("impact", "light");
-
-    if (game.p.hp <= 0) {
-      stopRun("dead");
-      sendResult("dead");
-    }
-  }
-
-  // =========================================================
-  // Physics / Update
-  // =========================================================
-  function update(dt, tms) {
-    game.timeMs = tms - game.startedAtMs;
-
-    // allow world modules to inject (maps/collisions/bosses)
-    try { API._tickWorld(game, dt, tms); } catch {}
-
-    // perks tick (regen etc) from module (if provided)
-    try {
-      const P = PERKS();
-      if (P?.tick) P.tick(game, dt, tms);
-    } catch {}
-
-    // movement
-    const st = effectiveStats();
-    const mx = input.moveX;
-    const my = input.moveY;
-
-    const speed = st.speed;
-    game.p.vx = mx * speed;
-    game.p.vy = my * speed;
-    game.p.x += game.p.vx * dt;
-    game.p.y += game.p.vy * dt;
-
-    // keep player in arena
-    const pr = len2(game.p.x, game.p.y);
-    if (pr > CFG.arenaRadius) {
-      const n = norm(game.p.x, game.p.y);
-      game.p.x = n.x * CFG.arenaRadius;
-      game.p.y = n.y * CFG.arenaRadius;
-    }
-
-    // shooting
-    if (input.firing && running) shoot(tms);
-
-    // bullets
-    for (let i = game.bullets.length - 1; i >= 0; i--) {
-      const b = game.bullets[i];
-      b.x += b.vx * dt;
-      b.y += b.vy * dt;
-
-      if ((tms - b.born) > b.life) {
-        game.bullets.splice(i, 1);
-        continue;
-      }
-
-      if (len2(b.x, b.y) > CFG.arenaRadius + 220) {
-        game.bullets.splice(i, 1);
-        continue;
-      }
-    }
-
-    // zombies
-    for (let i = game.zombies.length - 1; i >= 0; i--) {
-      const z = game.zombies[i];
-
-      const dx = game.p.x - z.x;
-      const dy = game.p.y - z.y;
-      const n = norm(dx, dy);
-
-      z.vx = n.x * z.sp;
-      z.vy = n.y * z.sp;
-
-      z.x += z.vx * dt;
-      z.y += z.vy * dt;
-
-      const dist = len2(dx, dy);
-      if (dist < (CFG.zombie.radius + CFG.player.hitbox)) {
-        if (tms >= z.nextTouchAt) {
-          z.nextTouchAt = tms + CFG.zombie.touchDpsMs;
-          hitPlayer(tms);
-        }
-      }
-    }
-
-    // collisions: bullets vs zombies
-    for (let bi = game.bullets.length - 1; bi >= 0; bi--) {
-      const b = game.bullets[bi];
-      let consumed = false;
-
-      for (let zi = game.zombies.length - 1; zi >= 0; zi--) {
-        const z = game.zombies[zi];
-        const dx = z.x - b.x;
-        const dy = z.y - b.y;
-        const dist = len2(dx, dy);
-
-        if (dist < (CFG.zombie.radius + CFG.bullet.radius)) {
-          z.hp -= b.dmg;
-          haptic("impact", "light");
-
-          if (z.hp <= 0) {
-            game.zombies.splice(zi, 1);
-            game.kills += 1;
-            game.coins += (game.mode === "roguelike") ? 2 : 1;
-          }
-
-          if (b.pierce > 0) {
-            b.pierce -= 1;
-          } else {
-            consumed = true;
-          }
-          break;
-        }
-      }
-
-      if (consumed) game.bullets.splice(bi, 1);
-    }
-
-    // next wave
-    if (game.zombies.length === 0 && running) {
-      game.wave += 1;
-      spawnWave(game.wave);
-      haptic("notif", "success");
-    }
-
-    updateHud();
-  }
-
-  // =========================================================
-  // Render helpers
-  // =========================================================
-  function drawArena(cam) {
+  function drawFallbackPlayer(x, y, dirX, dirY) {
     ctx.save();
-    ctx.translate(W / 2, H / 2);
-    ctx.translate(-game.p.x + cam.x, -game.p.y + cam.y);
+    ctx.translate(x, y);
+
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = "rgba(255,255,255,.92)";
+    ctx.beginPath();
+    ctx.arc(0, 0, 18, 0, Math.PI * 2);
+    ctx.fill();
+
+    // face dir
+    const n = norm(dirX, dirY);
+    ctx.globalAlpha = 0.28;
+    ctx.fillStyle = "rgba(34,211,238,.9)";
+    ctx.beginPath();
+    ctx.arc(n.x * 9, n.y * 9, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawFallbackZombie(x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = "rgba(34,197,94,.85)";
+    ctx.beginPath();
+    ctx.arc(0, 0, 17, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.globalAlpha = 0.28;
+    ctx.fillStyle = "rgba(0,0,0,.55)";
+    ctx.beginPath();
+    ctx.arc(-6, -4, 3, 0, Math.PI * 2);
+    ctx.arc(6, -4, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawSprite(kind, x, y, dirX, dirY) {
+    const A = ASSETS();
+    if (!A || !A.SPRITES || !A.drawSprite) {
+      if (kind === "player") drawFallbackPlayer(x, y, dirX, dirY);
+      else drawFallbackZombie(x, y);
+      return;
+    }
+
+    const spr = (kind === "player")
+      ? (A.SPRITES.player || A.SPRITES.player_idle || null)
+      : (A.SPRITES.zombie || A.SPRITES.zombie_walk || null);
+
+    if (!spr) {
+      if (kind === "player") drawFallbackPlayer(x, y, dirX, dirY);
+      else drawFallbackZombie(x, y);
+      return;
+    }
+
+    try {
+      const a = Math.atan2(dirY, dirX);
+      A.drawSprite(ctx, spr, x, y, { rot: a });
+    } catch {
+      if (kind === "player") drawFallbackPlayer(x, y, dirX, dirY);
+      else drawFallbackZombie(x, y);
+    }
+  }
+
+  function drawAimReticle(camX, camY, px, py, ax, ay) {
+    const sx = (px - camX) + W / 2;
+    const sy = (py - camY) + H / 2;
+
+    const r1 = 34;
+    const r2 = 64;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    ctx.globalAlpha = 0.46;
+    ctx.strokeStyle = "rgba(255,255,255,.78)";
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.moveTo(ax * r1, ay * r1);
+    ctx.lineTo(ax * r2, ay * r2);
+    ctx.stroke();
 
     ctx.globalAlpha = 0.22;
-    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(ax * r2, ay * r2, 8, 0, Math.PI * 2);
+    ctx.stroke();
 
-    const step = 80;
-    const minX = cam.x - W / 2 - 200;
-    const maxX = cam.x + W / 2 + 200;
-    const minY = cam.y - H / 2 - 200;
-    const maxY = cam.y + H / 2 + 200;
+    ctx.restore();
+  }
 
+  function render() {
+    const C = CORE();
+    if (!ctx || !C) return;
+
+    const S = C.state;
+    const cfg = C.cfg;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // subtle bg
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,.18)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+
+    const camX = S.camX;
+    const camY = S.camY;
+
+    // grid + arena
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.translate(-camX, -camY);
+
+    // grid
+    ctx.globalAlpha = 0.20;
     ctx.strokeStyle = "rgba(255,255,255,.10)";
+    ctx.lineWidth = 1;
+    const step = 80;
+    const minX = camX - W / 2 - 200;
+    const maxX = camX + W / 2 + 200;
+    const minY = camY - H / 2 - 200;
+    const maxY = camY + H / 2 + 200;
+
     for (let x = Math.floor(minX / step) * step; x < maxX; x += step) {
       ctx.beginPath();
       ctx.moveTo(x, minY);
@@ -1049,160 +764,59 @@
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(255,255,255,.12)";
     ctx.beginPath();
-    ctx.arc(0, 0, CFG.arenaRadius, 0, Math.PI * 2);
+    ctx.arc(0, 0, cfg.arenaRadius, 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.restore();
-  }
-
-  function drawFallbackPlayer(x, y) {
-    ctx.save();
-    ctx.translate(x, y);
+    // bullets
+    ctx.globalAlpha = 0.92;
     ctx.fillStyle = "rgba(255,255,255,.92)";
-    ctx.beginPath();
-    ctx.arc(0, 0, 18, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "rgba(255,255,255,.22)";
-    ctx.beginPath();
-    ctx.arc(6, -6, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  function drawFallbackZombie(x, y) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.fillStyle = "rgba(180,255,180,.82)";
-    ctx.beginPath();
-    ctx.arc(0, 0, 18, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "rgba(0,0,0,.32)";
-    ctx.beginPath();
-    ctx.arc(-6, -4, 3, 0, Math.PI * 2);
-    ctx.arc(6, -4, 3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  function drawSprite(kind, x, y, dirX, dirY) {
-    const A = ASSETS();
-    if (!A || !A.SPRITES) {
-      if (kind === "player") drawFallbackPlayer(x, y);
-      else drawFallbackZombie(x, y);
-      return;
-    }
-
-    const spr = (kind === "player")
-      ? (A.SPRITES.player || A.SPRITES.player_idle || null)
-      : (A.SPRITES.zombie || A.SPRITES.zombie_walk || null);
-
-    if (!spr || !A.drawSprite) {
-      if (kind === "player") drawFallbackPlayer(x, y);
-      else drawFallbackZombie(x, y);
-      return;
-    }
-
-    try {
-      const a = Math.atan2(dirY, dirX);
-      A.drawSprite(ctx, spr, x, y, { rot: a });
-    } catch {
-      if (kind === "player") drawFallbackPlayer(x, y);
-      else drawFallbackZombie(x, y);
-    }
-  }
-
-  function drawAimReticle(cam) {
-    const sx = (game.p.x - cam.x) + W / 2;
-    const sy = (game.p.y - cam.y) + H / 2;
-
-    const ax = input.aimX;
-    const ay = input.aimY;
-
-    const r1 = 36;
-    const r2 = 62;
-
-    ctx.save();
-    ctx.translate(sx, sy);
-
-    ctx.globalAlpha = 0.45;
-    ctx.strokeStyle = "rgba(255,255,255,.75)";
-    ctx.lineWidth = 2;
-
-    ctx.beginPath();
-    ctx.moveTo(ax * r1, ay * r1);
-    ctx.lineTo(ax * r2, ay * r2);
-    ctx.stroke();
-
-    ctx.globalAlpha = 0.22;
-    ctx.beginPath();
-    ctx.arc(ax * r2, ay * r2, 8, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.restore();
-  }
-
-  function render() {
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, W, H);
-
-    const cam = camera();
-
-    ctx.save();
-    ctx.fillStyle = "rgba(0,0,0,.18)";
-    ctx.fillRect(0, 0, W, H);
-    ctx.restore();
-
-    drawArena(cam);
-
-    ctx.save();
-    ctx.translate(W / 2, H / 2);
-    ctx.translate(-cam.x, -cam.y);
-
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = "rgba(255,255,255,.9)";
-    for (const b of game.bullets) {
+    for (const b of S.bullets) {
       ctx.beginPath();
-      ctx.arc(b.x, b.y, CFG.bullet.radius, 0, Math.PI * 2);
+      ctx.arc(b.x, b.y, (b.r || cfg.bullet.radius), 0, Math.PI * 2);
       ctx.fill();
     }
 
-    for (const z of game.zombies) {
+    // zombies
+    for (const z of S.zombies) {
       drawSprite("zombie", z.x, z.y, z.vx, z.vy);
     }
 
-    drawSprite("player", game.p.x, game.p.y, input.aimX, input.aimY);
+    // player
+    drawSprite("player", S.player.x, S.player.y, C.input.aimX, C.input.aimY);
 
     ctx.restore();
 
-    drawAimReticle(cam);
+    drawAimReticle(camX, camY, S.player.x, S.player.y, C.input.aimX, C.input.aimY);
   }
 
   // =========================================================
-  // HUD updates + shop label sync
+  // HUD + shop labels
   // =========================================================
-  function perkCost(name) {
+  function perkCost(id) {
+    const C = CORE();
     const P = PERKS();
+    if (!C) return 999;
+
     try {
       if (P?.cost) {
-        const c = Number(P.cost(name, game));
+        const c = Number(P.cost(id, C));
         if (Number.isFinite(c)) return c;
       }
     } catch {}
-    if (name === "Jug") return 12;
-    if (name === "Speed") return 10;
-    if (name === "Mag") return 8;
-    return 999;
+
+    const p = C.cfg?.perks?.[id];
+    return p ? (Number(p.cost) || 999) : 999;
   }
 
   function syncShopLabels() {
+    const C = CORE();
+    if (!C) return;
+
     const P = PERKS();
     const defs = {
-      Jug:   { base: "🧪 Jug",   emoji: "🧪" },
-      Speed: { base: "⚡ Speed", emoji: "⚡" },
-      Mag:   { base: "🔫 Ammo",  emoji: "🔫" }
+      Jug:   { base: "🧪 Jug" },
+      Speed: { base: "⚡ Speed" },
+      Mag:   { base: "🔫 Ammo" }
     };
 
     for (const k of Object.keys(defs)) {
@@ -1210,13 +824,12 @@
       if (!b) continue;
 
       const cost = perkCost(k);
-      const owned = !!game.perks?.[k];
+      const owned = !!C.state?.perks?.[k];
 
-      // optional: let module provide label
       let label = `${defs[k].base} (${cost})`;
       try {
         if (P?.label) {
-          const s = P.label(k, game);
+          const s = P.label(k, C);
           if (s) label = String(s);
         }
       } catch {}
@@ -1224,101 +837,131 @@
       if (owned) label = `${label} ✓`;
 
       b.textContent = label;
-
-      // disable button if owned (lux UX)
       b.disabled = owned;
       b.style.opacity = owned ? "0.55" : "1";
     }
   }
 
   function updateHud() {
+    const C = CORE();
+    if (!C) return;
+
     const sub = document.getElementById("bco-z-sub");
     const hud = document.getElementById("bco-z-hud");
 
-    const st = effectiveStats();
-    const hp = clamp(game.p.hp, 0, st.hpMax);
+    const st = C._effectiveStats();
+    const hp = clamp(C.state.player.hp, 0, st.hpMax);
+    const w = C._weapon();
 
-    if (sub) sub.textContent = `${game.mode.toUpperCase()} • Wave ${game.wave}`;
-
+    if (sub) sub.textContent = `${C.meta.mode.toUpperCase()} • Wave ${C.state.wave}`;
     if (hud) {
       hud.textContent =
-        `❤️ ${fmt(hp)}/${fmt(st.hpMax)} • ☠️ ${fmt(game.kills)} • 💰 ${fmt(game.coins)} • 🔫 ${weapon().name}`;
+        `❤️ ${Math.round(hp)}/${Math.round(st.hpMax)} • ☠️ ${C.state.kills} • 💰 ${C.state.coins} • 🔫 ${w.name}`;
     }
 
-    if (shopBar) shopBar.style.opacity = (game.mode === "roguelike") ? "1" : "0";
-
-    // keep shop labels live (prices/owned)
+    if (shopBar) shopBar.style.opacity = (C.meta.mode === "roguelike") ? "1" : "0";
     syncShopLabels();
   }
 
   // =========================================================
   // Loop
   // =========================================================
-  let lastT = 0;
+  let rafId = 0;
 
-  function loop(t) {
-    if (!openFlag) return;
+  function loop(tms) {
+    const C = CORE();
+    if (!overlay || !C) return;
+
     rafId = requestAnimationFrame(loop);
 
-    if (!running) {
+    if (!C.running) {
       render();
+      updateHud();
       return;
     }
 
-    if (!lastT) lastT = t;
-    let dt = (t - lastT) / 1000;
-    lastT = t;
+    C.updateFrame(tms);
 
-    dt = Math.min(CFG.dtMax, Math.max(0, dt));
+    // auto-dead
+    if (!C.running && C.state.player.hp <= 0) {
+      haptic("notif", "error");
+      API.sendResult("dead");
+    }
 
-    update(dt, t);
     render();
+    updateHud();
   }
 
   // =========================================================
-  // Shop / perks (now routed through module if present)
+  // Open/Close + start/stop
   // =========================================================
-  function buyPerk(name) {
-    if (game.mode !== "roguelike") { haptic("notif", "warning"); return false; }
-    if (game.perks?.[name]) { haptic("impact", "light"); return false; }
+  let openFlag = false;
 
-    // allow world module to react first (maps/perk systems)
-    try { API._buyPerk(game, name); } catch {}
+  function openOverlay() {
+    ensureOverlay();
+    resize();
 
-    const P = PERKS();
+    openFlag = true;
+    overlay.style.display = "block";
+    overlay.style.opacity = "1";
 
-    // If module provides buy() — it owns the logic
-    if (P?.buy) {
-      try {
-        const ok = !!P.buy(name, game);
-        if (ok) {
-          haptic("notif", "success");
-          updateHud();
-          return true;
-        }
-        haptic("notif", "warning");
-        return false;
-      } catch {
-        haptic("notif", "warning");
-        return false;
-      }
-    }
+    try { tg?.BackButton?.show?.(); } catch {}
+    try { tg?.MainButton?.hide?.(); } catch {}
+    try { tg?.expand?.(); } catch {}
+    haptic("impact", "medium");
 
-    // Else fallback local buy (your previous behavior)
-    const c = perkCost(name);
-    if (game.coins < c) { haptic("notif", "warning"); return false; }
+    if (!rafId) rafId = requestAnimationFrame(loop);
+  }
 
-    game.coins -= c;
-    game.perks[name] = 1;
+  function closeOverlay() {
+    openFlag = false;
 
-    // apply max hp immediately
-    const st = effectiveStats();
-    game.p.hp = Math.min(game.p.hp + 18, st.hpMax);
+    const C = CORE();
+    if (C) C.stop();
 
-    // If module has apply(), call it (soft integration)
-    try { if (P?.apply) P.apply(name, game); } catch {}
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = 0;
+
+    joyReset();
+    aimReset();
+    input.firing = false;
+
+    try { tg?.BackButton?.hide?.(); } catch {}
+    try { tg?.MainButton?.show?.(); } catch {}
+
+    destroyOverlay();
+  }
+
+  function startRun() {
+    const C = CORE();
+    if (!C) throw new Error("BCO_ZOMBIES_CORE missing");
+
+    if (!openFlag) openOverlay();
+
+    C.start(C.meta.mode, W, H, {
+      map: C.meta.map,
+      character: C.meta.character,
+      skin: C.meta.skin,
+      weaponKey: C.meta.weaponKey
+    });
+
+    // sync aim + shooting
+    C.setAim(input.aimX, input.aimY);
+    C.setMove(input.moveX, input.moveY);
+    C.setShooting(!!input.firing);
 
     haptic("notif", "success");
+    updateHud();
+
+    return true;
+  }
+
+  function stopRun(reason = "manual") {
+    const C = CORE();
+    if (C) C.stop();
+    input.firing = false;
+    if (C) C.setShooting(false);
+    haptic("notif", reason === "dead" ? "error" : "warning");
     updateHud();
     return true;
   }
@@ -1326,94 +969,129 @@
   // =========================================================
   // Results -> bot
   // =========================================================
-  function score() {
-    const base = game.kills * 100;
-    const waveBonus = (game.wave - 1) * 250;
-    const timeSec = Math.max(1, game.timeMs / 1000);
-    const pace = (game.kills / timeSec) * 100;
-    const perks = (game.perks.Jug ? 150 : 0) + (game.perks.Speed ? 120 : 0) + (game.perks.Mag ? 80 : 0);
+  function score(C) {
+    const S = C.state;
+    const base = S.kills * 100;
+    const waveBonus = (S.wave - 1) * 250;
+    const timeSec = Math.max(1, S.timeMs / 1000);
+    const pace = (S.kills / timeSec) * 100;
+    const perks = (S.perks.Jug ? 150 : 0) + (S.perks.Speed ? 120 : 0) + (S.perks.Mag ? 80 : 0);
     return Math.round(base + waveBonus + pace + perks);
   }
 
   function sendResult(reason = "manual") {
+    const C = CORE();
+    if (!C) return false;
+
     const payload = {
       action: "game_result",
       game: "zombies",
-      mode: game.mode,
+      mode: C.meta.mode,
       reason,
 
-      wave: game.wave,
-      kills: game.kills,
-      coins: game.coins,
-      duration_ms: Math.round(game.timeMs),
-      score: score(),
+      wave: C.state.wave,
+      kills: C.state.kills,
+      coins: C.state.coins,
+      duration_ms: Math.round(C.state.timeMs),
+      score: score(C),
 
-      character: game.character,
-      skin: game.skin,
-      loadout: { weapon: game.weaponKey },
-      perks: { ...game.perks }
+      character: C.meta.character,
+      skin: C.meta.skin,
+      loadout: { weapon: C.meta.weaponKey },
+      perks: { ...C.state.perks }
     };
 
-    safeSendData(payload);
+    return safeSendData(payload);
+  }
+
+  // =========================================================
+  // Shop / perks (module-first, fallback to CORE)
+  // =========================================================
+  function buyPerk(id) {
+    const C = CORE();
+    if (!C) return false;
+
+    if (C.meta.mode !== "roguelike") { haptic("notif", "warning"); return false; }
+    if (C.state?.perks?.[id]) { haptic("impact", "light"); return false; }
+
+    // world hook first
+    if (typeof C._buyPerk === "function") {
+      try { C._buyPerk(C, id); } catch {}
+    }
+
+    const P = PERKS();
+    if (P?.buy) {
+      try {
+        const ok = !!P.buy(id, C);
+        haptic("notif", ok ? "success" : "warning");
+        updateHud();
+        return ok;
+      } catch {
+        haptic("notif", "warning");
+        return false;
+      }
+    }
+
+    const ok = !!C.buyPerk(id);
+    haptic("notif", ok ? "success" : "warning");
+    updateHud();
+    return ok;
   }
 
   // =========================================================
   // Public API
   // =========================================================
   const API = {
-    // world hooks (for zombies.world.js wrapping)
-    _tickWorld: tickWorld,
-    _buyPerk: buyWorldPerk,
+    open() { if (!openFlag) openOverlay(); return true; },
+    close() { closeOverlay(); return true; },
+    start() { return startRun(); },
+    stop() { return stopRun("manual"); },
+    isOpen() { return !!openFlag; },
 
-    open() {
-      if (!openFlag) openOverlay();
-      return true;
-    },
-    close() {
-      closeOverlay();
-      return true;
-    },
-    start() {
-      startRun();
-      return true;
-    },
-    stop() {
-      stopRun("manual");
-      return true;
-    },
-    isOpen() {
-      return !!openFlag;
-    },
     setMode(mode) {
-      const m = (String(mode || "")).toLowerCase();
-      game.mode = (m === "roguelike" || m === "rogue") ? "roguelike" : "arcade";
-      if (shopBar) shopBar.style.opacity = (game.mode === "roguelike") ? "1" : "0";
-      syncShopLabels();
+      const C = CORE();
+      if (!C) return "arcade";
+      const m = String(mode || "").toLowerCase();
+      C.meta.mode = (m === "roguelike" || m === "rogue") ? "roguelike" : "arcade";
+      if (shopBar) shopBar.style.opacity = (C.meta.mode === "roguelike") ? "1" : "0";
       updateHud();
-      return game.mode;
+      return C.meta.mode;
     },
+
+    setMap(map) {
+      const C = CORE();
+      if (!C) return null;
+      C.meta.map = String(map || "Ashes");
+      return C.meta.map;
+    },
+
     setCharacter(character, skin) {
-      if (character) game.character = String(character);
-      if (skin) game.skin = String(skin);
+      const C = CORE();
+      if (!C) return { character: "male", skin: "default" };
+
+      if (character) C.meta.character = String(character);
+      if (skin) C.meta.skin = String(skin);
 
       const A = ASSETS();
-      try {
-        if (A?.setPlayerSkin) A.setPlayerSkin(game.skin);
-      } catch {}
-      return { character: game.character, skin: game.skin };
+      try { if (A?.setPlayerSkin) A.setPlayerSkin(C.meta.skin); } catch {}
+
+      return { character: C.meta.character, skin: C.meta.skin };
     },
+
     setWeapon(key) {
-      if (CFG.weapons[key]) game.weaponKey = key;
+      const C = CORE();
+      if (!C) return null;
+      C.setWeapon(key);
       updateHud();
-      return game.weaponKey;
+      return C.meta.weaponKey;
     },
-    buyPerk(name) {
-      return buyPerk(name);
-    },
-    sendResult(reason) {
-      sendResult(reason || "manual");
-      return true;
-    }
+
+    buyPerk(id) { return buyPerk(id); },
+
+    sendResult(reason) { return !!sendResult(reason || "manual"); },
+
+    // hooks for world.js to wrap (pass-through to CORE)
+    get core() { return CORE(); }
   };
 
   // Telegram Back button close overlay
@@ -1423,6 +1101,6 @@
     });
   } catch {}
 
-  // Export
   window.BCO_ZOMBIES = API;
+  console.log("[Z] loaded");
 })();
