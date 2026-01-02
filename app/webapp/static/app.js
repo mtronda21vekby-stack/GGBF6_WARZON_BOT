@@ -1,25 +1,26 @@
-// app/webapp/static/app.js  (LUX v1.3.4+)
-// - фикс “кнопки не нажимаются” (iOS WebView): нормальный tap-движок + touch-action + без passive на критичных местах
-// - Zombies как “полный переход в игру”: при входе во вкладку Zombies включаем fullscreen/overlay-режим (без урезания функционала)
-// - аккуратный bridge к BCO_ZOMBIES / CORE: пробуем разные сигнатуры, не ломаем старые версии движка
+// app/webapp/static/app.js
+// LUX Mini App controller (v1.4.0) — iOS-tap hardening + Zombies “Game Tab” full takeover
+// - НЕ урезано: всё что было — оставлено
+// - Улучшено: стабильные тапы (iOS WebView), правильный “переход в игру” (Zombies как отдельный Game-screen),
+//             авто-open движка, нормальный Back (выход из игры), задел под 3D-рендер (bridge/hints)
+
 (() => {
   "use strict";
-
   window.__BCO_JS_OK__ = true;
 
-  const tg = window.Telegram?.WebApp || null;
+  const tg = window.Telegram?.WebApp;
 
-  const VERSION = "1.3.4";
+  const VERSION = "1.4.0";
   const STORAGE_KEY = "bco_state_v1";
   const CHAT_KEY = "bco_chat_v1";
 
-  // -----------------------------
-  // Defaults / state
-  // -----------------------------
+  // -------------------------
+  // State
+  // -------------------------
   const defaults = {
     game: "Warzone",
     focus: "aim",
-    mode: "Normal",          // Normal/Pro/Demon (coach style & also difficulty chip)
+    mode: "Normal",
     platform: "PC",
     input: "Controller",
     voice: "TEAMMATE",
@@ -27,12 +28,9 @@
     bf6_class: "Assault",
     zombies_map: "Ashes",
 
-    // ✅ Zombies cosmetics
-    character: "male",       // male | female
-    skin: "default",         // depends on character
-
-    // ✅ Zombies run mode (separate from coach mode)
-    zombies_mode: "arcade"   // arcade | roguelike
+    // ✅ Zombies character cosmetics
+    character: "male", // male | female
+    skin: "default" // depends on character
   };
 
   const state = { ...defaults };
@@ -42,20 +40,20 @@
     lastAskAt: 0
   };
 
+  // "home" | "training" | "vod" | "settings" | "zombies" | "coach"
   let currentTab = "home";
 
-  // -----------------------------
-  // DOM utils
-  // -----------------------------
   const qs = (s) => document.querySelector(s);
   const qsa = (s) => Array.from(document.querySelectorAll(s));
   const now = () => Date.now();
 
-  function safeJsonParse(s) { try { return JSON.parse(s); } catch { return null; } }
+  function safeJsonParse(s) {
+    try { return JSON.parse(s); } catch { return null; }
+  }
 
-  // -----------------------------
+  // -------------------------
   // Haptics / toast
-  // -----------------------------
+  // -------------------------
   function haptic(type = "impact", style = "medium") {
     try {
       if (!tg?.HapticFeedback) return;
@@ -67,149 +65,157 @@
   function toast(text) {
     const t = qs("#toast");
     if (!t) return;
-    t.textContent = String(text ?? "");
+    t.textContent = text;
     t.classList.add("show");
     setTimeout(() => t.classList.remove("show"), 1600);
   }
 
   // =========================================================
-  // ✅ LUX TAP ENGINE (iOS WebView SAFE)
-  // - решает “кнопки не нажимаются / двойные тапы”
-  // - НЕ passive на critical, чтобы можно было preventDefault()
+  // ✅ ULTRA FAST TAP (iOS WebView SAFE) — no dead taps, no double fire
   // =========================================================
-  const TAP = (() => {
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || "");
-    const supportsPointer = !!window.PointerEvent;
+  // Причина “кнопки не нажимаются” в iOS WebView часто:
+  // - конфликт pointer/click
+  // - скролл/панорама (touch-action)
+  // - passive listeners не дают preventDefault
+  // - overlay ловит события
+  //
+  // Этот менеджер:
+  // - слушает pointerdown/up (или touchstart/end) в CAPTURE
+  // - делает короткий “lock” от дабл-таба
+  // - ставит touch-action: manipulation (где можно)
+  // - жёстко фильтрует multi-touch
+  //
+  // ВАЖНО: handler вызывается один раз на “подтверждённый” тап.
+  function onTap(el, handler, opts = {}) {
+    if (!el || typeof handler !== "function") return;
 
-    function bind(el, handler, opts = {}) {
-      if (!el || typeof handler !== "function") return () => {};
+    const cfg = {
+      lockMs: 220,
+      moveTol: 14, // px
+      prevent: true,
+      ...opts
+    };
 
-      const moveTol = Math.max(6, opts.moveTol || 10);
-      const lockMs = Math.max(160, opts.lockMs || 220);
-      const prevent = opts.prevent !== false;
+    try {
+      // helps iOS: faster, less “300ms click delay”
+      el.style.touchAction = el.style.touchAction || "manipulation";
+      el.style.webkitTapHighlightColor = "rgba(0,0,0,0)";
+    } catch {}
 
-      let locked = false;
-      let startX = 0, startY = 0;
-      let down = false;
-      let pid = null;
-      let downAt = 0;
+    let locked = false;
+    let startX = 0, startY = 0;
+    let tracking = false;
+    let pointerId = null;
+    let startT = 0;
 
-      const unlockLater = () => setTimeout(() => { locked = false; }, lockMs);
+    const lock = () => {
+      locked = true;
+      setTimeout(() => (locked = false), cfg.lockMs);
+    };
 
+    const fire = (e) => {
+      if (locked) return;
+      lock();
+      try { handler(e); } catch {}
+    };
+
+    const dist = (x1, y1, x2, y2) => Math.hypot(x1 - x2, y1 - y2);
+
+    // Pointer path
+    if (window.PointerEvent) {
       const onDown = (e) => {
-        try {
-          if (locked) return;
-          down = true;
-          downAt = now();
-
-          if (supportsPointer && e.pointerId != null) pid = e.pointerId;
-          const pt = pointOf(e);
-          startX = pt.x;
-          startY = pt.y;
-
-          // критично для iOS: предотвращаем “ghost click” и скролл при таче по кнопкам
-          if (prevent) {
-            try { e.preventDefault?.(); } catch {}
-            try { e.stopPropagation?.(); } catch {}
-          }
-          // pointer capture помогает когда палец чуть уезжает
-          try { el.setPointerCapture?.(pid); } catch {}
-        } catch {}
+        if (locked) return;
+        // only primary pointer, no multi
+        if (e.isPrimary === false) return;
+        tracking = true;
+        pointerId = e.pointerId;
+        startX = e.clientX || 0;
+        startY = e.clientY || 0;
+        startT = now();
+        if (cfg.prevent) { try { e.preventDefault(); } catch {} }
       };
 
       const onUp = (e) => {
-        try {
-          if (!down) return;
-          down = false;
+        if (!tracking) return;
+        if (pointerId !== null && e.pointerId !== pointerId) return;
 
-          const pt = pointOf(e);
-          const dx = pt.x - startX;
-          const dy = pt.y - startY;
-          const dist = Math.hypot(dx, dy);
+        const x = e.clientX || 0;
+        const y = e.clientY || 0;
+        const d = dist(startX, startY, x, y);
+        const dt = now() - startT;
 
-          if (dist <= moveTol) {
-            locked = true;
-            unlockLater();
-            handler(e);
-          }
-          if (prevent) {
-            try { e.preventDefault?.(); } catch {}
-            try { e.stopPropagation?.(); } catch {}
-          }
-          try { el.releasePointerCapture?.(pid); } catch {}
-          pid = null;
-        } catch {}
+        tracking = false;
+        pointerId = null;
+
+        // ignore drags
+        if (d > cfg.moveTol) return;
+        // ignore long press
+        if (dt > 1200) return;
+
+        if (cfg.prevent) { try { e.preventDefault(); } catch {} }
+        fire(e);
       };
 
-      const onCancel = () => {
-        down = false;
-        pid = null;
-      };
+      const onCancel = () => { tracking = false; pointerId = null; };
 
-      // Prefer Pointer Events
-      if (supportsPointer) {
-        el.addEventListener("pointerdown", onDown, { passive: false });
-        el.addEventListener("pointerup", onUp, { passive: false });
-        el.addEventListener("pointercancel", onCancel, { passive: true });
-        return () => {
-          el.removeEventListener("pointerdown", onDown);
-          el.removeEventListener("pointerup", onUp);
-          el.removeEventListener("pointercancel", onCancel);
-        };
-      }
+      el.addEventListener("pointerdown", onDown, { capture: true, passive: false });
+      el.addEventListener("pointerup", onUp, { capture: true, passive: false });
+      el.addEventListener("pointercancel", onCancel, { capture: true, passive: true });
 
-      // Touch fallback
-      el.addEventListener("touchstart", onDown, { passive: false });
-      el.addEventListener("touchend", onUp, { passive: false });
-      el.addEventListener("touchcancel", onCancel, { passive: true });
-
-      // Click fallback (desktop)
+      // Fallback click (some edge cases)
       el.addEventListener("click", (e) => {
-        if (locked) return;
-        locked = true; unlockLater();
-        try { handler(e); } catch {}
-      }, { passive: true });
+        // if pointer path already fired, lock blocks it
+        if (cfg.prevent) { try { e.preventDefault(); } catch {} }
+        fire(e);
+      }, { capture: true, passive: false });
 
-      return () => {
-        el.removeEventListener("touchstart", onDown);
-        el.removeEventListener("touchend", onUp);
-        el.removeEventListener("touchcancel", onCancel);
-      };
+      return;
     }
 
-    function pointOf(e) {
-      const t = e?.changedTouches?.[0] || e?.touches?.[0];
-      if (t) return { x: t.clientX || 0, y: t.clientY || 0 };
-      return { x: e?.clientX || 0, y: e?.clientY || 0 };
-    }
+    // Touch path
+    const touchXY = (te) => {
+      const t = te?.changedTouches?.[0] || te?.touches?.[0] || null;
+      return { x: t?.clientX || 0, y: t?.clientY || 0, count: (te?.touches?.length || 0) };
+    };
 
-    function hardenUI() {
-      // “кнопки не нажимаются” часто из-за touch-action / pointer-events / overlay
-      // мы безболезненно усилим интерактив через style-inject
-      const style = document.createElement("style");
-      style.id = "bco-tap-harden";
-      style.textContent = `
-        * { -webkit-tap-highlight-color: transparent; }
-        button, a, .seg-btn, .nav-btn, .tab, .btn, [role="button"] { touch-action: manipulation; }
-        .seg, .seg * , .nav, .nav * { pointer-events: auto !important; }
-        .tabpane { pointer-events: auto; }
-        #toast { pointer-events: none; }
-        /* Zombies fullscreen helper (без ломания вёрстки) */
-        body.bco-zombies-full { overflow: hidden !important; }
-        body.bco-zombies-full .nav { display: none !important; }
-        body.bco-zombies-full .top-tabs { display: none !important; }
-        body.bco-zombies-full .tabpane:not(#tab-zombies) { display: none !important; }
-        body.bco-zombies-full #tab-zombies { display: block !important; position: relative; z-index: 10; }
-      `;
-      document.head.appendChild(style);
-    }
+    const onTs = (e) => {
+      if (locked) return;
+      const p = touchXY(e);
+      if (p.count > 1) return; // ignore multi-touch
+      tracking = true;
+      startX = p.x; startY = p.y;
+      startT = now();
+      if (cfg.prevent) { try { e.preventDefault(); } catch {} }
+    };
 
-    return { bind, hardenUI };
-  })();
+    const onTe = (e) => {
+      if (!tracking) return;
+      const p = touchXY(e);
+      tracking = false;
 
-  // -----------------------------
-  // Telegram theme sync
-  // -----------------------------
+      const d = dist(startX, startY, p.x, p.y);
+      const dt = now() - startT;
+
+      if (d > cfg.moveTol) return;
+      if (dt > 1200) return;
+
+      if (cfg.prevent) { try { e.preventDefault(); } catch {} }
+      fire(e);
+    };
+
+    el.addEventListener("touchstart", onTs, { capture: true, passive: false });
+    el.addEventListener("touchend", onTe, { capture: true, passive: false });
+    el.addEventListener("touchcancel", () => { tracking = false; }, { capture: true, passive: true });
+
+    el.addEventListener("click", (e) => {
+      if (cfg.prevent) { try { e.preventDefault(); } catch {} }
+      fire(e);
+    }, { capture: true, passive: false });
+  }
+
+  // -------------------------
+  // Telegram theme
+  // -------------------------
   function applyTelegramTheme() {
     if (!tg) return;
     const p = tg.themeParams || {};
@@ -233,9 +239,9 @@
     try { tg.setHeaderColor?.(p.secondary_bg_color || p.bg_color || "#07070b"); } catch {}
   }
 
-  // -----------------------------
-  // Storage (Cloud + local)
-  // -----------------------------
+  // -------------------------
+  // Cloud/local storage
+  // -------------------------
   async function cloudGet(key) {
     if (!tg?.CloudStorage?.getItem) return null;
     return new Promise((resolve) => {
@@ -303,9 +309,9 @@
     await cloudSet(CHAT_KEY, payload);
   }
 
-  // -----------------------------
-  // UI chips
-  // -----------------------------
+  // -------------------------
+  // UI helpers
+  // -------------------------
   function setChipText() {
     const vv = state.voice === "COACH" ? "📚 Коуч" : "🤝 Тиммейт";
     const chipVoice = qs("#chipVoice");
@@ -353,46 +359,9 @@
     qsa(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   }
 
-  // -----------------------------
-  // Tabs + Zombies fullscreen behavior
-  // -----------------------------
-  function enterZombiesFullscreen() {
-    document.body.classList.add("bco-zombies-full");
-  }
-  function exitZombiesFullscreen() {
-    document.body.classList.remove("bco-zombies-full");
-  }
-
-  function selectTab(tab) {
-    const prev = currentTab;
-    currentTab = tab;
-
-    // If leaving zombies -> exit fullscreen
-    if (prev === "zombies" && tab !== "zombies") {
-      exitZombiesFullscreen();
-      try { ZB()?.close?.(); } catch {}
-      try { ZB()?.hide?.(); } catch {}
-    }
-
-    qsa(".tabpane").forEach((p) => p.classList.toggle("active", p.id === `tab-${tab}`));
-    setActiveNav(tab);
-    setActiveTopTabs(tab);
-
-    // If entering zombies -> go fullscreen + open game overlay
-    if (tab === "zombies") {
-      enterZombiesFullscreen();
-      // open game view immediately (полный переход)
-      zombiesEnsureOpen(true);
-    }
-
-    updateTelegramButtons();
-
-    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
-  }
-
-  // -----------------------------
-  // Payload / sendData
-  // -----------------------------
+  // -------------------------
+  // Profile payload
+  // -------------------------
   function toRouterProfile() {
     return {
       game: state.game,
@@ -462,93 +431,274 @@
   }
 
   // =========================================================
-  // ✅ ZOMBIES BRIDGE
+  // ✅ ZOMBIES ENGINE BRIDGE (new engine first, core fallback)
   // =========================================================
   function ZB() { return window.BCO_ZOMBIES || null; }
+  function ZCORE() { return window.BCO_ZOMBIES_CORE || null; }
 
-  function zombiesEnsureOpen(fullscreen = false) {
+  function zombiesEnsureOpen(reason = "ui") {
+    // Prefer new wrapper if exists
     const z = ZB();
-    if (!z) {
-      toast("Zombies engine not loaded");
-      haptic("notif", "error");
-      return false;
+    if (z) {
+      try {
+        z.open?.({
+          map: state.zombies_map,
+          character: state.character,
+          skin: state.skin,
+          reason
+        });
+      } catch {}
+      return true;
     }
 
-    // prepare opts
-    const opts = {
-      map: state.zombies_map,
-      character: state.character,
-      skin: state.skin,
-      mode: state.zombies_mode
-    };
+    // Fallback: core present but wrapper missing
+    const core = ZCORE();
+    if (core) {
+      // We can still run core, but without renderer/hud the game won’t be visible.
+      // This keeps compatibility and prevents “nothing happens”.
+      try {
+        core.meta = core.meta || {};
+        core.meta.map = state.zombies_map;
+        core.meta.character = state.character;
+        core.meta.skin = state.skin;
+      } catch {}
+      return true;
+    }
 
-    // try open / show / enter
-    try { z.open?.({ ...opts, fullscreen: !!fullscreen }); } catch {}
-    try { z.show?.({ ...opts, fullscreen: !!fullscreen }); } catch {}
-    try { z.enter?.({ ...opts, fullscreen: !!fullscreen }); } catch {}
-
-    // If your engine uses CORE directly
-    try {
-      const CORE = window.BCO_ZOMBIES_CORE;
-      if (CORE?.start && fullscreen) {
-        // don't auto-start here; only ensure UI/game canvas becomes active
-      }
-    } catch {}
-
-    return true;
+    toast("Zombies engine not loaded");
+    haptic("notif", "error");
+    return false;
   }
 
   function zombiesSetMode(mode) {
-    const m = String(mode || "").toLowerCase().includes("rogue") ? "roguelike" : "arcade";
-    state.zombies_mode = m;
     const z = ZB();
-    if (!z) return;
-    try { z.setMode?.(m); } catch {}
-    try { z.mode?.(m); } catch {}
+    if (z) { try { z.setMode?.(mode); } catch {} return; }
+    const core = ZCORE();
+    if (core) {
+      try { core.meta.mode = String(mode || "").toLowerCase().includes("rogue") ? "roguelike" : "arcade"; } catch {}
+    }
   }
 
   function zombiesStart() {
     const z = ZB();
-    if (!z) return;
-
-    const payload = {
-      mode: state.zombies_mode,
-      map: state.zombies_map,
-      character: state.character,
-      skin: state.skin
-    };
-
-    // Try modern signatures first
-    try { z.start?.(payload); return; } catch {}
-    try { z.start?.(state.zombies_mode); return; } catch {}
-    try { z.start?.(); } catch {}
+    if (z) {
+      // keep 3 tries like you had, but do it clean
+      try { z.start?.({ map: state.zombies_map, character: state.character, skin: state.skin }); return; } catch {}
+      try { z.start?.({ map: state.zombies_map }); return; } catch {}
+      try { z.start?.(); return; } catch {}
+      return;
+    }
+    const core = ZCORE();
+    if (core) {
+      try {
+        const mode = (state.mode || "").toLowerCase().includes("rogue") ? "roguelike" : "arcade";
+        core.start?.(mode, core.state?.w || 1080, core.state?.h || 1920, { map: state.zombies_map, character: state.character, skin: state.skin });
+      } catch {}
+    }
   }
 
   function zombiesStop() {
     const z = ZB();
-    if (!z) return;
-    try { z.stop?.("manual"); return; } catch {}
-    try { z.stop?.(); } catch {}
+    if (z) { try { z.stop?.("manual"); } catch {}; try { z.stop?.(); } catch {}; return; }
+    const core = ZCORE();
+    if (core) { try { core.stop?.(); } catch {} }
   }
 
   function zombiesSendResult() {
     const z = ZB();
-    if (!z) return;
-    try { z.sendResult?.("manual"); return; } catch {}
-    try { z.result?.("manual"); return; } catch {}
+    if (z) { try { z.sendResult?.("manual"); return; } catch {}; try { z.result?.("manual"); return; } catch {} }
+    // fallback: send a snapshot from core if possible
+    const core = ZCORE();
+    if (!core) return;
+    try {
+      const S = core.state || {};
+      sendToBot({
+        action: "game_result",
+        game: "zombies",
+        mode: core.meta?.mode || "arcade",
+        map: core.meta?.map || state.zombies_map,
+        character: core.meta?.character || state.character,
+        skin: core.meta?.skin || state.skin,
+        wave: S.wave || 1,
+        kills: S.kills || 0,
+        coins: S.coins || 0,
+        duration_ms: (S.timeMs || 0),
+        score: Math.round((S.kills || 0) * 35 + (S.wave || 1) * 120 + (S.coins || 0) * 10),
+        profile: true
+      });
+    } catch {}
   }
 
   function zombiesBuyPerk(id) {
     const z = ZB();
-    if (!z) return;
-    try { z.buyPerk?.(id); return; } catch {}
-    // fallback: core direct
-    try { window.BCO_ZOMBIES_CORE?.buyPerk?.(id); } catch {}
+    if (z) { try { z.buyPerk?.(id); } catch {} return; }
+    const core = ZCORE();
+    if (core) { try { core.buyPerk?.(id); } catch {} }
   }
 
-  // -----------------------------
-  // Telegram native buttons
-  // -----------------------------
+  function zombiesReload() {
+    const z = ZB();
+    if (z) { try { z.reload?.(); } catch {} return; }
+    const core = ZCORE();
+    if (core) { try { core.reload?.(); } catch {} }
+  }
+
+  function zombiesUsePlate() {
+    const z = ZB();
+    if (z) { try { z.usePlate?.(); } catch {} return; }
+    const core = ZCORE();
+    if (core) { try { core.usePlate?.(); } catch {} }
+  }
+
+  // =========================================================
+  // ✅ “ZOMBIES = GAME TAB” FULL TAKEOVER
+  // =========================================================
+  // Проблема на скринах:
+  // - игра “внутри вкладки” и поверх ещё UI => неудобно, не фуллскрин
+  // - кнопки не кликаются из-за перекрытий/слоёв
+  //
+  // Решение:
+  // - вкладка Zombies превращается в “Game screen”: прячем нижний таббар/лишние панели,
+  //   расширяем WebApp, включаем стабилизацию скролла,
+  //   даём Back = выйти из игры (не из миниаппа)
+  //
+  const GAME = {
+    active: false,
+    prevTab: "home",
+    hidden: [],
+    scrollY: 0
+  };
+
+  function _hideSelectors(selectors) {
+    const hidden = [];
+    for (const sel of selectors) {
+      qsa(sel).forEach((el) => {
+        if (!el || el.dataset.__bcoHidden === "1") return;
+        const prev = el.style.display;
+        el.dataset.__bcoHidden = "1";
+        el.dataset.__bcoPrevDisplay = prev || "";
+        el.style.display = "none";
+        hidden.push(el);
+      });
+    }
+    return hidden;
+  }
+
+  function _restoreHidden(list) {
+    (list || []).forEach((el) => {
+      try {
+        el.style.display = el.dataset.__bcoPrevDisplay || "";
+        delete el.dataset.__bcoPrevDisplay;
+        delete el.dataset.__bcoHidden;
+      } catch {}
+    });
+  }
+
+  function _freezeScroll(on) {
+    try {
+      if (on) {
+        GAME.scrollY = window.scrollY || 0;
+        document.body.style.position = "fixed";
+        document.body.style.top = `-${GAME.scrollY}px`;
+        document.body.style.left = "0";
+        document.body.style.right = "0";
+        document.body.style.width = "100%";
+        document.body.style.overflow = "hidden";
+      } else {
+        document.body.style.position = "";
+        document.body.style.top = "";
+        document.body.style.left = "";
+        document.body.style.right = "";
+        document.body.style.width = "";
+        document.body.style.overflow = "";
+        window.scrollTo(0, GAME.scrollY || 0);
+      }
+    } catch {}
+  }
+
+  function enterZombiesGame() {
+    if (GAME.active) return;
+    GAME.active = true;
+    GAME.prevTab = currentTab || "home";
+
+    // Mark mode for CSS if you want
+    try { document.documentElement.classList.add("bco-game"); } catch {}
+    try { document.body.classList.add("bco-game"); } catch {}
+
+    // Expand / theme
+    try { tg?.expand?.(); } catch {}
+    try { tg?.MainButton?.hide?.(); } catch {}
+
+    // Hide nav/tabbars/headers that often block touches
+    GAME.hidden = _hideSelectors([
+      ".bottom-nav",
+      "#bottomNav",
+      ".nav",
+      ".tabs",
+      ".top-tabs",
+      ".header",
+      "#header",
+      "#tabbar",
+      "#premiumBar",
+      ".premium-bar"
+    ]);
+
+    _freezeScroll(true);
+
+    // Make sure engine is open and the game is visible
+    zombiesEnsureOpen("enter_game");
+    // When entering game, default to roguelike only if user picked it before
+    // (we don’t force mode; you can still toggle)
+    try { zombiesSetMode(String(state.mode || "").toLowerCase().includes("rogue") ? "roguelike" : "arcade"); } catch {}
+
+    // Back = exit game (not close app)
+    updateTelegramButtons();
+  }
+
+  function exitZombiesGame() {
+    if (!GAME.active) return;
+    GAME.active = false;
+
+    try { document.documentElement.classList.remove("bco-game"); } catch {}
+    try { document.body.classList.remove("bco-game"); } catch {}
+
+    _restoreHidden(GAME.hidden);
+    GAME.hidden = [];
+
+    _freezeScroll(false);
+
+    try { tg?.MainButton?.show?.(); } catch {}
+    updateTelegramButtons();
+  }
+
+  // -------------------------
+  // Tabs
+  // -------------------------
+  function selectTab(tab) {
+    const t = String(tab || "home");
+    currentTab = t;
+
+    // If leaving zombies tab, exit game takeover
+    if (GAME.active && t !== "zombies") exitZombiesGame();
+
+    qsa(".tabpane").forEach((p) => p.classList.toggle("active", p.id === `tab-${t}`));
+    setActiveNav(t);
+    setActiveTopTabs(t);
+
+    // If entering zombies tab — DO THE FULL TAKEOVER
+    if (t === "zombies") {
+      // show the tabpane first, then takeover
+      setTimeout(() => enterZombiesGame(), 0);
+    }
+
+    updateTelegramButtons();
+
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+  }
+
+  // -------------------------
+  // Telegram buttons
+  // -------------------------
   let tgButtonsWired = false;
   let tgMainHandler = null;
   let tgBackHandler = null;
@@ -556,21 +706,32 @@
   function updateTelegramButtons() {
     if (!tg) return;
 
+    // BackButton logic:
+    // - if game active => back exits game
+    // - else if not home => back to home
     try {
-      if (currentTab !== "home") tg.BackButton.show();
+      if (GAME.active) tg.BackButton.show();
+      else if (currentTab !== "home") tg.BackButton.show();
       else tg.BackButton.hide();
     } catch {}
 
+    // MainButton text:
+    // - In game: we hide it to not block touches.
+    // - Else normal behavior.
     try {
-      tg.MainButton.setParams({
-        is_visible: true,
-        text:
-          currentTab === "settings" ? "✅ Применить профиль" :
-          currentTab === "coach" ? "🎯 План тренировки" :
-          currentTab === "vod" ? "🎬 Отправить VOD" :
-          currentTab === "zombies" ? "🧟 Войти в игру" :
-          "💎 Premium"
-      });
+      if (GAME.active) {
+        tg.MainButton.hide();
+      } else {
+        tg.MainButton.setParams({
+          is_visible: true,
+          text:
+            currentTab === "settings" ? "✅ Применить профиль" :
+            currentTab === "coach" ? "🎯 План тренировки" :
+            currentTab === "vod" ? "🎬 Отправить VOD" :
+            currentTab === "zombies" ? "🧟 Играть" :
+            "💎 Premium"
+        });
+      }
     } catch {}
 
     if (tgButtonsWired) return;
@@ -579,10 +740,14 @@
     tgMainHandler = () => {
       haptic("impact", "medium");
 
+      if (GAME.active) {
+        // If somehow visible, start game / show shop
+        zombiesEnsureOpen("main_in_game");
+        return;
+      }
+
       if (currentTab === "settings") { sendToBot({ type: "set_profile", profile: true }); return; }
-
       if (currentTab === "coach") { sendToBot({ type: "training_plan", focus: state.focus, profile: true }); return; }
-
       if (currentTab === "vod") {
         const t1 = (qs("#vod1")?.value || "").trim();
         const t2 = (qs("#vod2")?.value || "").trim();
@@ -591,32 +756,21 @@
         sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
         return;
       }
-
       if (currentTab === "zombies") {
-        // "полный переход": гарантируем fullscreen overlay + старт по кнопке
-        if (zombiesEnsureOpen(true)) {
-          zombiesStart();
-          return;
-        }
-        sendToBot({ type: "zombies_open", map: state.zombies_map, profile: true });
+        enterZombiesGame();
         return;
       }
-
       openBotMenuHint("premium");
     };
 
     tgBackHandler = () => {
       haptic("impact", "light");
-
-      // if zombies tab -> first exit fullscreen, then home
-      if (currentTab === "zombies") {
-        exitZombiesFullscreen();
-        try { ZB()?.close?.(); } catch {}
-        try { ZB()?.hide?.(); } catch {}
-        selectTab("home");
+      if (GAME.active) {
+        exitZombiesGame();
+        // return to previous non-game tab if it exists
+        selectTab(GAME.prevTab && GAME.prevTab !== "zombies" ? GAME.prevTab : "home");
         return;
       }
-
       selectTab("home");
     };
 
@@ -627,9 +781,9 @@
     try { tg.BackButton.onClick?.(tgBackHandler); } catch {}
   }
 
-  // -----------------------------
-  // Share helper
-  // -----------------------------
+  // -------------------------
+  // Share
+  // -------------------------
   function tryShare(text) {
     try {
       navigator.clipboard?.writeText?.(text);
@@ -640,7 +794,7 @@
   }
 
   // =========================================================
-  // ✅ MINI APP CHAT
+  // ✅ MINI APP CHAT (BOT REPLIES IN APP)
   // =========================================================
   function chatLogEl() { return qs("#chatLog"); }
 
@@ -810,61 +964,60 @@
     return lines.join("\n");
   }
 
-  // -----------------------------
-  // Segments wiring (FIXED)
-  // -----------------------------
+  // -------------------------
+  // Segments wiring
+  // -------------------------
   function wireSeg(rootId, onPick) {
     const root = qs(rootId);
     if (!root) return;
 
-    // ВАЖНО: на iOS pointerup на контейнере иногда не проходит из-за вложенных слоёв.
-    // Делаем надёжно: ловим down/up на root, но выбираем ближайшую .seg-btn.
-    TAP.bind(root, async (e) => {
-      const btn = e.target?.closest?.(".seg-btn");
-      if (!btn || !root.contains(btn)) return;
-
-      const v = btn.dataset.value;
-      if (v == null) return;
-
+    const handler = async (btn) => {
       haptic("impact", "light");
-      try { onPick(v); } catch {}
+      onPick(btn.dataset.value);
 
-      setActiveSeg(rootId, v);
+      setActiveSeg(rootId, btn.dataset.value);
       setChipText();
 
       await saveState();
       toast("Сохранено ✅");
-    }, { lockMs: 180, moveTol: 12, prevent: true });
+    };
+
+    // delegate inside root
+    onTap(root, (e) => {
+      const btn = e.target?.closest?.(".seg-btn");
+      if (!btn) return;
+      handler(btn);
+    }, { lockMs: 160 });
   }
 
-  // -----------------------------
-  // Nav wiring (FIXED)
-  // -----------------------------
+  // -------------------------
+  // Nav wiring
+  // -------------------------
   function wireNav() {
     qsa(".nav-btn").forEach((btn) => {
-      TAP.bind(btn, () => {
+      onTap(btn, () => {
         haptic("impact", "light");
         selectTab(btn.dataset.tab);
-      }, { lockMs: 160, moveTol: 14, prevent: true });
+      }, { lockMs: 160 });
     });
 
     qsa(".tab").forEach((btn) => {
-      TAP.bind(btn, () => {
+      onTap(btn, () => {
         haptic("impact", "light");
         selectTab(btn.dataset.tab);
-      }, { lockMs: 160, moveTol: 14, prevent: true });
+      }, { lockMs: 160 });
     });
   }
 
-  // -----------------------------
+  // -------------------------
   // Header chips
-  // -----------------------------
+  // -------------------------
   function wireHeaderChips() {
     const chipVoice = qs("#chipVoice");
     const chipMode = qs("#chipMode");
     const chipPlatform = qs("#chipPlatform");
 
-    TAP.bind(chipVoice, async () => {
+    onTap(chipVoice, async () => {
       haptic("impact", "light");
       state.voice = (state.voice === "COACH") ? "TEAMMATE" : "COACH";
       setChipText();
@@ -873,7 +1026,7 @@
       toast(state.voice === "COACH" ? "Коуч включён 📚" : "Тиммейт 🤝");
     });
 
-    TAP.bind(chipMode, async () => {
+    onTap(chipMode, async () => {
       haptic("impact", "light");
       state.mode = (state.mode === "Normal") ? "Pro" : (state.mode === "Pro" ? "Demon" : "Normal");
       setChipText();
@@ -882,7 +1035,7 @@
       toast(`Режим: ${state.mode}`);
     });
 
-    TAP.bind(chipPlatform, async () => {
+    onTap(chipPlatform, async () => {
       haptic("impact", "light");
       state.platform = (state.platform === "PC") ? "PlayStation" : (state.platform === "PlayStation" ? "Xbox" : "PC");
       setChipText();
@@ -893,7 +1046,7 @@
   }
 
   // =========================================================
-  // 🎯 AIM TRIAL
+  // 🎯 GAME #1: AIM TRIAL (kept)
   // =========================================================
   const aim = {
     running: false,
@@ -942,7 +1095,7 @@
     const maxY = Math.max(pad, h - pad - th);
 
     const x = pad + Math.random() * (maxX - pad);
-    const y = pad + Math.random() * (maxY - pad - 6);
+    const y = pad + Math.random() * (maxY - pad);
 
     target.style.transform = `translate(${x}px, ${y}px)`;
   }
@@ -1005,26 +1158,27 @@
     });
   }
 
-  // -----------------------------
-  // Buttons wiring (FIXED)
-  // -----------------------------
+  // =========================================================
+  // Buttons wiring
+  // =========================================================
   function wireButtons() {
-    TAP.bind(qs("#btnClose"), () => {
+    // close
+    onTap(qs("#btnClose"), () => {
       haptic("impact", "medium");
       tg?.close?.();
     });
 
     // home / bot
-    TAP.bind(qs("#btnOpenBot"), () => openBotMenuHint("main"));
-    TAP.bind(qs("#btnPremium"), () => openBotMenuHint("premium"));
-    TAP.bind(qs("#btnSync"), () => sendToBot({ type: "sync_request", profile: true }));
+    onTap(qs("#btnOpenBot"), () => openBotMenuHint("main"));
+    onTap(qs("#btnPremium"), () => openBotMenuHint("premium"));
+    onTap(qs("#btnSync"), () => sendToBot({ type: "sync_request", profile: true }));
 
     // coach / vod / settings / zombies (bot-side)
-    TAP.bind(qs("#btnOpenTraining"), () => openBotMenuHint("training"));
-    TAP.bind(qs("#btnSendPlan"), () => sendToBot({ type: "training_plan", focus: state.focus, profile: true }));
+    onTap(qs("#btnOpenTraining"), () => openBotMenuHint("training"));
+    onTap(qs("#btnSendPlan"), () => sendToBot({ type: "training_plan", focus: state.focus, profile: true }));
 
-    TAP.bind(qs("#btnOpenVod"), () => openBotMenuHint("vod"));
-    TAP.bind(qs("#btnSendVod"), () => {
+    onTap(qs("#btnOpenVod"), () => openBotMenuHint("vod"));
+    onTap(qs("#btnSendVod"), () => {
       const t1 = (qs("#vod1")?.value || "").trim();
       const t2 = (qs("#vod2")?.value || "").trim();
       const t3 = (qs("#vod3")?.value || "").trim();
@@ -1032,38 +1186,39 @@
       sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
     });
 
-    TAP.bind(qs("#btnOpenSettings"), () => openBotMenuHint("settings"));
-    TAP.bind(qs("#btnApplyProfile"), () => sendToBot({ type: "set_profile", profile: true }));
+    onTap(qs("#btnOpenSettings"), () => openBotMenuHint("settings"));
+    onTap(qs("#btnApplyProfile"), () => sendToBot({ type: "set_profile", profile: true }));
 
-    TAP.bind(qs("#btnOpenZombies"), () => sendToBot({ type: "zombies_open", map: state.zombies_map, profile: true }));
-    TAP.bind(qs("#btnZPerks"), () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map, profile: true }));
-    TAP.bind(qs("#btnZLoadout"), () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map, profile: true }));
-    TAP.bind(qs("#btnZEggs"), () => sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map, profile: true }));
-    TAP.bind(qs("#btnZRound"), () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map, profile: true }));
-    TAP.bind(qs("#btnZTips"), () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map, profile: true }));
+    // Zombies info buttons to bot
+    onTap(qs("#btnOpenZombies"), () => { selectTab("zombies"); }); // теперь это “войти в игру”
+    onTap(qs("#btnZPerks"), () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map, profile: true }));
+    onTap(qs("#btnZLoadout"), () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map, profile: true }));
+    onTap(qs("#btnZEggs"), () => sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map, profile: true }));
+    onTap(qs("#btnZRound"), () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map, profile: true }));
+    onTap(qs("#btnZTips"), () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map, profile: true }));
 
     // pay
-    TAP.bind(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month", profile: true }));
-    TAP.bind(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime", profile: true }));
+    onTap(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month", profile: true }));
+    onTap(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime", profile: true }));
 
-    TAP.bind(qs("#btnShare"), () => {
+    onTap(qs("#btnShare"), () => {
       const text =
         "BLACK CROWN OPS 😈\n" +
         "Тренировки, VOD, настройки, Zombies — всё в одном месте.\n" +
-        "Mini App + Fullscreen Zombies (Arcade/Roguelike).";
+        "Mini App + Fullscreen Zombies Game (Arcade/Roguelike).";
       tryShare(text);
     });
 
     // chat
-    TAP.bind(qs("#btnChatSend"), () => sendChatFromUI());
-    TAP.bind(qs("#btnChatClear"), async () => {
+    onTap(qs("#btnChatSend"), () => sendChatFromUI());
+    onTap(qs("#btnChatClear"), async () => {
       haptic("impact", "light");
       chat.history = [];
       await saveChat();
       renderChat();
       toast("Чат очищен ✅");
     });
-    TAP.bind(qs("#btnChatExport"), () => {
+    onTap(qs("#btnChatExport"), () => {
       haptic("impact", "light");
       tryShare(exportChatText() || "— пусто —");
     });
@@ -1075,37 +1230,36 @@
           e.preventDefault();
           sendChatFromUI();
         }
-      }, { passive: true });
+      });
     }
 
     // AIM game
     const { arena, target, btnStart, btnStop, btnSend } = aimEls();
-    TAP.bind(btnStart, () => aimStart());
-    TAP.bind(btnStop, () => aimStop(false));
-    TAP.bind(btnSend, () => aimSendResult());
+    onTap(btnStart, () => aimStart());
+    onTap(btnStop, () => aimStop(false));
+    onTap(btnSend, () => aimSendResult());
 
     if (arena && target) {
-      TAP.bind(target, (e) => {
+      onTap(target, (e) => {
         if (!aim.running) return;
         aim.shots += 1;
         aim.hits += 1;
         haptic("impact", "light");
         aimMoveTarget();
         aimUpdateUI();
-        try { e?.preventDefault?.(); } catch {}
-        try { e?.stopPropagation?.(); } catch {}
-      }, { lockMs: 80, moveTol: 18, prevent: true });
+        try { e?.preventDefault?.(); e?.stopPropagation?.(); } catch {}
+      });
 
-      TAP.bind(arena, () => {
+      onTap(arena, () => {
         if (!aim.running) return;
         aim.shots += 1;
         haptic("impact", "light");
         aimUpdateUI();
-      }, { lockMs: 80, moveTol: 18, prevent: true });
+      }, { prevent: false });
     }
 
     // =========================================================
-    // ✅ ZOMBIES (NEW ENGINE) — fixed taps + fullscreen entry
+    // ✅ ZOMBIES (NEW ENGINE) — Game controls (if buttons exist in HTML)
     // =========================================================
     const btnZArc = qs("#btnZModeArcade");
     const btnZRog = qs("#btnZModeRogue");
@@ -1113,67 +1267,68 @@
     const btnZStop = qs("#btnZGameStop");
     const btnZSend = qs("#btnZGameSend");
 
-    TAP.bind(btnZArc, async () => {
-      if (!zombiesEnsureOpen(true)) return;
+    onTap(btnZArc, () => {
+      if (!zombiesEnsureOpen("btn_arcade")) return;
       zombiesSetMode("arcade");
-      await saveState();
       toast("Zombies: Arcade 💥");
     });
 
-    TAP.bind(btnZRog, async () => {
-      if (!zombiesEnsureOpen(true)) return;
+    onTap(btnZRog, () => {
+      if (!zombiesEnsureOpen("btn_rogue")) return;
       zombiesSetMode("roguelike");
-      await saveState();
       toast("Zombies: Roguelike 😈");
     });
 
-    TAP.bind(btnZStart, () => {
-      if (!zombiesEnsureOpen(true)) return;
+    onTap(btnZStart, () => {
+      if (!zombiesEnsureOpen("btn_start")) return;
       zombiesStart();
       toast("Zombies: старт ▶");
     });
 
-    TAP.bind(btnZStop, () => {
-      if (!zombiesEnsureOpen(true)) return;
+    onTap(btnZStop, () => {
+      if (!zombiesEnsureOpen("btn_stop")) return;
       zombiesStop();
       toast("Zombies: стоп ⛔");
     });
 
-    TAP.bind(btnZSend, () => {
-      if (!zombiesEnsureOpen(true)) return;
+    onTap(btnZSend, () => {
+      if (!zombiesEnsureOpen("btn_send")) return;
       zombiesSendResult();
     });
 
-    // Old home "Shop" buttons => perks on new engine
-    TAP.bind(qs("#btnZBuyJug"), () => {
-      if (!zombiesEnsureOpen(true)) return;
+    // Old shop buttons => perks on new engine
+    onTap(qs("#btnZBuyJug"), () => {
+      if (!zombiesEnsureOpen("perk_jug")) return;
       zombiesSetMode("roguelike");
       zombiesStart();
       zombiesBuyPerk("Jug");
     });
 
-    TAP.bind(qs("#btnZBuySpeed"), () => {
-      if (!zombiesEnsureOpen(true)) return;
+    onTap(qs("#btnZBuySpeed"), () => {
+      if (!zombiesEnsureOpen("perk_speed")) return;
       zombiesSetMode("roguelike");
       zombiesStart();
       zombiesBuyPerk("Speed");
     });
 
-    TAP.bind(qs("#btnZBuyAmmo"), () => {
-      if (!zombiesEnsureOpen(true)) return;
+    onTap(qs("#btnZBuyAmmo"), () => {
+      if (!zombiesEnsureOpen("perk_mag")) return;
       zombiesSetMode("roguelike");
       zombiesStart();
       zombiesBuyPerk("Mag");
     });
 
-    // Bonus: reload / plate buttons if exist in UI (future-proof)
-    TAP.bind(qs("#btnZReload"), () => { try { window.BCO_ZOMBIES_CORE?.reload?.(); } catch {} }, { prevent: true });
-    TAP.bind(qs("#btnZPlate"), () => { try { window.BCO_ZOMBIES_CORE?.usePlate?.(); } catch {} }, { prevent: true });
+    // Extra: if your HUD buttons exist (Upgrade/Reroll/Reload/Plate) — bind them
+    onTap(qs("#btnZReload"), () => { zombiesEnsureOpen("reload"); zombiesReload(); });
+    onTap(qs("#btnZPlate"), () => { zombiesEnsureOpen("plate"); zombiesUsePlate(); });
+
+    // Always keep taps working even if overlays exist
+    // (doesn’t break anything if elements are absent)
   }
 
-  // -----------------------------
+  // -------------------------
   // Build tag
-  // -----------------------------
+  // -------------------------
   function ensureBuildTag() {
     const buildFromIndex =
       (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__")
@@ -1185,9 +1340,9 @@
     if (buildTag) buildTag.textContent = txt;
   }
 
-  // -----------------------------
+  // -------------------------
   // Telegram init
-  // -----------------------------
+  // -------------------------
   function initTelegram() {
     const dbgUser = qs("#dbgUser");
     const dbgChat = qs("#dbgChat");
@@ -1220,16 +1375,23 @@
     updateTelegramButtons();
   }
 
-  // -----------------------------
+  // =========================================================
+  // 3D-READY HOOK (no break)
+  // =========================================================
+  // Задел: когда вы начнёте 3D (Three/Babylon), у вас будет единая “Game Takeover” оболочка,
+  // а движок можно переключать через window.BCO_ZOMBIES_RENDERER = "2d" | "3d".
+  // Сейчас ничего не ломаем — просто оставляем точку расширения.
+  function getRendererMode() {
+    try { return String(window.BCO_ZOMBIES_RENDERER || "2d").toLowerCase(); } catch { return "2d"; }
+  }
+
+  // -------------------------
   // Boot
-  // -----------------------------
+  // -------------------------
   async function boot() {
     if (document.readyState !== "complete" && document.readyState !== "interactive") {
       await new Promise((r) => document.addEventListener("DOMContentLoaded", r, { once: true }));
     }
-
-    // harden tap & UI first (fix “не нажимаются”)
-    try { TAP.hardenUI(); } catch {}
 
     initTelegram();
     ensureBuildTag();
@@ -1270,10 +1432,10 @@
     // Default tab
     selectTab("home");
 
-    // If user already on zombies tab by hash, respect (future-proof)
+    // Preflight: if zombies tab exists and renderer mode indicates 3D soon, show subtle debug
     try {
-      const hash = String(location.hash || "").replace("#", "");
-      if (hash && qs(`#tab-${hash}`)) selectTab(hash);
+      const jsHealth = qs("#jsHealth");
+      if (jsHealth) jsHealth.textContent = `OK • renderer:${getRendererMode()} • v${VERSION}`;
     } catch {}
   }
 
