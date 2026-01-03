@@ -4,7 +4,6 @@
 
   const W = window;
 
-  // Single shared input state (NO DUPLICATES).
   const INPUT = (W.BCO_ZOMBIES_INPUT && typeof W.BCO_ZOMBIES_INPUT === "object")
     ? W.BCO_ZOMBIES_INPUT
     : (W.BCO_ZOMBIES_INPUT = {
@@ -45,7 +44,6 @@
     },
 
     flushToGame() {
-      // Push input into BCO_GAME if present
       if (W.BCO_GAME && typeof W.BCO_GAME.input === "function") {
         W.BCO_GAME.input({
           move: INPUT.move,
