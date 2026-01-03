@@ -1,2266 +1,2902 @@
 // app/webapp/static/app.js
 (() => {
   "use strict";
-  window.__BCO_JS_OK__ = true;
-
-  const tg = window.Telegram?.WebApp;
-
+  
   // =========================
-  // VERSION / STORAGE
+  // ✅ ВЕРСИЯ И КОНФИГУРАЦИЯ
   // =========================
-  const VERSION = "1.4.2"; // ✅ bump (no breaking)
-  const STORAGE_KEY = "bco_state_v1";
-  const CHAT_KEY = "bco_chat_v1";
+  const CONFIG = {
+    VERSION: "2.0.0",
+    STORAGE_KEY: "bco_state_v1",
+    CHAT_KEY: "bco_chat_v1",
+    BUILD_KEY: "bco_build",
+    API_TIMEOUT: 12000,
+    CHAT_HISTORY_LIMIT: 80,
+    AIM_DURATION: 20000,
+    MAX_PAYLOAD_SIZE: 15000,
 
-  // =========================
-  // DEFAULTS / STATE
-  // =========================
-  const defaults = {
-    game: "Warzone",
-    focus: "aim",
-    mode: "Normal",
-    platform: "PC",
-    input: "Controller",
-    voice: "TEAMMATE",
-    role: "Flex",
-    bf6_class: "Assault",
-    zombies_map: "Ashes",
-
-    // ✅ Zombies cosmetics
-    character: "male", // male | female
-    skin: "default",
-
-    // ✅ Game tab defaults
-    zombies_mode: "arcade", // arcade | roguelike
-
-    // ✅ Future: 3D readiness flag
-    render: "2d", // "2d" | "3d"
-
-    // ✅ Roguelike economy fallback (if engine bugs)
-    z_coins: 0,
-    z_best: { arcade: 0, roguelike: 0 },
-
-    // ✅ Wonder weapon quest
-    z_relics: 0,              // 0..5
-    z_wonder_unlocked: false, // true after 5 relics
-    z_wonder_weapon: "CROWN_RAY", // name/id placeholder
-
-    // ✅ Future: levels (saved for later, no UI yet)
-    acc_xp: 0,
-    acc_level: 1,
-    z_xp: 0,
-    z_level: 1
-  };
-
-  const state = { ...defaults };
-
-  const chat = {
-    history: [],
-    lastAskAt: 0
+    // Zombies экономика/квест
+    RELIC_DROP_CHANCE: 0.04,
+    COINS_PER_KILL: 1,
+    COINS_PER_WAVE: 3,
+    
+    // Цены в магазине
+    PRICES: {
+      upgrade: 8,
+      reroll: 4,
+      reload: 3,
+      Jug: 12,
+      Speed: 10,
+      Mag: 8,
+      Armor: 14
+    }
   };
 
   // =========================
-  // HELPERS
+  // ✅ СИНГЛТОНЫ И СОСТОЯНИЕ
   // =========================
-  const qs = (s) => document.querySelector(s);
-  const qsa = (s) => Array.from(document.querySelectorAll(s));
-  const now = () => Date.now();
-
-  function safeJsonParse(s) { try { return JSON.parse(s); } catch { return null; } }
-
-  function haptic(type = "impact", style = "medium") {
-    try {
-      if (!tg?.HapticFeedback) return;
-      if (type === "impact") tg.HapticFeedback.impactOccurred(style);
-      if (type === "notif") tg.HapticFeedback.notificationOccurred(style);
-    } catch {}
-  }
-
-  function toast(text) {
-    const t = qs("#toast");
-    if (!t) return;
-    t.textContent = String(text ?? "");
-    t.classList.add("show");
-    setTimeout(() => t.classList.remove("show"), 1600);
-  }
-
-  // =========================================================
-  // ✅ ULTRA TAP (iOS SAFE) — no dead clicks, no double fires
-  // - idempotent + blocks click-after-pointerup double fire
-  // =========================================================
-  function onTap(el, handler, opts = {}) {
-    if (!el) return;
-    const lockMs = Math.max(120, opts.lockMs ?? 220);
-
-    let locked = false;
-    let lastPointerUpAt = 0;
-
-    const lock = () => {
-      locked = true;
-      setTimeout(() => (locked = false), lockMs);
-    };
-
-    const fire = (e) => {
-      if (locked) return;
-      lock();
-      try { handler(e); } catch {}
-    };
-
-    if (window.PointerEvent) {
-      el.style.touchAction = el.style.touchAction || "manipulation";
-
-      // capture early (but do NOT prevent default here)
-      el.addEventListener("pointerdown", (e) => {
-        if (typeof e.button === "number" && e.button !== 0) return;
-        try { el.setPointerCapture?.(e.pointerId); } catch {}
-      }, { capture: true, passive: true });
-
-      // main trigger
-      el.addEventListener("pointerup", (e) => {
-        if (typeof e.button === "number" && e.button !== 0) return;
-        lastPointerUpAt = now();
-        fire(e);
-      }, { capture: true, passive: true });
-
-      // click fallback, but ignore if a pointerup happened recently (iOS double-trigger)
-      el.addEventListener("click", (e) => {
-        if (now() - lastPointerUpAt < 380) return;
-        fire(e);
-      }, { capture: true, passive: true });
-
-      return;
-    }
-
-    el.addEventListener("touchstart", (e) => {
-      try { e.preventDefault?.(); } catch {}
-    }, { capture: true, passive: false });
-
-    el.addEventListener("touchend", (e) => {
-      try { e.preventDefault?.(); } catch {}
-      fire(e);
-    }, { capture: true, passive: false });
-
-    el.addEventListener("click", (e) => fire(e), { capture: true, passive: true });
-  }
-
-  // =========================
-  // THEME SYNC
-  // =========================
-  function applyTelegramTheme() {
-    if (!tg) return;
-    const p = tg.themeParams || {};
-    const root = document.documentElement;
-
-    const map = {
-      "--tg-bg": p.bg_color,
-      "--tg-text": p.text_color,
-      "--tg-hint": p.hint_color,
-      "--tg-link": p.link_color,
-      "--tg-btn": p.button_color,
-      "--tg-btn-text": p.button_text_color,
-      "--tg-secondary-bg": p.secondary_bg_color
-    };
-    Object.entries(map).forEach(([k, v]) => { if (v) root.style.setProperty(k, v); });
-
-    const dbgTheme = qs("#dbgTheme");
-    if (dbgTheme) dbgTheme.textContent = tg.colorScheme ?? "—";
-
-    try { tg.setBackgroundColor?.(p.bg_color || "#07070b"); } catch {}
-    try { tg.setHeaderColor?.(p.secondary_bg_color || p.bg_color || "#07070b"); } catch {}
-  }
-
-  // =========================
-  // STORAGE (Cloud + Local)
-  // =========================
-  async function cloudGet(key) {
-    if (!tg?.CloudStorage?.getItem) return null;
-    return new Promise((resolve) => {
-      tg.CloudStorage.getItem(key, (err, value) => {
-        if (err) return resolve(null);
-        resolve(value ?? null);
-      });
-    });
-  }
-
-  async function cloudSet(key, value) {
-    if (!tg?.CloudStorage?.setItem) return false;
-    return new Promise((resolve) => {
-      tg.CloudStorage.setItem(key, value, (err) => resolve(!err));
-    });
-  }
-
-  async function loadState() {
-    const fromCloud = await cloudGet(STORAGE_KEY);
-    const parsedCloud = fromCloud ? safeJsonParse(fromCloud) : null;
-    if (parsedCloud && typeof parsedCloud === "object") {
-      Object.assign(state, defaults, parsedCloud);
-      state.z_relics = clampInt(state.z_relics, 0, 5);
-      state.z_coins = clampInt(state.z_coins, 0, 999999);
-      state.acc_level = clampInt(state.acc_level, 1, 999999);
-      state.z_level = clampInt(state.z_level, 1, 999999);
-      return "cloud";
-    }
-
-    const fromLocal = localStorage.getItem(STORAGE_KEY);
-    const parsedLocal = fromLocal ? safeJsonParse(fromLocal) : null;
-    if (parsedLocal && typeof parsedLocal === "object") {
-      Object.assign(state, defaults, parsedLocal);
-      state.z_relics = clampInt(state.z_relics, 0, 5);
-      state.z_coins = clampInt(state.z_coins, 0, 999999);
-      state.acc_level = clampInt(state.acc_level, 1, 999999);
-      state.z_level = clampInt(state.z_level, 1, 999999);
-      return "local";
-    }
-
-    Object.assign(state, defaults);
-    return "default";
-  }
-
-  async function saveState() {
-    const payload = JSON.stringify(state);
-    localStorage.setItem(STORAGE_KEY, payload);
-    await cloudSet(STORAGE_KEY, payload);
-  }
-
-  async function loadChat() {
-    const fromCloud = await cloudGet(CHAT_KEY);
-    const parsedCloud = fromCloud ? safeJsonParse(fromCloud) : null;
-    if (parsedCloud && typeof parsedCloud === "object" && Array.isArray(parsedCloud.history)) {
-      chat.history = parsedCloud.history.slice(-80);
-      return "cloud";
-    }
-
-    const fromLocal = localStorage.getItem(CHAT_KEY);
-    const parsedLocal = fromLocal ? safeJsonParse(fromLocal) : null;
-    if (parsedLocal && typeof parsedLocal === "object" && Array.isArray(parsedLocal.history)) {
-      chat.history = parsedLocal.history.slice(-80);
-      return "local";
-    }
-
-    chat.history = [];
-    return "default";
-  }
-
-  async function saveChat() {
-    const payload = JSON.stringify({ history: chat.history.slice(-120) });
-    localStorage.setItem(CHAT_KEY, payload);
-    await cloudSet(CHAT_KEY, payload);
-  }
-
-  // =========================
-  // MATH / CLAMPS
-  // =========================
-  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-  function clampInt(v, a, b) {
-    const n = Number.isFinite(+v) ? Math.floor(+v) : a;
-    return clamp(n, a, b);
-  }
-  function len(x, y) { return Math.sqrt(x * x + y * y); }
-
-  // =========================
-  // UI HELPERS
-  // =========================
-  let currentTab = "home";
-
-  function setChipText() {
-    const vv = state.voice === "COACH" ? "📚 Коуч" : "🤝 Тиммейт";
-    const chipVoice = qs("#chipVoice");
-    if (chipVoice) chipVoice.textContent = vv;
-
-    const mm = state.mode === "Demon" ? "😈 Demon" : (state.mode === "Pro" ? "🔥 Pro" : "🧠 Normal");
-    const chipMode = qs("#chipMode");
-    if (chipMode) chipMode.textContent = mm;
-
-    const pp =
-      state.platform === "PlayStation" ? "🎮 PlayStation" :
-      state.platform === "Xbox" ? "🎮 Xbox" : "🖥 PC";
-    const chipPlatform = qs("#chipPlatform");
-    if (chipPlatform) chipPlatform.textContent = pp;
-
-    const pillRole = qs("#pillRole");
-    if (pillRole) pillRole.textContent = `🎭 Role: ${state.role}`;
-
-    const pillBf6 = qs("#pillBf6");
-    if (pillBf6) pillBf6.textContent = `🟩 Class: ${state.bf6_class}`;
-
-    const chatSub = qs("#chatSub");
-    if (chatSub) chatSub.textContent = `${state.voice} • ${state.mode} • ${state.platform}`;
-  }
-
-  function setActiveSeg(rootId, value) {
-    const root = qs(rootId);
-    if (!root) return;
-    root.querySelectorAll(".seg-btn").forEach((b) => {
-      const on = b.dataset.value === value;
-      b.classList.toggle("active", on);
-      b.setAttribute("aria-pressed", on ? "true" : "false");
-    });
-  }
-
-  function setActiveNav(tab) {
-    qsa(".nav-btn").forEach((b) => {
-      const on = b.dataset.tab === tab;
-      b.classList.toggle("active", on);
-      b.setAttribute("aria-selected", on ? "true" : "false");
-    });
-  }
-
-  function setActiveTopTabs(tab) {
-    qsa(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-  }
-
-  function selectTab(tab) {
-    if (tab === "zombies") tab = "game";
-    currentTab = tab;
-
-    qsa(".tabpane").forEach((p) => p.classList.toggle("active", p.id === `tab-${tab}`));
-    setActiveNav(tab);
-    setActiveTopTabs(tab);
-
-    updateTelegramButtons();
-
-    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
-  }
-
-  // =========================
-  // PAYLOAD / SEND TO BOT
-  // =========================
-  function toRouterProfile() {
-    return {
-      game: state.game,
-      platform: state.platform,
-      input: state.input,
-      difficulty: state.mode,
-      voice: state.voice,
-      role: state.role,
-      bf6_class: state.bf6_class,
-      zombies_map: state.zombies_map,
-      mode: state.mode
-    };
-  }
-
-  function enrichPayload(payload) {
-    const initUnsafe = tg?.initDataUnsafe || {};
-    return {
-      v: VERSION,
-      t: now(),
-      meta: {
-        user_id: initUnsafe?.user?.id ?? null,
-        chat_id: initUnsafe?.chat?.id ?? null,
-        platform: tg?.platform ?? null,
-        build: (window.__BCO_BUILD__ || null)
+  const AppState = {
+    tg: window.Telegram?.WebApp || null,
+    isInitialized: false,
+    isGameActive: false,
+    currentTab: "home",
+    buildId: window.__BCO_BUILD__ || "dev",
+    
+    // Основное состояние
+    state: {
+      // Профиль
+      game: "Warzone",
+      focus: "aim",
+      mode: "Normal",
+      platform: "PC",
+      input: "Controller",
+      voice: "TEAMMATE",
+      role: "Flex",
+      bf6_class: "Assault",
+      
+      // Zombies
+      zombies_map: "Ashes",
+      zombies_mode: "arcade",
+      character: "male",
+      skin: "default",
+      render: "2d",
+      
+      // Экономика и прогресс
+      z_coins: 0,
+      z_relics: 0,
+      z_wonder_unlocked: false,
+      z_wonder_weapon: "CROWN_RAY",
+      z_best: { arcade: 0, roguelike: 0 },
+      
+      // Аккаунт
+      acc_xp: 0,
+      acc_level: 1,
+      z_xp: 0,
+      z_level: 1
+    },
+    
+    // Чат
+    chat: {
+      history: [],
+      lastAskAt: 0,
+      isTyping: false
+    },
+    
+    // AIM игра
+    aim: {
+      running: false,
+      startedAt: 0,
+      shots: 0,
+      hits: 0,
+      timerId: null,
+      durationMs: CONFIG.AIM_DURATION
+    },
+    
+    // Zombies игра
+    zombies: {
+      active: false,
+      overlay: null,
+      canvas: null,
+      hudPill: null,
+      hudPill2: null,
+      shop: null,
+      modal: null,
+      
+      // Экономика
+      econ: {
+        coins: 0,
+        lastKills: 0,
+        lastWave: 0
       },
-      ...payload
-    };
-  }
+      
+      // Ввод
+      input: {
+        move: { x: 0, y: 0 },
+        aim: { x: 0, y: 0 },
+        firing: false,
+        updatedAt: 0
+      },
+      
+      // Джойстики
+      joys: {
+        left: null,
+        right: null
+      },
 
-  function sendToBot(payload) {
-    try {
-      const fixed = { ...(payload || {}) };
-
-      if (Object.prototype.hasOwnProperty.call(fixed, "profile")) {
-        if (fixed.profile === true) fixed.profile = toRouterProfile();
+      // FIRE button handlers state
+      fire: {
+        active: false,
+        pointerId: null
       }
-
-      const pack = enrichPayload(fixed);
-      let data = JSON.stringify(pack);
-
-      const MAX = 15000;
-      if (data.length > MAX) {
-        if (typeof pack.text === "string") pack.text = pack.text.slice(0, 4000);
-        if (typeof pack.note === "string") pack.note = pack.note.slice(0, 4000);
-        data = JSON.stringify(pack).slice(0, MAX);
-      }
-
-      if (!tg?.sendData) {
-        haptic("notif", "error");
-        toast("Открой Mini App внутри Telegram");
-        return;
-      }
-
-      tg.sendData(data);
-      haptic("notif", "success");
-      const statSession = qs("#statSession");
-      if (statSession) statSession.textContent = "SENT";
-      toast("Отправлено в бота 🚀");
-    } catch {
-      haptic("notif", "error");
-      alert("Не могу отправить данные в бот. Открой мини-апп из Telegram.");
-    }
-  }
-
-  function openBotMenuHint(target) {
-    sendToBot({ type: "nav", target, profile: true });
-  }
-
-  // =========================
-  // SHARE
-  // =========================
-  function tryShare(text) {
-    try {
-      navigator.clipboard?.writeText?.(text);
-      toast("Скопировано ✅");
-    } catch {
-      alert(text);
-    }
-  }
-
-  // =========================================================
-  // ✅ STOP ZOOM (premium): kill pinch/double-tap zoom in GAME
-  // - idempotent (won't stack listeners)
-  // =========================================================
-  function installNoZoomGuards() {
-    if (window.__BCO_NOZOOM_INSTALLED__) return;
-    window.__BCO_NOZOOM_INSTALLED__ = true;
-
-    let lastTouchEnd = 0;
-
-    document.addEventListener("gesturestart", (e) => {
-      if (!GAME.active) return;
-      try { e.preventDefault?.(); } catch {}
-    }, { passive: false });
-
-    document.addEventListener("gesturechange", (e) => {
-      if (!GAME.active) return;
-      try { e.preventDefault?.(); } catch {}
-    }, { passive: false });
-
-    document.addEventListener("gestureend", (e) => {
-      if (!GAME.active) return;
-      try { e.preventDefault?.(); } catch {}
-    }, { passive: false });
-
-    document.addEventListener("touchmove", (e) => {
-      if (!GAME.active) return;
-      if ((e.touches?.length || 0) > 1) {
-        try { e.preventDefault?.(); } catch {}
-      }
-    }, { passive: false });
-
-    document.addEventListener("touchend", (e) => {
-      if (!GAME.active) return;
-      const nowt = Date.now();
-      if (nowt - lastTouchEnd <= 260) {
-        try { e.preventDefault?.(); } catch {}
-      }
-      lastTouchEnd = nowt;
-    }, { passive: false });
-  }
-
-  // =========================================================
-  // ✅ MINI APP CHAT (BOT REPLIES IN APP)
-  // =========================================================
-  function chatLogEl() { return qs("#chatLog"); }
-
-  function esc(s) {
-    return String(s ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
-
-  function fmtTime(ts) {
-    try {
-      const d = new Date(ts);
-      const hh = String(d.getHours()).padStart(2, "0");
-      const mm = String(d.getMinutes()).padStart(2, "0");
-      return `${hh}:${mm}`;
-    } catch { return ""; }
-  }
-
-  function renderChat() {
-    const root = chatLogEl();
-    if (!root) return;
-
-    const items = chat.history.slice(-80);
-    let html = "";
-
-    for (const m of items) {
-      const who = (m.role === "assistant") ? "bot" : "me";
-      const label = (m.role === "assistant") ? "BCO" : "Ты";
-      html += `
-        <div class="chat-row ${who}">
-          <div>
-            <div class="bubble">${esc(m.text)}</div>
-            <div class="chat-meta">${label} • ${esc(fmtTime(m.ts || now()))}</div>
-          </div>
-        </div>
-      `;
-    }
-
-    root.innerHTML = html || `
-      <div class="chat-row bot">
-        <div>
-          <div class="bubble">🤝 Готов. Пиши как есть: где умираешь и что хочешь получить — отвечу тут же. 😈</div>
-          <div class="chat-meta">BCO • ${esc(fmtTime(now()))}</div>
-        </div>
-      </div>
-    `;
-
-    try { root.scrollTop = root.scrollHeight; } catch {}
-  }
-
-  function pushChat(role, text) {
-    const t = String(text ?? "").trim();
-    if (!t) return;
-    chat.history.push({ role, text: t, ts: now() });
-    chat.history = chat.history.slice(-160);
-  }
-
-  function setTyping(on) {
-    const root = chatLogEl();
-    if (!root) return;
-
-    const id = "bco-typing-row";
-    const existing = qs(`#${id}`);
-    if (on) {
-      if (existing) return;
-      const row = document.createElement("div");
-      row.className = "chat-row bot";
-      row.id = id;
-      row.innerHTML = `
-        <div>
-          <div class="bubble">
-            <span class="typing">
-              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-            </span>
-          </div>
-          <div class="chat-meta">BCO • печатает…</div>
-        </div>
-      `;
-      root.appendChild(row);
-      try { root.scrollTop = root.scrollHeight; } catch {}
-      return;
-    }
-    if (existing) existing.remove();
-  }
-
-  async function askBrain(text) {
-    const t = String(text ?? "").trim();
-    if (!t) return null;
-
-    const delta = now() - (chat.lastAskAt || 0);
-    if (delta < 450) return null;
-    chat.lastAskAt = now();
-
-    setTyping(true);
-
-    const body = {
-      initData: tg?.initData || "",
-      text: t,
-      profile: toRouterProfile(),
-      history: chat.history.slice(-20).map(m => ({ role: m.role, content: m.text }))
-    };
-
-    const controller = ("AbortController" in window) ? new AbortController() : null;
-    const timeoutMs = 12000;
-    let timer = 0;
-    if (controller) timer = window.setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const res = await fetch("/webapp/api/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller?.signal
-      });
-
-      const data = await res.json().catch(() => null);
-      setTyping(false);
-      if (timer) clearTimeout(timer);
-
-      if (!data || data.ok !== true) {
-        const err = (data && (data.error || data.detail)) ? String(data.error || data.detail) : "api_error";
-        return `🧠 Mini App: API error (${err}).`;
-      }
-
-      return String(data.reply ?? "");
-    } catch (e) {
-      setTyping(false);
-      if (timer) clearTimeout(timer);
-      const msg = String(e?.name === "AbortError" ? "timeout" : (e?.message || e));
-      return `🧠 Mini App: network error (${msg}).`;
-    }
-  }
-
-  async function sendChatFromUI() {
-    const input = qs("#chatInput");
-    const text = (input?.value || "").trim();
-    if (!text) { haptic("notif", "warning"); toast("Напиши текст"); return; }
-
-    haptic("impact", "light");
-    pushChat("user", text);
-    if (input) input.value = "";
-    renderChat();
-    await saveChat();
-
-    const reply = await askBrain(text);
-
-    if (reply) {
-      pushChat("assistant", reply);
-      renderChat();
-      await saveChat();
-      haptic("notif", "success");
-      return;
-    }
-
-    haptic("notif", "warning");
-    toast("Нет ответа. Можно отправить в бота.");
-  }
-
-  function exportChatText() {
-    const lines = chat.history.slice(-80).map(m => {
-      const who = (m.role === "assistant") ? "BCO" : "YOU";
-      return `[${fmtTime(m.ts)}] ${who}: ${m.text}`;
-    });
-    return lines.join("\n");
-  }
-
-  // =========================================================
-  // 🎯 GAME #1: AIM TRIAL
-  // =========================================================
-  const aim = {
-    running: false,
-    startedAt: 0,
-    durationMs: 20000,
-    shots: 0,
-    hits: 0,
-    timerId: null
-  };
-
-  function aimEls() {
-    return {
-      arena: qs("#aimArena"),
-      target: qs("#aimTarget"),
-      stat: qs("#aimStat"),
-      btnStart: qs("#btnAimStart"),
-      btnStop: qs("#btnAimStop"),
-      btnSend: qs("#btnAimSend")
-    };
-  }
-
-  function aimReset() {
-    aim.running = false;
-    aim.startedAt = 0;
-    aim.shots = 0;
-    aim.hits = 0;
-    if (aim.timerId) { clearInterval(aim.timerId); aim.timerId = null; }
-    aimUpdateUI();
-  }
-
-  function aimMoveTarget() {
-    const { arena, target } = aimEls();
-    if (!arena || !target) return;
-
-    const rect = arena.getBoundingClientRect();
-    const pad = 14;
-
-    const tRect = target.getBoundingClientRect();
-    const tw = Math.max(30, tRect.width || 44);
-    const th = Math.max(30, tRect.height || 44);
-
-    const w = Math.max(60, rect.width);
-    const h = Math.max(160, rect.height);
-
-    const maxX = Math.max(pad, w - pad - tw);
-    const maxY = Math.max(pad, h - pad - th);
-
-    const x = pad + Math.random() * (maxX - pad);
-    const y = pad + Math.random() * (maxY - pad);
-
-    target.style.transform = `translate(${x}px, ${y}px)`;
-  }
-
-  function aimUpdateUI() {
-    const { stat, btnStart, btnStop, btnSend } = aimEls();
-    const acc = aim.shots ? Math.round((aim.hits / aim.shots) * 100) : 0;
-    const tLeft = aim.running ? Math.max(0, aim.durationMs - (now() - aim.startedAt)) : 0;
-
-    if (stat) stat.textContent = aim.running
-      ? `⏱ ${(tLeft / 1000).toFixed(1)}s • 🎯 ${aim.hits}/${aim.shots} • Acc ${acc}%`
-      : `🎯 ${aim.hits}/${aim.shots} • Acc ${acc}%`;
-
-    if (btnStart) btnStart.disabled = aim.running;
-    if (btnStop) btnStop.disabled = !aim.running;
-    if (btnSend) btnSend.disabled = aim.running || aim.shots < 5;
-  }
-
-  function aimStop(auto = false) {
-    if (!aim.running) return;
-    aim.running = false;
-    if (aim.timerId) { clearInterval(aim.timerId); aim.timerId = null; }
-    aimUpdateUI();
-    haptic("notif", auto ? "warning" : "success");
-    toast(auto ? "AIM завершён" : "Остановлено");
-  }
-
-  function aimStart() {
-    if (aim.running) return;
-    aimReset();
-    aim.running = true;
-    aim.startedAt = now();
-    aimMoveTarget();
-    aimUpdateUI();
-
-    aim.timerId = setInterval(() => {
-      aimMoveTarget();
-      aimUpdateUI();
-      if (now() - aim.startedAt >= aim.durationMs) aimStop(true);
-    }, 650);
-
-    toast("AIM: поехали 😈");
-    haptic("notif", "success");
-  }
-
-  function aimSendResult() {
-    const duration = aim.running ? (now() - aim.startedAt) : aim.durationMs;
-    const acc = aim.shots ? (aim.hits / aim.shots) : 0;
-
-    sendToBot({
-      action: "game_result",
-      game: "aim",
-      mode: "arcade",
-      shots: aim.shots,
-      hits: aim.hits,
-      accuracy: acc,
-      score: Math.round(aim.hits * 100 + acc * 100),
-      duration_ms: duration,
-      profile: true
-    });
-  }
-
-  // =========================================================
-  // 🧟 ZOMBIES ENGINE BRIDGE (BCO_ZOMBIES + CORE)
-  // =========================================================
-  function ZB() { return window.BCO_ZOMBIES || null; }
-  function ZCORE() { return window.BCO_ZOMBIES_CORE || null; }
-
-  function zombiesEnsureLoaded() {
-    const z = ZB();
-    const c = ZCORE();
-    if (!z && !c) {
-      toast("Zombies engine not loaded");
-      haptic("notif", "error");
-      return null;
-    }
-    return z || c;
-  }
-
-  function zombiesOpenCore() {
-    const z = ZB();
-    if (z) {
-      try { z.open?.({ map: state.zombies_map, character: state.character, skin: state.skin }); } catch {}
-      return true;
-    }
-    return true;
-  }
-
-  function zombiesSetMode(mode) {
-    state.zombies_mode = (mode === "roguelike") ? "roguelike" : "arcade";
-    const z = ZB();
-    if (z) {
-      try { z.setMode?.(state.zombies_mode); } catch {}
-      try { z.mode?.(state.zombies_mode); } catch {}
-    }
-  }
-
-  function zombiesStartRun() {
-    const z = ZB();
-    if (z) {
-      try { z.start?.({ map: state.zombies_map, mode: state.zombies_mode, character: state.character, skin: state.skin }); return true; } catch {}
-      try { z.start?.(); return true; } catch {}
-      return false;
-    }
-    // CORE fallback: start simulation (renderer may be elsewhere; fine)
-    const c = ZCORE();
-    if (c?.start) {
-      try {
-        c.start(state.zombies_mode, (GAME.canvas?.width || 1), (GAME.canvas?.height || 1), {
-          map: state.zombies_map,
-          character: state.character,
-          skin: state.skin,
-          weaponKey: "SMG"
-        });
-        return true;
-      } catch {}
-    }
-    return false;
-  }
-
-  function zombiesStopRun(reason = "manual") {
-    const z = ZB();
-    if (z) {
-      try { z.stop?.(reason); } catch {}
-      try { z.stop?.(); } catch {}
-      return;
-    }
-    const c = ZCORE();
-    try { c?.stop?.(); } catch {}
-  }
-
-  function zombiesSendResult(reason = "manual") {
-    const z = ZB();
-    const extra = {
-      coins: GAME?.econ?.coins ?? state.z_coins ?? 0,
-      relics: state.z_relics ?? 0,
-      wonder_unlocked: !!state.z_wonder_unlocked,
-      wonder_weapon: state.z_wonder_unlocked ? state.z_wonder_weapon : null
-    };
-
-    if (z) {
-      try { z.sendResult?.(reason, extra); return; } catch {}
-      try { z.result?.(reason, extra); return; } catch {}
-    }
-
-    sendToBot({
-      action: "game_result",
-      game: "zombies",
-      mode: state.zombies_mode,
-      map: state.zombies_map,
-      reason,
-      profile: true,
-      ...extra
-    });
-  }
-
-  function zombiesBuyPerk(id) {
-    const z = ZB();
-    if (z) {
-      try { z.buyPerk?.(id); return true; } catch {}
-      try { z.buy?.(id); return true; } catch {}
-      try { z.perk?.(id); return true; } catch {}
-    }
-    const c = ZCORE();
-    if (c?.buyPerk) {
-      try { return !!c.buyPerk(id); } catch {}
-    }
-    return false;
-  }
-
-  function zombiesUpgrade() {
-    const z = ZB();
-    if (z) {
-      try { z.upgrade?.(); return true; } catch {}
-      try { z.shop?.("upgrade"); return true; } catch {}
-    }
-    const c = ZCORE();
-    if (c?.buyUpgrade) {
-      try { return !!c.buyUpgrade(); } catch {}
-    }
-    return false;
-  }
-
-  function zombiesReroll() {
-    const z = ZB();
-    if (z) {
-      try { z.reroll?.(); return true; } catch {}
-      try { z.roll?.(); return true; } catch {}
-      try { z.shop?.("reroll"); return true; } catch {}
-    }
-    const c = ZCORE();
-    if (c?.rerollWeapon) {
-      try { return !!c.rerollWeapon(); } catch {}
-    }
-    return false;
-  }
-
-  function zombiesReload() {
-    const z = ZB();
-    if (z) {
-      try { z.reload?.(); return true; } catch {}
-      try { z.shop?.("reload"); return true; } catch {}
-    }
-    const c = ZCORE();
-    if (c?.buyReload) {
-      try { return !!c.buyReload(); } catch {}
-    }
-    // as fallback: normal reload
-    if (c?.reload) {
-      try { return !!c.reload(); } catch {}
-    }
-    return false;
-  }
-
-  function zombiesTryUnlockWonder() {
-    const z = ZB();
-    if (z) {
-      const id = state.z_wonder_weapon || "CROWN_RAY";
-      try { z.unlockWeapon?.(id); return true; } catch {}
-      try { z.unlock?.({ weapon: id }); return true; } catch {}
-      try { z.grantWeapon?.(id); return true; } catch {}
-    }
-    // CORE handles wonder by relics automatically; if forced:
-    const c = ZCORE();
-    if (c?.state && c?.cfg) {
-      try {
-        c.state.relics = 5;
-        c.state.wonderUnlocked = true;
-        return true;
-      } catch {}
-    }
-    return false;
-  }
-
-  // =========================================================
-  // ✅ FULLSCREEN GAME TAKEOVER (FIXES fullscreen + premium UX)
-  // =========================================================
-  const GAME = {
-    active: false,
-    overlay: null,
-    canvas: null,
-    hudPill: null,
-    hudPill2: null,
-    shop: null,
-    modal: null,
-    modalTitle: null,
-    modalBody: null,
-
-    // ✅ economy + quest runtime
-    econ: {
-      enabled: true,
-      coins: 0,
-      lastKills: 0,
-      lastWave: 0,
-      coinsPerKill: 1,
-      coinsPerWave: 3,
-      relicChancePerKill: 0.04,
-      prices: {
-        upgrade: 8,
-        reroll: 4,
-        reload: 3,
-        Jug: 12,
-        Speed: 10,
-        Mag: 8,
-        Armor: 14 // ✅ match CORE perk cost
-      }
+    },
+    
+    // Системные флаги
+    flags: {
+      noZoomInstalled: false,
+      zhudHooked: false,
+      tgButtonsWired: false,
+      inputPumpActive: false
     }
   };
 
-  function setAppChromeHidden(hidden) {
-    const header = qs(".app-header");
-    const topTabs = qs(".top-tabs");
-    const bottom = qs(".bottom-nav");
-    if (header) header.style.display = hidden ? "none" : "";
-    if (topTabs) topTabs.style.display = hidden ? "none" : ""; // ✅ FIX (was always none)
-    if (bottom) bottom.style.display = hidden ? "none" : "";
-
-    document.documentElement.classList.toggle("bco-game", !!hidden);
-    document.body.classList.toggle("bco-game", !!hidden);
-  }
-
-  function tgFullscreenHints(on) {
-    if (!tg) return;
-    try { tg.expand?.(); } catch {}
-    try { if (on) tg.setHeaderColor?.("#07070b"); } catch {}
-    try { if (on) tg.setBackgroundColor?.("#07070b"); } catch {}
-  }
-
-  async function tryBrowserFullscreen(el) {
-    try {
-      if (!el) return false;
-      if (document.fullscreenElement) return true;
-      if (el.requestFullscreen) { await el.requestFullscreen({ navigationUI: "hide" }); return true; }
-      return false;
-    } catch { return false; }
-  }
-
-  // ===== Joystick
-  class Joy {
-    constructor(root, knob) {
-      this.root = root;
-      this.knob = knob;
-      this.active = false;
-      this.pid = null;
-      this.cx = 0;
-      this.cy = 0;
-      this.r = 1;
-      this.vx = 0;
-      this.vy = 0;
-
-      this._onDown = this._onDown.bind(this);
-      this._onMove = this._onMove.bind(this);
-      this._onUp = this._onUp.bind(this);
-
-      this._wire();
-      this._recalc();
-      window.addEventListener("resize", () => this._recalc(), { passive: true });
-      window.addEventListener("orientationchange", () => setTimeout(() => this._recalc(), 140), { passive: true });
+  // =========================
+  // ✅ УТИЛИТЫ И ХЕЛПЕРЫ
+  // =========================
+  const Utils = {
+    // DOM
+    qs: (selector) => document.querySelector(selector),
+    qsa: (selector) => Array.from(document.querySelectorAll(selector)),
+    createElement: (tag, className, innerHTML) => {
+      const el = document.createElement(tag);
+      if (className) el.className = className;
+      if (innerHTML) el.innerHTML = innerHTML;
+      return el;
+    },
+    
+    // Время
+    now: () => Date.now(),
+    formatTime: (timestamp) => {
+      try {
+        const date = new Date(timestamp);
+        return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+      } catch {
+        return '';
+      }
+    },
+    
+    // Математика
+    clamp: (value, min, max) => Math.max(min, Math.min(max, value)),
+    clampInt: (value, min, max) => {
+      const n = Number.isFinite(+value) ? Math.floor(+value) : min;
+      return Utils.clamp(n, min, max);
+    },
+    length: (x, y) => Math.sqrt(x * x + y * y),
+    random: (min, max) => min + Math.random() * (max - min),
+    
+    // Безопасность
+    escapeHtml: (text) => {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    },
+    
+    safeJsonParse: (str) => {
+      try {
+        return JSON.parse(str);
+      } catch {
+        return null;
+      }
+    },
+    
+    // Проверки
+    isTouchDevice: () => 'ontouchstart' in window || navigator.maxTouchPoints > 0,
+    isIOS: () => /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream,
+    
+    // Логирование
+    log: (message, data) => {
+      if (AppState.buildId !== 'prod') {
+        console.log(`[BCO] ${message}`, data || '');
+      }
+    },
+    
+    error: (message, error) => {
+      console.error(`[BCO Error] ${message}`, error || '');
+    },
+    
+    // Haptic feedback
+    haptic: (type = "impact", style = "medium") => {
+      try {
+        if (!AppState.tg?.HapticFeedback) return;
+        
+        switch (type) {
+          case "impact":
+            AppState.tg.HapticFeedback.impactOccurred(style);
+            break;
+          case "notification":
+            AppState.tg.HapticFeedback.notificationOccurred(style);
+            break;
+          case "selection":
+            AppState.tg.HapticFeedback.selectionChanged();
+            break;
+        }
+      } catch (error) {
+        Utils.error("Haptic feedback failed", error);
+      }
+    },
+    
+    // Toast уведомления
+    toast: (message, duration = 1600) => {
+      const toastEl = Utils.qs("#toast");
+      if (!toastEl) return;
+      
+      toastEl.textContent = String(message || "");
+      toastEl.classList.add("show");
+      
+      setTimeout(() => {
+        toastEl.classList.remove("show");
+      }, duration);
+    },
+    
+    // Throttle для производительности
+    throttle: (func, limit) => {
+      let inThrottle;
+      return function(...args) {
+        if (!inThrottle) {
+          func.apply(this, args);
+          inThrottle = true;
+          setTimeout(() => inThrottle = false, limit);
+        }
+      };
+    },
+    
+    // Debounce
+    debounce: (func, wait) => {
+      let timeout;
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func.apply(this, args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
     }
+  };
 
-    _recalc() {
-      const r = this.root.getBoundingClientRect();
-      this.cx = r.left + r.width / 2;
-      this.cy = r.top + r.height / 2;
-      this.r = Math.max(1, (Math.min(r.width, r.height) / 2) - 10);
-    }
-
-    _setKnob(nx, ny) {
-      const px = nx * (this.r * 0.62);
-      const py = ny * (this.r * 0.62);
-      this.knob.style.transform = `translate(${px}px, ${py}px)`;
-    }
-
-    _setVec(nx, ny) {
-      this.vx = nx;
-      this.vy = ny;
-      this._setKnob(nx, ny);
-    }
-
-    _onDown(e) {
-      this.active = true;
-      this.pid = e.pointerId ?? "t";
-      try { this.root.setPointerCapture?.(e.pointerId); } catch {}
-      this._recalc();
-      this._onMove(e);
-    }
-
-    _onMove(e) {
-      if (!this.active) return;
-      if (this.pid != null && e.pointerId != null && e.pointerId !== this.pid) return;
-      const x = (e.clientX ?? 0) - this.cx;
-      const y = (e.clientY ?? 0) - this.cy;
-      const d = Math.max(1, len(x, y));
-      const nx = clamp(x / d, -1, 1) * clamp(d / this.r, 0, 1);
-      const ny = clamp(y / d, -1, 1) * clamp(d / this.r, 0, 1);
-      this._setVec(nx, ny);
-    }
-
-    _onUp(e) {
-      if (!this.active) return;
-      if (this.pid != null && e.pointerId != null && e.pointerId !== this.pid) return;
-      this.active = false;
-      this.pid = null;
-      this._setVec(0, 0);
-    }
-
-    _wire() {
-      const el = this.root;
-      el.style.touchAction = "none";
-
+  // =========================
+  // ✅ ОБРАБОТЧИК КАСАНИЙ (Ultra Tap)
+  // =========================
+  const TouchHandler = {
+    init() {
+      if (window.__BCO_TOUCH_HANDLER_INIT__) return;
+      window.__BCO_TOUCH_HANDLER_INIT__ = true;
+      
+      this.installNoZoomGuards();
+    },
+    
+    onTap(element, handler, options = {}) {
+      if (!element) return;
+      
+      const lockMs = Math.max(120, options.lockMs || 220);
+      let locked = false;
+      let lastPointerUpAt = 0;
+      
+      const lock = () => {
+        locked = true;
+        setTimeout(() => { locked = false; }, lockMs);
+      };
+      
+      const fire = (event) => {
+        if (locked) return;
+        lock();
+        try {
+          handler(event);
+        } catch (error) {
+          Utils.error("Tap handler error", error);
+        }
+      };
+      
+      // Modern Pointer Events
       if (window.PointerEvent) {
-        el.addEventListener("pointerdown", (e) => {
-          try { e.preventDefault?.(); } catch {}
-          this._onDown(e);
-        }, { passive: false });
-
-        window.addEventListener("pointermove", this._onMove, { passive: true });
-        window.addEventListener("pointerup", this._onUp, { passive: true });
-        window.addEventListener("pointercancel", this._onUp, { passive: true });
+        element.style.touchAction = element.style.touchAction || "manipulation";
+        
+        element.addEventListener("pointerdown", (e) => {
+          if (typeof e.button === "number" && e.button !== 0) return;
+          try {
+            element.setPointerCapture?.(e.pointerId);
+          } catch {}
+        }, { capture: true, passive: true });
+        
+        element.addEventListener("pointerup", (e) => {
+          if (typeof e.button === "number" && e.button !== 0) return;
+          lastPointerUpAt = Utils.now();
+          fire(e);
+        }, { capture: true, passive: true });
+        
+        element.addEventListener("click", (e) => {
+          if (Utils.now() - lastPointerUpAt < 380) return;
+          fire(e);
+        }, { capture: true, passive: true });
+        
         return;
       }
-
-      el.addEventListener("touchstart", (ev) => {
-        try { ev.preventDefault?.(); } catch {}
-        const t = ev.changedTouches?.[0];
-        if (!t) return;
-        this.active = true;
-        this.pid = "t";
-        this._recalc();
-        this._onMove({ clientX: t.clientX, clientY: t.clientY });
+      
+      // Fallback для старых устройств
+      element.addEventListener("touchstart", (e) => {
+        try { e.preventDefault?.(); } catch {}
+      }, { capture: true, passive: false });
+      
+      element.addEventListener("touchend", (e) => {
+        try { e.preventDefault?.(); } catch {}
+        fire(e);
+      }, { capture: true, passive: false });
+      
+      element.addEventListener("click", (e) => fire(e), { capture: true, passive: true });
+    },
+    
+    installNoZoomGuards() {
+      if (AppState.flags.noZoomInstalled) return;
+      AppState.flags.noZoomInstalled = true;
+      
+      let lastTouchEnd = 0;
+      
+      // Блокировка жестов масштабирования
+      const blockGesture = (e) => {
+        if (!AppState.isGameActive) return;
+        try { e.preventDefault?.(); } catch {}
+      };
+      
+      document.addEventListener("gesturestart", blockGesture, { passive: false });
+      document.addEventListener("gesturechange", blockGesture, { passive: false });
+      document.addEventListener("gestureend", blockGesture, { passive: false });
+      
+      // Блокировка multi-touch
+      document.addEventListener("touchmove", (e) => {
+        if (!AppState.isGameActive) return;
+        if ((e.touches?.length || 0) > 1) {
+          try { e.preventDefault?.(); } catch {}
+        }
       }, { passive: false });
-
-      window.addEventListener("touchmove", (ev) => {
-        if (!this.active) return;
-        const t = ev.changedTouches?.[0];
-        if (!t) return;
-        this._onMove({ clientX: t.clientX, clientY: t.clientY });
-      }, { passive: true });
-
-      window.addEventListener("touchend", () => this._onUp({}), { passive: true });
-      window.addEventListener("touchcancel", () => this._onUp({}), { passive: true });
+      
+      // Блокировка double-tap zoom
+      document.addEventListener("touchend", (e) => {
+        if (!AppState.isGameActive) return;
+        const now = Date.now();
+        if (now - lastTouchEnd <= 260) {
+          try { e.preventDefault?.(); } catch {}
+        }
+        lastTouchEnd = now;
+      }, { passive: false });
     }
-  }
-
-  // Expose input for engine polling
-  window.BCO_ZOMBIES_INPUT = window.BCO_ZOMBIES_INPUT || {
-    move: { x: 0, y: 0 },
-    aim: { x: 0, y: 0 },
-    firing: false,
-    updatedAt: 0
   };
 
-  function pushZInput() {
-    const z = ZB();
-    const c = ZCORE();
-    const inp = window.BCO_ZOMBIES_INPUT;
-    inp.updatedAt = now();
-
-    // wrapper engine
-    try { z?.setMove?.(inp.move.x, inp.move.y); } catch {}
-    try { z?.setAim?.(inp.aim.x, inp.aim.y); } catch {}
-    try { z?.setFire?.(!!inp.firing); } catch {}
-    try { z?.input?.(inp); } catch {}
-
-    // core fallback
-    if (c) {
-      try { c.setMove?.(inp.move.x, inp.move.y); } catch {}
-      try { c.setAim?.(inp.aim.x, inp.aim.y); } catch {}
-      try { c.setShooting?.(!!inp.firing); } catch {}
+  // =========================
+  // ✅ ХРАНИЛИЩЕ (Local + Cloud)
+  // =========================
+  const Storage = {
+    async get(key) {
+      // Сначала проверяем Telegram Cloud Storage
+      if (AppState.tg?.CloudStorage?.getItem) {
+        return new Promise((resolve) => {
+          AppState.tg.CloudStorage.getItem(key, (err, value) => {
+            if (err) {
+              Utils.error("Cloud storage get error", err);
+              resolve(null);
+            } else {
+              resolve(value || null);
+            }
+          });
+        });
+      }
+      return localStorage.getItem(key);
+    },
+    
+    async set(key, value) {
+      // Сначала в Telegram Cloud
+      if (AppState.tg?.CloudStorage?.setItem) {
+        return new Promise((resolve) => {
+          AppState.tg.CloudStorage.setItem(key, value, (err) => {
+            if (err) {
+              Utils.error("Cloud storage set error", err);
+              resolve(false);
+            } else {
+              resolve(true);
+            }
+          });
+        });
+      }
+      
+      // Fallback на localStorage
+      try {
+        localStorage.setItem(key, value);
+        return true;
+      } catch (error) {
+        Utils.error("Local storage set error", error);
+        return false;
+      }
+    },
+    
+    async loadState() {
+      try {
+        // Загрузка из облака
+        const cloudData = await this.get(CONFIG.STORAGE_KEY);
+        const parsedCloud = Utils.safeJsonParse(cloudData);
+        
+        if (parsedCloud && typeof parsedCloud === 'object') {
+          const defaults = this.getDefaults();
+          AppState.state = { ...defaults, ...parsedCloud };
+          this.validateState();
+          Utils.log("State loaded from cloud");
+          return "cloud";
+        }
+        
+        // Загрузка из localStorage
+        const localData = localStorage.getItem(CONFIG.STORAGE_KEY);
+        const parsedLocal = Utils.safeJsonParse(localData);
+        
+        if (parsedLocal && typeof parsedLocal === 'object') {
+          const defaults = this.getDefaults();
+          AppState.state = { ...defaults, ...parsedLocal };
+          this.validateState();
+          Utils.log("State loaded from localStorage");
+          return "local";
+        }
+        
+        // Дефолтные значения
+        AppState.state = this.getDefaults();
+        Utils.log("State loaded from defaults");
+        return "default";
+        
+      } catch (error) {
+        Utils.error("Failed to load state", error);
+        AppState.state = this.getDefaults();
+        return "error";
+      }
+    },
+    
+    async saveState() {
+      try {
+        this.validateState();
+        const payload = JSON.stringify(AppState.state);
+        
+        // Сохраняем везде
+        localStorage.setItem(CONFIG.STORAGE_KEY, payload);
+        await this.set(CONFIG.STORAGE_KEY, payload);
+        
+        Utils.log("State saved");
+        return true;
+      } catch (error) {
+        Utils.error("Failed to save state", error);
+        return false;
+      }
+    },
+    
+    async loadChat() {
+      try {
+        const chatData = await this.get(CONFIG.CHAT_KEY);
+        const parsed = Utils.safeJsonParse(chatData);
+        
+        if (parsed && Array.isArray(parsed.history)) {
+          AppState.chat.history = parsed.history.slice(-CONFIG.CHAT_HISTORY_LIMIT);
+          Utils.log("Chat loaded");
+          return true;
+        }
+        
+        AppState.chat.history = [];
+        return true;
+      } catch (error) {
+        Utils.error("Failed to load chat", error);
+        AppState.chat.history = [];
+        return false;
+      }
+    },
+    
+    async saveChat() {
+      try {
+        const payload = JSON.stringify({
+          history: AppState.chat.history.slice(-120),
+          timestamp: Utils.now()
+        });
+        
+        localStorage.setItem(CONFIG.CHAT_KEY, payload);
+        await this.set(CONFIG.CHAT_KEY, payload);
+        
+        return true;
+      } catch (error) {
+        Utils.error("Failed to save chat", error);
+        return false;
+      }
+    },
+    
+    getDefaults() {
+      return {
+        game: "Warzone",
+        focus: "aim",
+        mode: "Normal",
+        platform: "PC",
+        input: "Controller",
+        voice: "TEAMMATE",
+        role: "Flex",
+        bf6_class: "Assault",
+        zombies_map: "Ashes",
+        character: "male",
+        skin: "default",
+        zombies_mode: "arcade",
+        render: "2d",
+        z_coins: 0,
+        z_relics: 0,
+        z_wonder_unlocked: false,
+        z_wonder_weapon: "CROWN_RAY",
+        z_best: { arcade: 0, roguelike: 0 },
+        acc_xp: 0,
+        acc_level: 1,
+        z_xp: 0,
+        z_level: 1
+      };
+    },
+    
+    validateState() {
+      const s = AppState.state;
+      
+      // Валидация числовых значений
+      s.z_relics = Utils.clampInt(s.z_relics, 0, 5);
+      s.z_coins = Utils.clampInt(s.z_coins, 0, 999999);
+      s.acc_level = Utils.clampInt(s.acc_level, 1, 999);
+      s.z_level = Utils.clampInt(s.z_level, 1, 999);
+      
+      // Валидация строковых значений
+      const validModes = ["arcade", "roguelike"];
+      if (!validModes.includes(s.zombies_mode)) s.zombies_mode = "arcade";
+      
+      const validCharacters = ["male", "female"];
+      if (!validCharacters.includes(s.character)) s.character = "male";
+      
+      const validRender = ["2d", "3d"];
+      if (!validRender.includes(s.render)) s.render = "2d";
+    },
+    
+    // Экспорт данных
+    exportData() {
+      return {
+        state: AppState.state,
+        chat: {
+          historyCount: AppState.chat.history.length,
+          lastMessage: AppState.chat.history[AppState.chat.history.length - 1]
+        },
+        timestamp: Utils.now(),
+        version: CONFIG.VERSION
+      };
     }
-  }
+  };
 
-  let inputTimer = 0;
-  function startInputPump() {
-    if (inputTimer) return;
-    inputTimer = setInterval(pushZInput, 33);
-  }
-  function stopInputPump() {
-    if (!inputTimer) return;
-    clearInterval(inputTimer);
-    inputTimer = 0;
-  }
+  // =========================
+  // ✅ ТЕМА И TELEGRAM API
+  // =========================
+  const ThemeManager = {
+    init() {
+      if (!AppState.tg) return;
+      this.applyTheme();
+      this.setupEventListeners();
+    },
+    
+    applyTheme() {
+      try {
+        const params = AppState.tg.themeParams || {};
+        const root = document.documentElement;
+        
+        const themeMap = {
+          "--tg-bg": params.bg_color,
+          "--tg-text": params.text_color,
+          "--tg-hint": params.hint_color,
+          "--tg-link": params.link_color,
+          "--tg-btn": params.button_color,
+          "--tg-btn-text": params.button_text_color,
+          "--tg-secondary-bg": params.secondary_bg_color
+        };
+        
+        Object.entries(themeMap).forEach(([key, value]) => {
+          if (value) root.style.setProperty(key, value);
+        });
+        
+        AppState.tg.setBackgroundColor?.(params.bg_color || "#07070b");
+        AppState.tg.setHeaderColor?.(params.secondary_bg_color || params.bg_color || "#07070b");
+        
+        const dbgTheme = Utils.qs("#dbgTheme");
+        if (dbgTheme) dbgTheme.textContent = AppState.tg.colorScheme || "—";
+        
+      } catch (error) {
+        Utils.error("Failed to apply theme", error);
+      }
+    },
+    
+    setupEventListeners() {
+      if (!AppState.tg) return;
+      try {
+        AppState.tg.onEvent("themeChanged", () => this.applyTheme());
+      } catch (error) {
+        Utils.error("Failed to setup theme listener", error);
+      }
+    },
+    
+    getThemeInfo() {
+      if (!AppState.tg) return null;
+      return {
+        colorScheme: AppState.tg.colorScheme,
+        themeParams: AppState.tg.themeParams,
+        platform: AppState.tg.platform,
+        viewportHeight: AppState.tg.viewportHeight,
+        viewportStableHeight: AppState.tg.viewportStableHeight
+      };
+    }
+  };
 
-  // =========================================================
-  // ✅ ROGUELIKE ECONOMY FALLBACK (coins + relics)
-  // =========================================================
-  function econResetForRun() {
-    GAME.econ.coins = clampInt(state.z_coins ?? 0, 0, 999999);
-    GAME.econ.lastKills = 0;
-    GAME.econ.lastWave = 0;
+  // =========================
+  // ✅ UI МЕНЕДЖЕР
+  // =========================
+  const UIManager = {
+    init() {
+      this.wireNavigation();
+      this.wireSegments();
+      this.wireButtons();
+      this.updateChips();
+      this.wireHeaderChips();
+      this.updateTelegramButtons();
+    },
+    
+    wireNavigation() {
+      const navButtons = Utils.qsa(".nav-btn, .tab");
+      navButtons.forEach(button => {
+        TouchHandler.onTap(button, () => {
+          Utils.haptic("impact", "light");
+          this.selectTab(button.dataset.tab || "home");
+        });
+      });
+    },
+    
+    selectTab(tab) {
+      if (tab === "zombies") tab = "game";
+      AppState.currentTab = tab;
+      
+      Utils.qsa(".nav-btn").forEach(btn => {
+        const isActive = btn.dataset.tab === tab;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      
+      Utils.qsa(".tab").forEach(t => {
+        t.classList.toggle("active", t.dataset.tab === tab);
+      });
+      
+      Utils.qsa(".tabpane").forEach(pane => {
+        pane.classList.toggle("active", pane.id === `tab-${tab}`);
+      });
+      
+      this.updateTelegramButtons();
+      
+      try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+      Utils.log(`Tab switched to: ${tab}`);
+    },
+    
+    wireSegments() {
+      const segments = [
+        { id: "#segGame", prop: "game" },
+        { id: "#segFocus", prop: "focus" },
+        { id: "#segMode", prop: "mode" },
+        { id: "#segPlatform", prop: "platform" },
+        { id: "#segInput", prop: "input" },
+        { id: "#segVoice", prop: "voice" },
+        { id: "#segZMap", prop: "zombies_map" }
+      ];
+      
+      segments.forEach(segment => {
+        const root = Utils.qs(segment.id);
+        if (!root) return;
+        
+        TouchHandler.onTap(root, (e) => {
+          const button = e.target.closest(".seg-btn");
+          if (!button) return;
+          
+          Utils.haptic("impact", "light");
+          AppState.state[segment.prop] = button.dataset.value;
+          
+          this.setActiveSegment(segment.id, button.dataset.value);
+          this.updateChips();
+          
+          Storage.saveState().then(() => Utils.toast("Сохранено ✅"));
+        }, { lockMs: 120 });
+      });
+      
+      this.setActiveSegment("#segPlatform", AppState.state.platform);
+      this.setActiveSegment("#segInput", AppState.state.input);
+      this.setActiveSegment("#segVoice", AppState.state.voice);
+      this.setActiveSegment("#segMode", AppState.state.mode);
+      this.setActiveSegment("#segZMap", AppState.state.zombies_map);
+      this.setActiveSegment("#segGame", AppState.state.game);
+      this.setActiveSegment("#segFocus", AppState.state.focus);
+    },
+    
+    setActiveSegment(rootId, value) {
+      const root = Utils.qs(rootId);
+      if (!root) return;
+      
+      root.querySelectorAll(".seg-btn").forEach(button => {
+        const isActive = button.dataset.value === value;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
+    },
+    
+    updateChips() {
+      const state = AppState.state;
+      
+      const chipVoice = Utils.qs("#chipVoice");
+      if (chipVoice) chipVoice.textContent = state.voice === "COACH" ? "📚 Коуч" : "🤝 Тиммейт";
+      
+      const chipMode = Utils.qs("#chipMode");
+      if (chipMode) {
+        let modeText = "🧠 Normal";
+        if (state.mode === "Pro") modeText = "🔥 Pro";
+        if (state.mode === "Demon") modeText = "😈 Demon";
+        chipMode.textContent = modeText;
+      }
+      
+      const chipPlatform = Utils.qs("#chipPlatform");
+      if (chipPlatform) {
+        let platformText = "🖥 PC";
+        if (state.platform === "PlayStation") platformText = "🎮 PlayStation";
+        if (state.platform === "Xbox") platformText = "🎮 Xbox";
+        chipPlatform.textContent = platformText;
+      }
+      
+      const pillRole = Utils.qs("#pillRole");
+      if (pillRole) pillRole.textContent = `🎭 Role: ${state.role}`;
+      
+      const pillBf6 = Utils.qs("#pillBf6");
+      if (pillBf6) pillBf6.textContent = `🟩 Class: ${state.bf6_class}`;
+      
+      const chatSub = Utils.qs("#chatSub");
+      if (chatSub) chatSub.textContent = `${state.voice} • ${state.mode} • ${state.platform}`;
+    },
+    
+    wireHeaderChips() {
+      const chipVoice = Utils.qs("#chipVoice");
+      const chipMode = Utils.qs("#chipMode");
+      const chipPlatform = Utils.qs("#chipPlatform");
+      
+      TouchHandler.onTap(chipVoice, async () => {
+        Utils.haptic("impact", "light");
+        AppState.state.voice = AppState.state.voice === "COACH" ? "TEAMMATE" : "COACH";
+        this.updateChips();
+        this.setActiveSegment("#segVoice", AppState.state.voice);
+        await Storage.saveState();
+        Utils.toast(AppState.state.voice === "COACH" ? "Коуч включён 📚" : "Тиммейт 🤝");
+      });
+      
+      TouchHandler.onTap(chipMode, async () => {
+        Utils.haptic("impact", "light");
+        const modes = ["Normal", "Pro", "Demon"];
+        const currentIndex = modes.indexOf(AppState.state.mode);
+        AppState.state.mode = modes[(currentIndex + 1) % modes.length];
+        this.updateChips();
+        this.setActiveSegment("#segMode", AppState.state.mode);
+        await Storage.saveState();
+        Utils.toast(`Режим: ${AppState.state.mode}`);
+      });
+      
+      TouchHandler.onTap(chipPlatform, async () => {
+        Utils.haptic("impact", "light");
+        const platforms = ["PC", "PlayStation", "Xbox"];
+        const currentIndex = platforms.indexOf(AppState.state.platform);
+        AppState.state.platform = platforms[(currentIndex + 1) % platforms.length];
+        this.updateChips();
+        this.setActiveSegment("#segPlatform", AppState.state.platform);
+        await Storage.saveState();
+        Utils.toast(`Platform: ${AppState.state.platform}`);
+      });
+    },
+    
+    wireButtons() {
+      this.wireGeneralButtons();
+      this.wireChatButtons();
+      this.wireAimButtons();
+      this.wireZombiesButtons();
+    },
+    
+    wireGeneralButtons() {
+      TouchHandler.onTap(Utils.qs("#btnClose"), () => {
+        Utils.haptic("impact", "medium");
+        AppState.tg?.close?.();
+      });
+      
+      TouchHandler.onTap(Utils.qs("#btnShare"), () => {
+        const text = `BLACK CROWN OPS 😈\nТренировки, VOD, настройки, Zombies — всё в одном месте.\nMini App + Fullscreen Zombies (dual-stick).`;
+        this.copyToClipboard(text);
+      });
+      
+      TouchHandler.onTap(Utils.qs("#btnBuyMonth"), () => {
+        this.sendToBot({ type: "pay", plan: "premium_month", profile: true });
+      });
+      
+      TouchHandler.onTap(Utils.qs("#btnBuyLife"), () => {
+        this.sendToBot({ type: "pay", plan: "premium_lifetime", profile: true });
+      });
+      
+      TouchHandler.onTap(Utils.qs("#btnOpenBot"), () => this.openBotMenuHint("main"));
+      TouchHandler.onTap(Utils.qs("#btnPremium"), () => this.openBotMenuHint("premium"));
+      TouchHandler.onTap(Utils.qs("#btnSync"), () => {
+        this.sendToBot({ type: "sync_request", profile: true });
+      });
+    },
+    
+    wireChatButtons() {
+      TouchHandler.onTap(Utils.qs("#btnChatSend"), () => ChatManager.sendMessage());
+      
+      TouchHandler.onTap(Utils.qs("#btnChatClear"), async () => {
+        Utils.haptic("impact", "light");
+        if (confirm("Очистить историю чата?")) {
+          AppState.chat.history = [];
+          await Storage.saveChat();
+          ChatManager.render();
+          Utils.toast("Чат очищен ✅");
+        }
+      });
+      
+      TouchHandler.onTap(Utils.qs("#btnChatExport"), () => {
+        Utils.haptic("impact", "light");
+        const text = ChatManager.exportHistory();
+        this.copyToClipboard(text || "— пусто —");
+      });
+      
+      const chatInput = Utils.qs("#chatInput");
+      if (chatInput) {
+        chatInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            ChatManager.sendMessage();
+          }
+        }, { passive: false });
+      }
+    },
+    
+    wireAimButtons() {
+      const { btnStart, btnStop, btnSend } = AimGame.getElements();
+      TouchHandler.onTap(btnStart, () => AimGame.start());
+      TouchHandler.onTap(btnStop, () => AimGame.stop());
+      TouchHandler.onTap(btnSend, () => AimGame.sendResult());
+    },
+    
+    wireZombiesButtons() {
+      TouchHandler.onTap(Utils.qs("#btnZQuickPlay"), () => ZombiesGame.enter());
+      TouchHandler.onTap(Utils.qs("#btnPlayZombies"), () => {
+        UIManager.selectTab("game");
+        ZombiesGame.enter();
+      });
+      
+      TouchHandler.onTap(Utils.qs("#btnZModeArcade"), () => {
+        ZombiesGame.setMode("arcade");
+        Utils.toast("Zombies: Arcade 💥");
+      });
+      
+      TouchHandler.onTap(Utils.qs("#btnZModeRogue"), () => {
+        ZombiesGame.setMode("roguelike");
+        Utils.toast("Zombies: Roguelike 😈");
+      });
+      
+      TouchHandler.onTap(Utils.qs("#btnZGameSend"), () => ZombiesGame.sendResult("manual"));
+      TouchHandler.onTap(Utils.qs("#btnZGameSend2"), () => ZombiesGame.sendResult("manual"));
+      
+      TouchHandler.onTap(Utils.qs("#btnZBuyJug"), () => ZombiesGame.buyPerk("Jug"));
+      TouchHandler.onTap(Utils.qs("#btnZBuySpeed"), () => ZombiesGame.buyPerk("Speed"));
+      TouchHandler.onTap(Utils.qs("#btnZBuyAmmo"), () => ZombiesGame.buyPerk("Mag"));
+    },
+    
+    copyToClipboard(text) {
+      try {
+        navigator.clipboard.writeText(text).then(() => {
+          Utils.toast("Скопировано ✅");
+        }).catch(() => {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textarea);
+          Utils.toast("Скопировано ✅");
+        });
+      } catch {
+        alert(text);
+      }
+    },
+    
+    openBotMenuHint(target) {
+      this.sendToBot({ type: "nav", target, profile: true });
+    },
+    
+    sendToBot(payload) {
+      try {
+        BotIntegration.sendData(payload);
+      } catch (error) {
+        Utils.error("Failed to send to bot", error);
+        Utils.haptic("notification", "error");
+        Utils.toast("Ошибка отправки");
+      }
+    },
+    
+    updateTelegramButtons() {
+      if (!AppState.tg) return;
+      
+      // В режиме игры — жёстко прячем всё
+      if (AppState.isGameActive) {
+        try { AppState.tg.MainButton.hide(); } catch {}
+        try { AppState.tg.BackButton.hide(); } catch {}
+        return;
+      }
+      
+      // Back button
+      try {
+        if (AppState.currentTab !== "home") AppState.tg.BackButton.show();
+        else AppState.tg.BackButton.hide();
+      } catch {}
+      
+      // Main button
+      try {
+        let buttonText = "💎 Premium";
+        switch (AppState.currentTab) {
+          case "settings": buttonText = "✅ Применить профиль"; break;
+          case "coach": buttonText = "🎯 План тренировки"; break;
+          case "vod": buttonText = "🎬 Отправить VOD"; break;
+          case "game": buttonText = "🧟 Start Fullscreen"; break;
+        }
+        
+        AppState.tg.MainButton.setParams({
+          is_visible: true,
+          text: buttonText,
+          color: AppState.tg.themeParams?.button_color,
+          text_color: AppState.tg.themeParams?.button_text_color
+        });
+        
+        if (!AppState.flags.tgButtonsWired) {
+          this.wireTelegramButtons();
+          AppState.flags.tgButtonsWired = true;
+        }
+        
+      } catch (error) {
+        Utils.error("Failed to update Telegram buttons", error);
+      }
+    },
+    
+    wireTelegramButtons() {
+      if (!AppState.tg) return;
+      
+      AppState.tg.MainButton.onClick(() => {
+        Utils.haptic("impact", "medium");
+        
+        switch (AppState.currentTab) {
+          case "settings":
+            this.sendToBot({ type: "set_profile", profile: true });
+            break;
+          case "coach":
+            this.sendToBot({ type: "training_plan", focus: AppState.state.focus, profile: true });
+            break;
+          case "vod": {
+            const t1 = (Utils.qs("#vod1")?.value || "").trim();
+            const t2 = (Utils.qs("#vod2")?.value || "").trim();
+            const t3 = (Utils.qs("#vod3")?.value || "").trim();
+            const note = (Utils.qs("#vodNote")?.value || "").trim();
+            this.sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
+            break;
+          }
+          case "game":
+            ZombiesGame.enter();
+            break;
+          default:
+            this.openBotMenuHint("premium");
+        }
+      });
+      
+      AppState.tg.BackButton.onClick(() => {
+        Utils.haptic("impact", "light");
+        this.selectTab("home");
+      });
+    }
+  };
 
-    // also sync CORE if present
-    const c = ZCORE();
-    try { if (c?.state) c.state.coins = GAME.econ.coins; } catch {}
-  }
-
-  function econAddCoins(n, why = "") {
-    const add = clampInt(n, 0, 999999);
-    if (!add) return;
-    GAME.econ.coins = clampInt((GAME.econ.coins || 0) + add, 0, 999999);
-    state.z_coins = GAME.econ.coins;
-
-    const z = ZB();
-    try { z?.addCoins?.(add); } catch {}
-    try { z?.coins?.(GAME.econ.coins); } catch {}
-    try { z?.setCoins?.(GAME.econ.coins); } catch {}
-    try { z?.awardCoins?.(add); } catch {}
-
-    const c = ZCORE();
-    try { if (c?.state) c.state.coins = GAME.econ.coins; } catch {}
-
-    if (why) toast(`+${add} 💰 ${why}`);
-    saveState().catch(() => {});
-  }
-
-  function econSpend(cost) {
-    const cst = clampInt(cost, 0, 999999);
-    if (GAME.econ.coins < cst) return false;
-    GAME.econ.coins -= cst;
-    state.z_coins = GAME.econ.coins;
-
-    const z = ZB();
-    try { z?.coins?.(GAME.econ.coins); } catch {}
-    try { z?.setCoins?.(GAME.econ.coins); } catch {}
-
-    const c = ZCORE();
-    try { if (c?.state) c.state.coins = GAME.econ.coins; } catch {}
-
-    saveState().catch(() => {});
-    return true;
-  }
-
-  function tryDropRelicFromKill() {
-    if (state.z_wonder_unlocked) return;
-    if (state.z_relics >= 5) return;
-    if (state.zombies_mode !== "roguelike") return;
-
-    const r = Math.random();
-    if (r <= GAME.econ.relicChancePerKill) {
-      state.z_relics = clampInt((state.z_relics || 0) + 1, 0, 5);
-      saveState().catch(() => {});
-      toast(`Реликвия найдена 🗿 (${state.z_relics}/5)`);
-
-      if (state.z_relics >= 5) {
-        state.z_wonder_unlocked = true;
-        saveState().catch(() => {});
-        haptic("notif", "success");
-        toast("ЧУДО-ОРУЖИЕ ОТКРЫТО 👑⚡");
-        zombiesTryUnlockWonder();
+  // =========================
+  // ✅ ИНТЕГРАЦИЯ С БОТОМ
+  // =========================
+  const BotIntegration = {
+    getProfile() {
+      return {
+        game: AppState.state.game,
+        platform: AppState.state.platform,
+        input: AppState.state.input,
+        difficulty: AppState.state.mode,
+        voice: AppState.state.voice,
+        role: AppState.state.role,
+        bf6_class: AppState.state.bf6_class,
+        zombies_map: AppState.state.zombies_map,
+        mode: AppState.state.mode
+      };
+    },
+    
+    enrichPayload(payload) {
+      const initUnsafe = AppState.tg?.initDataUnsafe || {};
+      return {
+        v: CONFIG.VERSION,
+        t: Utils.now(),
+        meta: {
+          user_id: initUnsafe?.user?.id ?? null,
+          chat_id: initUnsafe?.chat?.id ?? null,
+          platform: AppState.tg?.platform ?? null,
+          build: AppState.buildId,
+          viewport: {
+            height: AppState.tg?.viewportHeight,
+            stable: AppState.tg?.viewportStableHeight
+          }
+        },
+        ...payload
+      };
+    },
+    
+    sendData(payload) {
+      try {
+        const data = { ...payload };
+        if (data.profile === true) data.profile = this.getProfile();
+        
+        const enriched = this.enrichPayload(data);
+        let jsonString = JSON.stringify(enriched);
+        
+        if (jsonString.length > CONFIG.MAX_PAYLOAD_SIZE) {
+          Utils.log("Payload too large, trimming");
+          if (typeof enriched.text === "string") enriched.text = enriched.text.substring(0, 4000);
+          if (typeof enriched.note === "string") enriched.note = enriched.note.substring(0, 4000);
+          jsonString = JSON.stringify(enriched).substring(0, CONFIG.MAX_PAYLOAD_SIZE);
+        }
+        
+        if (!AppState.tg?.sendData) throw new Error("Telegram sendData not available");
+        AppState.tg.sendData(jsonString);
+        
+        Utils.haptic("notification", "success");
+        Utils.toast("Отправлено в бота 🚀");
+        
+        const statSession = Utils.qs("#statSession");
+        if (statSession) statSession.textContent = "SENT";
+        
+        return true;
+        
+      } catch (error) {
+        Utils.error("Failed to send data to bot", error);
+        Utils.haptic("notification", "error");
+        Utils.toast(AppState.tg ? "Ошибка отправки" : "Открой Mini App внутри Telegram");
+        return false;
+      }
+    },
+    
+    async sendViaAPI(endpoint, data) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT);
+        
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Telegram-Init-Data": AppState.tg?.initData || ""
+          },
+          body: JSON.stringify(data),
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        if (!response.ok) throw new Error(`API error: ${response.status}`);
+        return await response.json();
+        
+      } catch (error) {
+        Utils.error("API request failed", error);
+        throw error;
       }
     }
-  }
+  };
 
-  function econOnHud(h) {
-    const kills = clampInt(h?.kills ?? h?.frags ?? 0, 0, 999999);
-    const wave = clampInt(h?.wave ?? h?.round ?? 0, 0, 999999);
-
-    if (kills > GAME.econ.lastKills) {
-      const dk = kills - GAME.econ.lastKills;
-      GAME.econ.lastKills = kills;
-
-      if (state.zombies_mode === "roguelike") {
-        econAddCoins(dk * GAME.econ.coinsPerKill, "");
-        for (let i = 0; i < dk; i++) tryDropRelicFromKill();
+  // =========================
+  // ✅ ЧАТ МЕНЕДЖЕР
+  // =========================
+  const ChatManager = {
+    init() { this.render(); },
+    getLogElement() { return Utils.qs("#chatLog"); },
+    
+    render() {
+      const container = this.getLogElement();
+      if (!container) return;
+      
+      const messages = AppState.chat.history.slice(-CONFIG.CHAT_HISTORY_LIMIT);
+      if (messages.length === 0) {
+        container.innerHTML = this.getWelcomeMessage();
+        return;
       }
-    }
-
-    if (wave > GAME.econ.lastWave) {
-      const dw = wave - GAME.econ.lastWave;
-      GAME.econ.lastWave = wave;
-
-      if (state.zombies_mode === "roguelike") {
-        econAddCoins(dw * GAME.econ.coinsPerWave, `Wave ${wave}`);
-      }
-    }
-  }
-
-  // =========================================================
-  // ✅ OVERLAY DOM (fullscreen + shop clarity + modals)
-  // =========================================================
-  function isModalOpen() {
-    return !!(GAME.modal && GAME.modal.classList.contains("show"));
-  }
-
-  function allowScrollInModal(target) {
-    if (!isModalOpen()) return false;
-    if (!target) return false;
-    // allow scroll if inside card or body
-    return !!target.closest?.(".bco-z-card, #bcoZModalBody");
-  }
-
-  function buildOverlayDOM() {
-    if (GAME.overlay) return GAME.overlay;
-
-    const mount = qs("#zOverlayMount") || document.body;
-
-    const overlay = document.createElement("div");
-    overlay.className = "bco-z-overlay";
-    overlay.setAttribute("role", "dialog");
-    overlay.setAttribute("aria-label", "Zombies Fullscreen");
-
-    const canvas = document.createElement("canvas");
-    canvas.className = "bco-z-canvas";
-    canvas.width = 1;
-    canvas.height = 1;
-
-    const topbar = document.createElement("div");
-    topbar.className = "bco-z-topbar";
-
-    const left = document.createElement("div");
-    left.className = "left";
-    left.innerHTML = `
-      <div class="bco-z-title">🧟 Zombies Survival</div>
-      <div class="bco-z-sub" id="bcoZSub">${esc(state.zombies_mode.toUpperCase())} • ${esc(state.zombies_map)}</div>
-    `;
-
-    const right = document.createElement("div");
-    right.className = "right";
-
-    const btnExit = document.createElement("button");
-    btnExit.className = "bco-z-mini";
-    btnExit.type = "button";
-    btnExit.textContent = "✖ Exit";
-
-    const btnShop = document.createElement("button");
-    btnShop.className = "bco-z-mini";
-    btnShop.type = "button";
-    btnShop.textContent = "🛒 Shop";
-
-    const btnCharacter = document.createElement("button");
-    btnCharacter.className = "bco-z-mini";
-    btnCharacter.type = "button";
-    btnCharacter.textContent = "🎭 Character";
-
-    const btnSend = document.createElement("button");
-    btnSend.className = "bco-z-mini";
-    btnSend.type = "button";
-    btnSend.textContent = "📤 Send";
-
-    right.appendChild(btnShop);
-    right.appendChild(btnCharacter);
-    right.appendChild(btnSend);
-    right.appendChild(btnExit);
-
-    topbar.appendChild(left);
-    topbar.appendChild(right);
-
-    const hud = document.createElement("div");
-    hud.className = "bco-z-hud";
-
-    const pill = document.createElement("div");
-    pill.className = "bco-z-pill";
-    pill.id = "bcoHud1";
-    pill.textContent = "❤️ — • 🔫 — • 💰 —";
-
-    const pill2 = document.createElement("div");
-    pill2.className = "bco-z-pill";
-    pill2.id = "bcoHud2";
-    pill2.textContent = "Wave — • Kills — • Quest —";
-
-    hud.appendChild(pill);
-    hud.appendChild(pill2);
-
-    const controls = document.createElement("div");
-    controls.className = "bco-z-controls";
-
-    const joyL = document.createElement("div");
-    joyL.className = "bco-joy";
-    joyL.innerHTML = `<div class="bco-joy-knob"></div>`;
-
-    const joyR = document.createElement("div");
-    joyR.className = "bco-joy";
-    joyR.innerHTML = `<div class="bco-joy-knob"></div>`;
-
-    const fire = document.createElement("div");
-    fire.className = "bco-fire";
-    fire.textContent = "FIRE";
-
-    const leftWrap = document.createElement("div");
-    leftWrap.style.display = "flex";
-    leftWrap.style.gap = "12px";
-    leftWrap.appendChild(joyL);
-
-    const rightWrap = document.createElement("div");
-    rightWrap.style.display = "flex";
-    rightWrap.style.gap = "12px";
-    rightWrap.appendChild(fire);
-    rightWrap.appendChild(joyR);
-
-    controls.appendChild(leftWrap);
-    controls.appendChild(rightWrap);
-
-    const shop = document.createElement("div");
-    shop.className = "bco-z-shop";
-    shop.innerHTML = `
-      <button class="bco-shopbtn primary" type="button" data-act="upgrade">⬆️ Upgrade</button>
-      <button class="bco-shopbtn" type="button" data-act="reroll">🎲 Reroll</button>
-      <button class="bco-shopbtn" type="button" data-act="reload">🔄 Reload</button>
-      <button class="bco-shopbtn" type="button" data-perk="Jug">🧪 Jug</button>
-      <button class="bco-shopbtn" type="button" data-perk="Speed">⚡ Speed</button>
-      <button class="bco-shopbtn" type="button" data-perk="Mag">📦 Mag</button>
-      <button class="bco-shopbtn" type="button" data-perk="Armor">🛡 Armor</button>
-    `;
-
-    const modal = document.createElement("div");
-    modal.className = "bco-z-modal";
-    modal.id = "bcoZModal";
-    modal.innerHTML = `
-      <div class="bco-z-card">
-        <h3 id="bcoZModalTitle">Title</h3>
-        <p id="bcoZModalDesc">Desc</p>
-        <div id="bcoZModalBody"></div>
-        <div style="display:flex; gap:10px; margin-top:12px; justify-content:flex-end;">
-          <button class="bco-shopbtn" type="button" id="bcoZModalClose">Close</button>
+      
+      let html = "";
+      messages.forEach(message => {
+        const isBot = message.role === "assistant";
+        const sender = isBot ? "BCO" : "Ты";
+        const cssClass = isBot ? "bot" : "me";
+        const time = Utils.formatTime(message.ts || Utils.now());
+        
+        html += `
+          <div class="chat-row ${cssClass}">
+            <div>
+              <div class="bubble">${Utils.escapeHtml(message.text)}</div>
+              <div class="chat-meta">${sender} • ${time}</div>
+            </div>
+          </div>
+        `;
+      });
+      
+      if (AppState.chat.isTyping) html += this.getTypingIndicator();
+      
+      container.innerHTML = html;
+      setTimeout(() => { container.scrollTop = container.scrollHeight; }, 50);
+    },
+    
+    getWelcomeMessage() {
+      const time = Utils.formatTime(Utils.now());
+      return `
+        <div class="chat-row bot">
+          <div>
+            <div class="bubble">🤝 Готов. Пиши как есть: где умираешь и что хочешь получить — отвечу тут же. 😈</div>
+            <div class="chat-meta">BCO • ${time}</div>
+          </div>
         </div>
-      </div>
-    `;
+      `;
+    },
+    
+    getTypingIndicator() {
+      return `
+        <div class="chat-row bot" id="typing-indicator">
+          <div>
+            <div class="bubble">
+              <span class="typing">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+              </span>
+            </div>
+            <div class="chat-meta">BCO • печатает…</div>
+          </div>
+        </div>
+      `;
+    },
+    
+    setTyping(isTyping) {
+      AppState.chat.isTyping = isTyping;
+      this.render();
+    },
+    
+    addMessage(role, text) {
+      const message = { role, text: String(text || "").trim(), ts: Utils.now() };
+      if (!message.text) return;
+      
+      AppState.chat.history.push(message);
+      if (AppState.chat.history.length > 160) AppState.chat.history = AppState.chat.history.slice(-160);
+      this.render();
+    },
+    
+    async sendMessage() {
+      const input = Utils.qs("#chatInput");
+      const text = (input?.value || "").trim();
+      
+      if (!text) {
+        Utils.haptic("notification", "warning");
+        Utils.toast("Напиши текст");
+        return;
+      }
+      
+      const now = Utils.now();
+      if (now - AppState.chat.lastAskAt < 450) {
+        Utils.toast("Подождите немного перед следующим сообщением");
+        return;
+      }
+      AppState.chat.lastAskAt = now;
+      
+      Utils.haptic("impact", "light");
+      this.addMessage("user", text);
+      
+      if (input) {
+        input.value = "";
+        input.focus();
+      }
+      
+      await Storage.saveChat();
+      this.setTyping(true);
+      
+      try {
+        const reply = await this.askBrain(text);
+        if (reply) {
+          this.addMessage("assistant", reply);
+          Utils.haptic("notification", "success");
+        } else {
+          Utils.haptic("notification", "warning");
+          Utils.toast("Нет ответа. Можно отправить в бота.");
+        }
+      } catch (error) {
+        Utils.error("Chat request failed", error);
+        this.addMessage("assistant", "Ошибка соединения. Попробуйте позже.");
+        Utils.haptic("notification", "error");
+      } finally {
+        this.setTyping(false);
+        await Storage.saveChat();
+      }
+    },
+    
+    async askBrain(text) {
+      const body = {
+        initData: AppState.tg?.initData || "",
+        text: String(text || "").trim(),
+        profile: BotIntegration.getProfile(),
+        history: AppState.chat.history.slice(-20).map(msg => ({ role: msg.role, content: msg.text }))
+      };
+      
+      try {
+        const response = await BotIntegration.sendViaAPI("/webapp/api/ask", body);
+        if (response?.ok !== true) {
+          const error = response?.error || response?.detail || "api_error";
+          return `🧠 Mini App: API error (${error}).`;
+        }
+        return String(response.reply || "");
+      } catch (error) {
+        const message = error.name === "AbortError" ? "timeout" : (error.message || "network");
+        return `🧠 Mini App: network error (${message}).`;
+      }
+    },
+    
+    exportHistory() {
+      return AppState.chat.history
+        .slice(-80)
+        .map(msg => {
+          const sender = msg.role === "assistant" ? "BCO" : "YOU";
+          const time = Utils.formatTime(msg.ts);
+          return `[${time}] ${sender}: ${msg.text}`;
+        })
+        .join("\n");
+    }
+  };
 
-    overlay.appendChild(canvas);
-    overlay.appendChild(topbar);
-    overlay.appendChild(hud);
-    overlay.appendChild(shop);
-    overlay.appendChild(controls);
-    overlay.appendChild(modal);
+  // =========================
+  // ✅ AIM GAME МЕНЕДЖЕР
+  // =========================
+  const AimGame = {
+    getElements() {
+      return {
+        arena: Utils.qs("#aimArena"),
+        target: Utils.qs("#aimTarget"),
+        stat: Utils.qs("#aimStat"),
+        btnStart: Utils.qs("#btnAimStart"),
+        btnStop: Utils.qs("#btnAimStop"),
+        btnSend: Utils.qs("#btnAimSend")
+      };
+    },
+    
+    init() { this.reset(); },
+    
+    reset() {
+      AppState.aim.running = false;
+      AppState.aim.startedAt = 0;
+      AppState.aim.shots = 0;
+      AppState.aim.hits = 0;
+      
+      if (AppState.aim.timerId) {
+        clearInterval(AppState.aim.timerId);
+        AppState.aim.timerId = null;
+      }
+      this.updateUI();
+    },
+    
+    moveTarget() {
+      const { arena, target } = this.getElements();
+      if (!arena || !target) return;
+      
+      const arenaRect = arena.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      
+      const padding = 14;
+      const targetWidth = Math.max(30, targetRect.width || 44);
+      const targetHeight = Math.max(30, targetRect.height || 44);
+      
+      const maxX = Math.max(padding, arenaRect.width - padding - targetWidth);
+      const maxY = Math.max(padding, arenaRect.height - padding - targetHeight);
+      
+      const x = padding + Math.random() * (maxX - padding);
+      const y = padding + Math.random() * (maxY - padding);
+      
+      target.style.transform = `translate(${x}px, ${y}px)`;
+    },
+    
+    updateUI() {
+      const { stat, btnStart, btnStop, btnSend } = this.getElements();
+      
+      const accuracy = AppState.aim.shots > 0 
+        ? Math.round((AppState.aim.hits / AppState.aim.shots) * 100)
+        : 0;
+      
+      const timeLeft = AppState.aim.running
+        ? Math.max(0, AppState.aim.durationMs - (Utils.now() - AppState.aim.startedAt))
+        : 0;
+      
+      if (stat) {
+        if (AppState.aim.running) {
+          stat.textContent = `⏱ ${(timeLeft / 1000).toFixed(1)}s • 🎯 ${AppState.aim.hits}/${AppState.aim.shots} • Acc ${accuracy}%`;
+        } else {
+          stat.textContent = `🎯 ${AppState.aim.hits}/${AppState.aim.shots} • Acc ${accuracy}%`;
+        }
+      }
+      
+      if (btnStart) btnStart.disabled = AppState.aim.running;
+      if (btnStop) btnStop.disabled = !AppState.aim.running;
+      if (btnSend) btnSend.disabled = AppState.aim.running || AppState.aim.shots < 5;
+    },
+    
+    start() {
+      if (AppState.aim.running) return;
+      
+      this.reset();
+      AppState.aim.running = true;
+      AppState.aim.startedAt = Utils.now();
+      
+      this.moveTarget();
+      this.updateUI();
+      
+      AppState.aim.timerId = setInterval(() => {
+        this.moveTarget();
+        this.updateUI();
+        if (Utils.now() - AppState.aim.startedAt >= AppState.aim.durationMs) this.stop(true);
+      }, 650);
+      
+      Utils.haptic("notification", "success");
+      Utils.toast("AIM: поехали 😈");
+    },
+    
+    stop(isAuto = false) {
+      if (!AppState.aim.running) return;
+      
+      AppState.aim.running = false;
+      if (AppState.aim.timerId) {
+        clearInterval(AppState.aim.timerId);
+        AppState.aim.timerId = null;
+      }
+      this.updateUI();
+      
+      Utils.haptic("notification", isAuto ? "warning" : "success");
+      Utils.toast(isAuto ? "AIM завершён" : "Остановлено");
+    },
+    
+    registerHit() {
+      if (!AppState.aim.running) return;
+      AppState.aim.shots += 1;
+      AppState.aim.hits += 1;
+      Utils.haptic("impact", "light");
+      this.moveTarget();
+      this.updateUI();
+    },
+    
+    registerMiss() {
+      if (!AppState.aim.running) return;
+      AppState.aim.shots += 1;
+      Utils.haptic("impact", "light");
+      this.updateUI();
+    },
+    
+    sendResult() {
+      const duration = AppState.aim.running ? (Utils.now() - AppState.aim.startedAt) : AppState.aim.durationMs;
+      const accuracy = AppState.aim.shots > 0 ? (AppState.aim.hits / AppState.aim.shots) : 0;
+      const score = Math.round(AppState.aim.hits * 100 + accuracy * 100);
+      
+      BotIntegration.sendData({
+        action: "game_result",
+        game: "aim",
+        mode: "arcade",
+        shots: AppState.aim.shots,
+        hits: AppState.aim.hits,
+        accuracy: accuracy,
+        score: score,
+        duration_ms: duration,
+        profile: true
+      });
+    },
+    
+    setupEventListeners() {
+      const { arena, target } = this.getElements();
+      if (arena && target) {
+        TouchHandler.onTap(target, () => this.registerHit(), { lockMs: 60 });
+        TouchHandler.onTap(arena, () => this.registerMiss(), { lockMs: 60 });
+      }
+    }
+  };
 
-    mount.appendChild(overlay);
-
-    // refs
-    GAME.overlay = overlay;
-    GAME.canvas = canvas;
-    GAME.hudPill = pill;
-    GAME.hudPill2 = pill2;
-    GAME.shop = shop;
-    GAME.modal = modal;
-    GAME.modalTitle = modal.querySelector("#bcoZModalTitle");
-    GAME.modalBody = modal.querySelector("#bcoZModalBody");
-
-    // ✅ iOS scrollable modal (force, even if CSS misses)
-    try {
-      modal.style.overflow = "auto";
-      modal.style.webkitOverflowScrolling = "touch";
+  // =========================
+  // ✅ ZOMBIES GAME МЕНЕДЖЕР
+  // =========================
+  const ZombiesGame = {
+    // ==================== Инициализация ====================
+    init() {
+      this.setupEngineHooks();
+      this.setupEventListeners();
+    },
+    
+    setupEngineHooks() {
+      if (AppState.flags.zhudHooked) return;
+      
+      const engine = this.getEngine();
+      if (!engine) return;
+      
+      try {
+        if (engine.on) {
+          engine.on("hud", (hud) => this.onHudUpdate(hud));
+          engine.on("result", (result) => this.onGameResult(result));
+        }
+        
+        AppState.flags.zhudHooked = true;
+        Utils.log("Engine hooks installed");
+      } catch (error) {
+        Utils.error("Failed to setup engine hooks", error);
+      }
+    },
+    
+    setupEventListeners() {
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && AppState.isGameActive) this.exit();
+      }, { passive: true });
+      
+      window.addEventListener("resize", Utils.throttle(() => {
+        if (AppState.isGameActive && AppState.zombies.canvas) this.resizeCanvas();
+      }, 250));
+    },
+    
+    // ==================== Движки ====================
+    getEngine() {
+      return window.BCO_ZOMBIES || window.BCO_ZOMBIES_CORE || null;
+    },
+    
+    getInputBridge() {
+      if (!window.BCO_ZOMBIES_INPUT) {
+        window.BCO_ZOMBIES_INPUT = {
+          move: { x: 0, y: 0 },
+          aim: { x: 0, y: 0 },
+          firing: false,
+          updatedAt: 0
+        };
+      }
+      return window.BCO_ZOMBIES_INPUT;
+    },
+    
+    // ==================== Управление игрой ====================
+    setMode(mode) {
+      AppState.state.zombies_mode = mode === "roguelike" ? "roguelike" : "arcade";
+      
+      const engine = this.getEngine();
+      if (engine) {
+        try { engine.setMode?.(mode); } catch {}
+        try { engine.mode?.(mode); } catch {}
+      }
+      Storage.saveState();
+    },
+    
+    async enter() {
+      if (!AppState.zombies.overlay) this.buildOverlay();
+      
+      AppState.isGameActive = true;
+      AppState.zombies.active = true;
+      AppState.zombies.overlay.style.display = "block";
+      
+      // 🔥 Жёстко прячем TG кнопки
+      UIManager.updateTelegramButtons();
+      
+      // Скрываем интерфейс приложения
+      this.hideAppChrome(true);
+      
+      if (AppState.tg) {
+        try {
+          AppState.tg.expand();
+          AppState.tg.setHeaderColor?.("#07070b");
+          AppState.tg.setBackgroundColor?.("#07070b");
+        } catch {}
+      }
+      
+      // Полноэкранный режим (best effort)
+      await this.enterFullscreen();
+      
+      // ✅ Важно: правильно выставляем canvas/DPR ДО attach/start
+      this.resizeCanvas();
+      
+      // Экономика
+      this.resetEconomy();
+      
+      // Подключаем движок
+      this.attachEngine();
+      
+      // Запускаем игру
+      this.startGame();
+      
+      // Pump ввода
+      this.startInputPump();
+      
+      // anti-zoom
+      TouchHandler.init();
+      
+      Utils.haptic("notification", "success");
+      Utils.toast("Zombies: Fullscreen ▶");
+      Utils.log("Zombies game started");
+    },
+    
+    exit() {
+      if (!AppState.isGameActive) return;
+      
+      AppState.isGameActive = false;
+      AppState.zombies.active = false;
+      
+      this.stopGame("exit");
+      this.stopInputPump();
+      
+      if (AppState.zombies.overlay) {
+        AppState.zombies.overlay.style.display = "none";
+        this.closeModal();
+      }
+      
+      this.hideAppChrome(false);
+      this.exitFullscreen();
+      
+      UIManager.selectTab("home");
+      UIManager.updateTelegramButtons();
+      
+      Utils.haptic("notification", "warning");
+      Utils.toast("Zombies: Exit");
+      Utils.log("Zombies game exited");
+    },
+    
+    // ==================== Оверлей и UI ====================
+    buildOverlay() {
+      if (AppState.zombies.overlay) return AppState.zombies.overlay;
+      
+      const mount = Utils.qs("#zOverlayMount") || document.body;
+      const overlay = Utils.createElement("div", "bco-z-overlay");
+      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("aria-label", "Zombies Fullscreen");
+      
+      const canvas = Utils.createElement("canvas", "bco-z-canvas");
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      
+      const topbar = this.buildTopBar();
+      const hud = this.buildHUD();
+      const controls = this.buildControls();
+      const shop = this.buildShop();
+      const modal = this.buildModal();
+      
+      overlay.appendChild(canvas);
+      overlay.appendChild(topbar);
+      overlay.appendChild(hud);
+      overlay.appendChild(shop);
+      overlay.appendChild(controls);
+      overlay.appendChild(modal);
+      
+      mount.appendChild(overlay);
+      
+      AppState.zombies.overlay = overlay;
+      AppState.zombies.canvas = canvas;
+      AppState.zombies.hudPill = overlay.querySelector("#bcoHud1");
+      AppState.zombies.hudPill2 = overlay.querySelector("#bcoHud2");
+      AppState.zombies.shop = shop;
+      AppState.zombies.modal = modal;
+      AppState.zombies.modalTitle = modal.querySelector("#bcoZModalTitle");
+      AppState.zombies.modalBody = modal.querySelector("#bcoZModalBody");
+      
+      this.setupJoysticks();
+      this.setupOverlayHandlers();
+      
+      return overlay;
+    },
+    
+    buildTopBar() {
+      const topbar = Utils.createElement("div", "bco-z-topbar");
+      
+      const left = Utils.createElement("div", "left");
+      left.innerHTML = `
+        <div class="bco-z-title">🧟 Zombies Survival</div>
+        <div class="bco-z-sub" id="bcoZSub">${AppState.state.zombies_mode.toUpperCase()} • ${AppState.state.zombies_map}</div>
+      `;
+      
+      const right = Utils.createElement("div", "right");
+      const buttons = [
+        { text: "🛒 Shop", action: () => this.openShopModal() },
+        { text: "🎭 Character", action: () => this.openCharacterModal() },
+        { text: "📤 Send", action: () => this.sendResult("manual") },
+        { text: "✖ Exit", action: () => this.exit(), className: "danger" }
+      ];
+      
+      buttons.forEach(btn => {
+        const button = Utils.createElement("button", `bco-z-mini ${btn.className || ""}`);
+        button.type = "button";
+        button.textContent = btn.text;
+        TouchHandler.onTap(button, btn.action);
+        right.appendChild(button);
+      });
+      
+      topbar.appendChild(left);
+      topbar.appendChild(right);
+      return topbar;
+    },
+    
+    buildHUD() {
+      const hud = Utils.createElement("div", "bco-z-hud");
+      
+      const pill1 = Utils.createElement("div", "bco-z-pill", "❤️ — • 🔫 — • 💰 —");
+      pill1.id = "bcoHud1";
+      
+      const pill2 = Utils.createElement("div", "bco-z-pill", "Wave — • Kills — • Quest —");
+      pill2.id = "bcoHud2";
+      
+      hud.appendChild(pill1);
+      hud.appendChild(pill2);
+      return hud;
+    },
+    
+    buildControls() {
+      const controls = Utils.createElement("div", "bco-z-controls");
+      
+      const joyL = Utils.createElement("div", "bco-joy");
+      joyL.innerHTML = `<div class="bco-joy-knob"></div>`;
+      joyL.id = "joyLeft";
+      
+      const joyR = Utils.createElement("div", "bco-joy");
+      joyR.innerHTML = `<div class="bco-joy-knob"></div>`;
+      joyR.id = "joyRight";
+      
+      const fireBtn = Utils.createElement("div", "bco-fire", "FIRE");
+      fireBtn.id = "fireButton";
+      
+      const leftContainer = Utils.createElement("div");
+      leftContainer.style.cssText = "display: flex; gap: 12px;";
+      leftContainer.appendChild(joyL);
+      
+      const rightContainer = Utils.createElement("div");
+      rightContainer.style.cssText = "display: flex; gap: 12px;";
+      rightContainer.appendChild(fireBtn);
+      rightContainer.appendChild(joyR);
+      
+      controls.appendChild(leftContainer);
+      controls.appendChild(rightContainer);
+      return controls;
+    },
+    
+    buildShop() {
+      const shop = Utils.createElement("div", "bco-z-shop");
+      shop.innerHTML = `
+        <button class="bco-shopbtn primary" type="button" data-act="upgrade">⬆️ Upgrade</button>
+        <button class="bco-shopbtn" type="button" data-act="reroll">🎲 Reroll</button>
+        <button class="bco-shopbtn" type="button" data-act="reload">🔄 Reload</button>
+        <button class="bco-shopbtn" type="button" data-perk="Jug">🧪 Jug</button>
+        <button class="bco-shopbtn" type="button" data-perk="Speed">⚡ Speed</button>
+        <button class="bco-shopbtn" type="button" data-perk="Mag">📦 Mag</button>
+        <button class="bco-shopbtn" type="button" data-perk="Armor">🛡 Armor</button>
+      `;
+      return shop;
+    },
+    
+    buildModal() {
+      const modal = Utils.createElement("div", "bco-z-modal");
+      modal.id = "bcoZModal";
+      modal.innerHTML = `
+        <div class="bco-z-card">
+          <h3 id="bcoZModalTitle">Title</h3>
+          <p id="bcoZModalDesc">Desc</p>
+          <div id="bcoZModalBody"></div>
+          <div style="display:flex; gap:10px; margin-top:12px; justify-content:flex-end;">
+            <button class="bco-shopbtn" type="button" id="bcoZModalClose">Close</button>
+          </div>
+        </div>
+      `;
+      
       const card = modal.querySelector(".bco-z-card");
       if (card) {
         card.style.maxHeight = "82vh";
         card.style.overflow = "auto";
         card.style.webkitOverflowScrolling = "touch";
-        card.style.pointerEvents = "auto";
-        card.style.touchAction = "pan-y";
       }
-      modal.style.pointerEvents = "auto";
-      modal.style.touchAction = "pan-y";
-    } catch {}
+      return modal;
+    },
+    
+    setupJoysticks() {
+      const joyLeft = Utils.qs("#joyLeft");
+      const joyRight = Utils.qs("#joyRight");
+      const knobLeft = joyLeft?.querySelector(".bco-joy-knob");
+      const knobRight = joyRight?.querySelector(".bco-joy-knob");
+      
+      // ✅ FIX: Joystick находится внутри ZombiesGame
+      if (joyLeft && knobLeft) AppState.zombies.joys.left = new ZombiesGame.Joystick(joyLeft, knobLeft, "left");
+      if (joyRight && knobRight) AppState.zombies.joys.right = new ZombiesGame.Joystick(joyRight, knobRight, "right");
+      
+      // ✅ FIX: FIRE = hold-to-shoot (pointerdown/up), без onTap
+      const fireBtn = Utils.qs("#fireButton");
+      if (fireBtn) this.installFireHoldHandlers(fireBtn);
+    },
 
-    // wire topbar buttons
-    onTap(btnExit, () => { haptic("impact", "medium"); exitGame(); });
-    onTap(btnSend, () => { haptic("impact", "light"); zombiesSendResult("manual"); });
-    onTap(btnShop, () => { haptic("impact", "light"); openShopModal(); });
-    onTap(btnCharacter, () => { haptic("impact", "light"); openCharacterModal(); });
+    installFireHoldHandlers(fireBtn) {
+      const input = this.getInputBridge();
 
-    // shop quick actions
-    onTap(shop, (e) => {
-      const btn = e?.target?.closest?.(".bco-shopbtn");
-      if (!btn) return;
-      const act = btn.getAttribute("data-act");
-      const perk = btn.getAttribute("data-perk");
-      haptic("impact", "light");
+      // Чтоб iOS не зумил/не скроллил на кнопке
+      fireBtn.style.touchAction = "none";
 
-      if (act) return shopAction(act);
-      if (perk) return shopPerk(perk);
-    }, { lockMs: 140 });
+      const setFiring = (on) => {
+        AppState.zombies.input.firing = !!on;
+        input.firing = !!on;
+        input.updatedAt = Utils.now();
+      };
 
-    // modal close
-    onTap(modal.querySelector("#bcoZModalClose"), () => { haptic("impact", "light"); closeModal(); });
+      const onDown = (e, pointerId) => {
+        // Не кликаем правой кнопкой мыши
+        if (e && typeof e.button === "number" && e.button !== 0) return;
 
-    // click outside card closes (but don't eat scroll)
-    onTap(modal, (e) => {
-      if (e?.target === modal) closeModal();
-    }, { lockMs: 120 });
+        try { e.preventDefault?.(); } catch {}
+        try { e.stopPropagation?.(); } catch {}
 
-    // Dual-stick
-    const knobL = joyL.querySelector(".bco-joy-knob");
-    const knobR = joyR.querySelector(".bco-joy-knob");
-    const JL = new Joy(joyL, knobL);
-    const JR = new Joy(joyR, knobR);
+        AppState.zombies.fire.active = true;
+        AppState.zombies.fire.pointerId = pointerId;
 
-    // FIRE (hold)
-    let firing = false;
-    const fireDown = () => {
-      firing = true;
-      window.BCO_ZOMBIES_INPUT.firing = true;
-      haptic("impact", "light");
-    };
-    const fireUp = () => {
-      firing = false;
-      window.BCO_ZOMBIES_INPUT.firing = false;
-    };
+        setFiring(true);
+        Utils.haptic("impact", "light");
+      };
 
-    if (window.PointerEvent) {
-      fire.addEventListener("pointerdown", (e) => { try { e.preventDefault?.(); } catch {} fireDown(); }, { passive: false });
-      window.addEventListener("pointerup", fireUp, { passive: true });
-      window.addEventListener("pointercancel", fireUp, { passive: true });
-    } else {
-      fire.addEventListener("touchstart", (e) => { try { e.preventDefault?.(); } catch {} fireDown(); }, { passive: false });
-      window.addEventListener("touchend", fireUp, { passive: true });
-      window.addEventListener("touchcancel", fireUp, { passive: true });
-    }
+      const onUp = (e, pointerId) => {
+        if (!AppState.zombies.fire.active) return;
+        if (AppState.zombies.fire.pointerId !== null && pointerId !== AppState.zombies.fire.pointerId) return;
 
-    // input pump from sticks
-    const pump = () => {
-      if (!GAME.active) return;
+        try { e.preventDefault?.(); } catch {}
+        try { e.stopPropagation?.(); } catch {}
 
-      window.BCO_ZOMBIES_INPUT.move.x = JL.vx;
-      window.BCO_ZOMBIES_INPUT.move.y = JL.vy;
+        AppState.zombies.fire.active = false;
+        AppState.zombies.fire.pointerId = null;
 
-      window.BCO_ZOMBIES_INPUT.aim.x = JR.vx;
-      window.BCO_ZOMBIES_INPUT.aim.y = JR.vy;
+        setFiring(false);
+      };
 
-      const aimMag = len(JR.vx, JR.vy);
-      window.BCO_ZOMBIES_INPUT.firing = !!firing || aimMag > 0.55;
+      if (window.PointerEvent) {
+        fireBtn.addEventListener("pointerdown", (e) => {
+          try { fireBtn.setPointerCapture?.(e.pointerId); } catch {}
+          onDown(e, e.pointerId);
+        }, { passive: false });
 
-      requestAnimationFrame(pump);
-    };
-    requestAnimationFrame(pump);
+        fireBtn.addEventListener("pointerup", (e) => onUp(e, e.pointerId), { passive: false });
+        fireBtn.addEventListener("pointercancel", (e) => onUp(e, e.pointerId), { passive: false });
+        fireBtn.addEventListener("pointerleave", (e) => onUp(e, e.pointerId), { passive: false });
 
-    // ✅ Scroll lock for overlay (but allow modal scroll!)
-    overlay.addEventListener("touchmove", (ev) => {
-      if (!GAME.active) return;
-      if (allowScrollInModal(ev.target)) return; // ✅ allow
-      try { ev.preventDefault?.(); } catch {}
-    }, { passive: false });
+        // Если палец отпустили где-то на экране — тоже выключаем
+        window.addEventListener("pointerup", (e) => onUp(e, e.pointerId), { passive: true });
+        window.addEventListener("pointercancel", (e) => onUp(e, e.pointerId), { passive: true });
+      } else {
+        fireBtn.addEventListener("touchstart", (e) => {
+          const t = e.changedTouches?.[0];
+          if (!t) return;
+          onDown(e, t.identifier);
+        }, { passive: false });
 
-    // ✅ Make overlay clicks always register above canvas (if CSS misses)
-    try {
-      overlay.style.pointerEvents = "auto";
-      canvas.style.pointerEvents = "none"; // canvas visuals; UI above
-    } catch {}
+        fireBtn.addEventListener("touchend", (e) => {
+          const t = e.changedTouches?.[0];
+          if (!t) return;
+          onUp(e, t.identifier);
+        }, { passive: false });
 
-    return overlay;
-  }
+        fireBtn.addEventListener("touchcancel", (e) => {
+          const t = e.changedTouches?.[0];
+          if (!t) return;
+          onUp(e, t.identifier);
+        }, { passive: false });
 
-  function closeModal() {
-    if (!GAME.modal) return;
-    GAME.modal.classList.remove("show");
-  }
+        window.addEventListener("touchend", (e) => {
+          const t = e.changedTouches?.[0];
+          if (!t) return;
+          onUp(e, t.identifier);
+        }, { passive: true });
 
-  function shopAffordOrWarn(cost) {
-    if (state.zombies_mode !== "roguelike") return true;
-    const c = clampInt(cost, 0, 999999);
-    if (GAME.econ.coins >= c) return true;
-    haptic("notif", "error");
-    toast(`Не хватает монет 💰 (${GAME.econ.coins}/${c})`);
-    return false;
-  }
-
-  function shopAction(act) {
-    const price = GAME.econ.prices?.[act] ?? 0;
-
-    if (state.zombies_mode === "roguelike") {
-      if (!shopAffordOrWarn(price)) return;
-      if (!econSpend(price)) return;
-    }
-
-    let ok = false;
-    if (act === "upgrade") ok = zombiesUpgrade();
-    if (act === "reroll") ok = zombiesReroll();
-    if (act === "reload") ok = zombiesReload();
-
-    if (!ok) {
-      haptic("notif", "error");
-      toast("Действие недоступно (engine)");
-    } else {
-      if (state.zombies_mode === "roguelike" && price) toast(`-${price} 💰 ${act}`);
-      updateOverlayLabels();
-    }
-  }
-
-  function shopPerk(perk) {
-    const price = GAME.econ.prices?.[perk] ?? 0;
-
-    if (state.zombies_mode === "roguelike") {
-      if (!shopAffordOrWarn(price)) return;
-      if (!econSpend(price)) return;
-    }
-
-    const ok = zombiesBuyPerk(perk);
-    if (!ok) {
-      haptic("notif", "error");
-      toast(`Perk недоступен: ${perk}`);
-    } else {
-      if (state.zombies_mode === "roguelike" && price) toast(`-${price} 💰 ${perk}`);
-      updateOverlayLabels();
-    }
-  }
-
-  // ✅ Modal body replacement to kill stacked listeners (iOS “dead buttons” fix)
-  function replaceModalBody(html) {
-    if (!GAME.modal) return null;
-    const old = GAME.modal.querySelector("#bcoZModalBody");
-    if (!old) return null;
-    const fresh = document.createElement("div");
-    fresh.id = "bcoZModalBody";
-    fresh.innerHTML = html;
-    old.replaceWith(fresh);
-    GAME.modalBody = fresh;
-    try { fresh.style.pointerEvents = "auto"; fresh.style.touchAction = "pan-y"; } catch {}
-    return fresh;
-  }
-
-  function openShopModal() {
-    buildOverlayDOM();
-    if (!GAME.modal) return;
-
-    GAME.modal.classList.add("show");
-    if (GAME.modalTitle) GAME.modalTitle.textContent = "🛒 Shop";
-
-    const desc = GAME.modal.querySelector("#bcoZModalDesc");
-
-    const coins = GAME.econ.coins ?? 0;
-    const relics = state.z_relics ?? 0;
-    const questLine = state.z_wonder_unlocked
-      ? `👑 Wonder weapon: UNLOCKED (${esc(state.z_wonder_weapon)})`
-      : `🗿 Relics: ${relics}/5 (собери 5 → чудо-оружие)`;
-
-    if (desc) {
-      desc.textContent =
-        state.zombies_mode === "roguelike"
-          ? `Roguelike • 💰 ${coins} • ${questLine}`
-          : `Arcade • Быстрые действия и перки. (Экономика активна в Roguelike.)`;
-    }
-
-    const p = GAME.econ.prices;
-    const body = replaceModalBody(`
-      <div class="bco-z-grid">
-        <div class="bco-z-choice">
-          <div class="ttl">⬆️ Upgrade</div>
-          <div class="sub">Апгрейд оружия/урона/скорости.</div>
-          <button class="bco-shopbtn primary" type="button" data-act="upgrade">Buy ${state.zombies_mode==="roguelike" ? `• ${p.upgrade}💰` : ""}</button>
-        </div>
-        <div class="bco-z-choice">
-          <div class="ttl">🎲 Reroll</div>
-          <div class="sub">Переброс предложений.</div>
-          <button class="bco-shopbtn" type="button" data-act="reroll">Roll ${state.zombies_mode==="roguelike" ? `• ${p.reroll}💰` : ""}</button>
-        </div>
-        <div class="bco-z-choice">
-          <div class="ttl">🔄 Reload</div>
-          <div class="sub">Патроны/перезарядка.</div>
-          <button class="bco-shopbtn" type="button" data-act="reload">Reload ${state.zombies_mode==="roguelike" ? `• ${p.reload}💰` : ""}</button>
-        </div>
-
-        <div class="bco-z-choice">
-          <div class="ttl">🧪 Jug</div>
-          <div class="sub">Выживаемость.</div>
-          <button class="bco-shopbtn" type="button" data-perk="Jug">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Jug}💰` : ""}</button>
-        </div>
-        <div class="bco-z-choice">
-          <div class="ttl">⚡ Speed</div>
-          <div class="sub">Скорость/мувмент.</div>
-          <button class="bco-shopbtn" type="button" data-perk="Speed">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Speed}💰` : ""}</button>
-        </div>
-        <div class="bco-z-choice">
-          <div class="ttl">📦 Mag</div>
-          <div class="sub">Боезапас/магазин.</div>
-          <button class="bco-shopbtn" type="button" data-perk="Mag">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Mag}💰` : ""}</button>
-        </div>
-        <div class="bco-z-choice">
-          <div class="ttl">🛡 Armor</div>
-          <div class="sub">Снижение урона.</div>
-          <button class="bco-shopbtn" type="button" data-perk="Armor">Buy ${state.zombies_mode==="roguelike" ? `• ${p.Armor}💰` : ""}</button>
-        </div>
-
-        <div class="bco-z-choice">
-          <div class="ttl">🎮 Mode</div>
-          <div class="sub">Arcade / Roguelike</div>
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-            <button class="bco-shopbtn" type="button" data-mode="arcade">Arcade</button>
-            <button class="bco-shopbtn" type="button" data-mode="roguelike">Roguelike</button>
-          </div>
-        </div>
-
-        <div class="bco-z-choice">
-          <div class="ttl">👑 Wonder Quest</div>
-          <div class="sub">${state.z_wonder_unlocked ? "Открыто ✅" : `Реликвии: ${relics}/5`}</div>
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-            <button class="bco-shopbtn ${state.z_wonder_unlocked ? "primary" : ""}" type="button" data-wonder="status">
-              ${state.z_wonder_unlocked ? "Equip/Grant" : "How to get"}
-            </button>
-            <button class="bco-shopbtn" type="button" data-wonder="reset">Reset quest</button>
-          </div>
-        </div>
-      </div>
-    `);
-
-    if (body) {
-      onTap(body, async (e) => {
-        const b = e?.target?.closest?.(".bco-shopbtn");
-        if (!b) return;
-
-        const act = b.getAttribute("data-act");
-        const perk = b.getAttribute("data-perk");
-        const mode = b.getAttribute("data-mode");
-        const wonder = b.getAttribute("data-wonder");
-
-        if (act) shopAction(act);
-        if (perk) shopPerk(perk);
-
-        if (mode) {
-          zombiesSetMode(mode);
-          updateOverlayLabels();
-          toast(`Mode: ${mode}`);
-          await saveState();
-          openShopModal(); // refresh UI
+        window.addEventListener("touchcancel", (e) => {
+          const t = e.changedTouches?.[0];
+          if (!t) return;
+          onUp(e, t.identifier);
+        }, { passive: true });
+      }
+    },
+    
+    setupOverlayHandlers() {
+      const { overlay, shop, modal } = AppState.zombies;
+      if (!overlay) return;
+      
+      TouchHandler.onTap(shop, (e) => {
+        const button = e.target.closest(".bco-shopbtn");
+        if (!button) return;
+        
+        const action = button.getAttribute("data-act");
+        const perk = button.getAttribute("data-perk");
+        
+        Utils.haptic("impact", "light");
+        if (action) this.shopAction(action);
+        else if (perk) this.buyPerk(perk);
+      }, { lockMs: 140 });
+      
+      const closeBtn = modal.querySelector("#bcoZModalClose");
+      if (closeBtn) {
+        TouchHandler.onTap(closeBtn, () => {
+          Utils.haptic("impact", "light");
+          this.closeModal();
+        });
+      }
+      
+      TouchHandler.onTap(modal, (e) => {
+        if (e.target === modal) this.closeModal();
+      }, { lockMs: 120 });
+      
+      overlay.addEventListener("touchmove", (e) => {
+        if (!AppState.isGameActive) return;
+        if (e.target.closest(".bco-z-card")) return;
+        try { e.preventDefault(); } catch {}
+      }, { passive: false });
+    },
+    
+    // ==================== Джойстик класс ====================
+    Joystick: class {
+      constructor(root, knob, type) {
+        this.root = root;
+        this.knob = knob;
+        this.type = type; // 'left' или 'right'
+        
+        this.active = false;
+        this.pointerId = null;
+        
+        this.centerX = 0;
+        this.centerY = 0;
+        this.radius = 1;
+        
+        this.valueX = 0;
+        this.valueY = 0;
+        
+        this.setupEventListeners();
+        this.updatePosition();
+        
+        window.addEventListener("resize", () => {
+          setTimeout(() => this.updatePosition(), 100);
+        });
+      }
+      
+      updatePosition() {
+        const rect = this.root.getBoundingClientRect();
+        this.centerX = rect.left + rect.width / 2;
+        this.centerY = rect.top + rect.height / 2;
+        this.radius = Math.max(1, Math.min(rect.width, rect.height) / 2 - 10);
+      }
+      
+      setValues(x, y) {
+        const length = Utils.length(x, y);
+        const normalizedX = length > 0 ? x / length : 0;
+        const normalizedY = length > 0 ? y / length : 0;
+        const limitedLength = Math.min(1, length / this.radius);
+        
+        this.valueX = normalizedX * limitedLength;
+        this.valueY = normalizedY * limitedLength;
+        
+        const knobX = this.valueX * (this.radius * 0.62);
+        const knobY = this.valueY * (this.radius * 0.62);
+        this.knob.style.transform = `translate(${knobX}px, ${knobY}px)`;
+        
+        this.updateInput();
+      }
+      
+      updateInput() {
+        const input = ZombiesGame.getInputBridge();
+        
+        if (this.type === 'left') {
+          input.move.x = this.valueX;
+          input.move.y = this.valueY;
+        } else {
+          input.aim.x = this.valueX;
+          input.aim.y = this.valueY;
         }
-
+        input.updatedAt = Utils.now();
+      }
+      
+      setupEventListeners() {
+        this.root.style.touchAction = "none";
+        
+        if (window.PointerEvent) {
+          this.root.addEventListener("pointerdown", this.onPointerDown.bind(this), { passive: false });
+          window.addEventListener("pointermove", this.onPointerMove.bind(this), { passive: true });
+          window.addEventListener("pointerup", this.onPointerUp.bind(this), { passive: true });
+          window.addEventListener("pointercancel", this.onPointerUp.bind(this), { passive: true });
+        } else {
+          this.root.addEventListener("touchstart", this.onTouchStart.bind(this), { passive: false });
+          window.addEventListener("touchmove", this.onTouchMove.bind(this), { passive: true });
+          window.addEventListener("touchend", this.onTouchEnd.bind(this), { passive: true });
+          window.addEventListener("touchcancel", this.onTouchEnd.bind(this), { passive: true });
+        }
+      }
+      
+      onPointerDown(e) {
+        if (this.active) return;
+        try { e.preventDefault(); } catch {}
+        
+        this.active = true;
+        this.pointerId = e.pointerId;
+        
+        try { this.root.setPointerCapture(e.pointerId); } catch {}
+        
+        this.updatePosition();
+        this.onMove(e.clientX, e.clientY);
+      }
+      
+      onPointerMove(e) {
+        if (!this.active || e.pointerId !== this.pointerId) return;
+        this.onMove(e.clientX, e.clientY);
+      }
+      
+      onPointerUp(e) {
+        if (!this.active || e.pointerId !== this.pointerId) return;
+        this.reset();
+      }
+      
+      onTouchStart(e) {
+        if (this.active) return;
+        try { e.preventDefault(); } catch {}
+        
+        const touch = e.changedTouches[0];
+        if (!touch) return;
+        
+        this.active = true;
+        this.pointerId = touch.identifier;
+        this.updatePosition();
+        this.onMove(touch.clientX, touch.clientY);
+      }
+      
+      onTouchMove(e) {
+        if (!this.active) return;
+        const touch = Array.from(e.changedTouches).find(t => t.identifier === this.pointerId);
+        if (!touch) return;
+        this.onMove(touch.clientX, touch.clientY);
+      }
+      
+      onTouchEnd(e) {
+        if (!this.active) return;
+        const touch = Array.from(e.changedTouches).find(t => t.identifier === this.pointerId);
+        if (!touch) return;
+        this.reset();
+      }
+      
+      onMove(clientX, clientY) {
+        const x = clientX - this.centerX;
+        const y = clientY - this.centerY;
+        this.setValues(x, y);
+      }
+      
+      reset() {
+        this.active = false;
+        this.pointerId = null;
+        this.setValues(0, 0);
+      }
+    },
+    
+    // ==================== Ввод и управление ====================
+    startInputPump() {
+      if (AppState.flags.inputPumpActive) return;
+      
+      const pump = () => {
+        if (!AppState.isGameActive) return;
+        
+        const input = this.getInputBridge();
+        const engine = this.getEngine();
+        
+        input.updatedAt = Utils.now();
+        
+        // Берём флаг firing из AppState (чтоб FIRE работал даже без bridge)
+        input.firing = !!AppState.zombies.input.firing;
+        
+        if (engine) {
+          try { engine.setMove?.(input.move.x, input.move.y); } catch {}
+          try { engine.setAim?.(input.aim.x, input.aim.y); } catch {}
+          try { engine.setFire?.(input.firing); } catch {}
+          try { engine.input?.(input); } catch {}
+        }
+        
+        const core = window.BCO_ZOMBIES_CORE;
+        if (core) {
+          try { core.setMove?.(input.move.x, input.move.y); } catch {}
+          try { core.setAim?.(input.aim.x, input.aim.y); } catch {}
+          try { core.setShooting?.(input.firing); } catch {}
+        }
+        
+        requestAnimationFrame(pump);
+      };
+      
+      requestAnimationFrame(pump);
+      AppState.flags.inputPumpActive = true;
+    },
+    
+    stopInputPump() {
+      AppState.flags.inputPumpActive = false;
+      // На выходе — гарантированно выключаем стрельбу
+      AppState.zombies.input.firing = false;
+      const input = this.getInputBridge();
+      input.firing = false;
+    },
+    
+    // ==================== Экономика ====================
+    resetEconomy() {
+      AppState.zombies.econ.coins = Utils.clampInt(AppState.state.z_coins || 0, 0, 999999);
+      AppState.zombies.econ.lastKills = 0;
+      AppState.zombies.econ.lastWave = 0;
+      
+      const engine = this.getEngine();
+      if (engine) {
+        try { engine.setCoins?.(AppState.zombies.econ.coins); } catch {}
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core?.state) {
+        try { core.state.coins = AppState.zombies.econ.coins; } catch {}
+      }
+    },
+    
+    addCoins(amount, reason = "") {
+      const add = Utils.clampInt(amount, 0, 999999);
+      if (add <= 0) return;
+      
+      AppState.zombies.econ.coins = Utils.clampInt((AppState.zombies.econ.coins || 0) + add, 0, 999999);
+      AppState.state.z_coins = AppState.zombies.econ.coins;
+      
+      const engine = this.getEngine();
+      if (engine) {
+        try { engine.addCoins?.(add); } catch {}
+        try { engine.setCoins?.(AppState.zombies.econ.coins); } catch {}
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core?.state) {
+        try { core.state.coins = AppState.zombies.econ.coins; } catch {}
+      }
+      
+      Storage.saveState();
+      if (reason) Utils.toast(`+${add} 💰 ${reason}`);
+    },
+    
+    spendCoins(cost) {
+      const amount = Utils.clampInt(cost, 0, 999999);
+      if (AppState.zombies.econ.coins < amount) return false;
+      
+      AppState.zombies.econ.coins -= amount;
+      AppState.state.z_coins = AppState.zombies.econ.coins;
+      
+      const engine = this.getEngine();
+      if (engine) {
+        try { engine.setCoins?.(AppState.zombies.econ.coins); } catch {}
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core?.state) {
+        try { core.state.coins = AppState.zombies.econ.coins; } catch {}
+      }
+      
+      Storage.saveState();
+      return true;
+    },
+    
+    tryDropRelic() {
+      if (AppState.state.z_wonder_unlocked) return;
+      if (AppState.state.z_relics >= 5) return;
+      if (AppState.state.zombies_mode !== "roguelike") return;
+      
+      const chance = Math.random();
+      if (chance <= CONFIG.RELIC_DROP_CHANCE) {
+        AppState.state.z_relics = Utils.clampInt((AppState.state.z_relics || 0) + 1, 0, 5);
+        Storage.saveState();
+        Utils.toast(`Реликвия найдена 🗿 (${AppState.state.z_relics}/5)`);
+        
+        if (AppState.state.z_relics >= 5) {
+          AppState.state.z_wonder_unlocked = true;
+          Storage.saveState();
+          
+          Utils.haptic("notification", "success");
+          Utils.toast("ЧУДО-ОРУЖИЕ ОТКРЫТО 👑⚡");
+          this.unlockWonderWeapon();
+        }
+      }
+    },
+    
+    // ==================== Магазин и перки ====================
+    shopAction(action) {
+      const price = CONFIG.PRICES[action] || 0;
+      
+      if (AppState.state.zombies_mode === "roguelike") {
+        if (!this.canAfford(price)) return;
+        if (!this.spendCoins(price)) return;
+      }
+      
+      let success = false;
+      switch (action) {
+        case "upgrade": success = this.upgradeWeapon(); break;
+        case "reroll": success = this.rerollWeapon(); break;
+        case "reload": success = this.reloadWeapon(); break;
+      }
+      
+      if (success) {
+        if (AppState.state.zombies_mode === "roguelike" && price > 0) Utils.toast(`-${price} 💰 ${action}`);
+        this.updateHUD();
+      } else {
+        Utils.haptic("notification", "error");
+        Utils.toast("Действие недоступно");
+      }
+    },
+    
+    buyPerk(perk) {
+      const price = CONFIG.PRICES[perk] || 0;
+      
+      if (AppState.state.zombies_mode === "roguelike") {
+        if (!this.canAfford(price)) return;
+        if (!this.spendCoins(price)) return;
+      }
+      
+      const success = this.purchasePerk(perk);
+      if (success) {
+        if (AppState.state.zombies_mode === "roguelike" && price > 0) Utils.toast(`-${price} 💰 ${perk}`);
+        this.updateHUD();
+      } else {
+        Utils.haptic("notification", "error");
+        Utils.toast(`Perk недоступен: ${perk}`);
+      }
+    },
+    
+    canAfford(price) {
+      if (AppState.state.zombies_mode !== "roguelike") return true;
+      if (AppState.zombies.econ.coins >= price) return true;
+      Utils.haptic("notification", "error");
+      Utils.toast(`Не хватает монет 💰 (${AppState.zombies.econ.coins}/${price})`);
+      return false;
+    },
+    
+    purchasePerk(perk) {
+      const engine = this.getEngine();
+      if (engine) {
+        try { engine.buyPerk?.(perk); return true; } catch {}
+        try { engine.buy?.(perk); return true; } catch {}
+        try { engine.perk?.(perk); return true; } catch {}
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core?.buyPerk) {
+        try { return !!core.buyPerk(perk); } catch {}
+      }
+      return false;
+    },
+    
+    upgradeWeapon() {
+      const engine = this.getEngine();
+      if (engine) {
+        try { engine.upgrade?.(); return true; } catch {}
+        try { engine.shop?.("upgrade"); return true; } catch {}
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core?.buyUpgrade) {
+        try { return !!core.buyUpgrade(); } catch {}
+      }
+      return false;
+    },
+    
+    rerollWeapon() {
+      const engine = this.getEngine();
+      if (engine) {
+        try { engine.reroll?.(); return true; } catch {}
+        try { engine.roll?.(); return true; } catch {}
+        try { engine.shop?.("reroll"); return true; } catch {}
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core?.rerollWeapon) {
+        try { return !!core.rerollWeapon(); } catch {}
+      }
+      return false;
+    },
+    
+    reloadWeapon() {
+      const engine = this.getEngine();
+      if (engine) {
+        try { engine.reload?.(); return true; } catch {}
+        try { engine.shop?.("reload"); return true; } catch {}
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core?.buyReload) {
+        try { return !!core.buyReload(); } catch {}
+      }
+      
+      if (core?.reload) {
+        try { return !!core.reload(); } catch {}
+      }
+      return false;
+    },
+    
+    unlockWonderWeapon() {
+      const engine = this.getEngine();
+      const weaponId = AppState.state.z_wonder_weapon || "CROWN_RAY";
+      
+      if (engine) {
+        try { engine.unlockWeapon?.(weaponId); return true; } catch {}
+        try { engine.unlock?.({ weapon: weaponId }); return true; } catch {}
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core?.state) {
+        try {
+          core.state.relics = 5;
+          core.state.wonderUnlocked = true;
+          return true;
+        } catch {}
+      }
+      return false;
+    },
+    
+    // ==================== Модальные окна ====================
+    closeModal() {
+      if (AppState.zombies.modal) AppState.zombies.modal.classList.remove("show");
+    },
+    
+    openShopModal() {
+      this.buildOverlay();
+      const { modal, modalTitle } = AppState.zombies;
+      if (!modal) return;
+      
+      modal.classList.add("show");
+      if (modalTitle) modalTitle.textContent = "🛒 Shop";
+      
+      const desc = modal.querySelector("#bcoZModalDesc");
+      if (desc) {
+        const coins = AppState.zombies.econ.coins;
+        const relics = AppState.state.z_relics;
+        const quest = AppState.state.z_wonder_unlocked
+          ? `👑 Wonder weapon: UNLOCKED (${AppState.state.z_wonder_weapon})`
+          : `🗿 Relics: ${relics}/5 (собери 5 → чудо-оружие)`;
+        
+        desc.textContent = AppState.state.zombies_mode === "roguelike"
+          ? `Roguelike • 💰 ${coins} • ${quest}`
+          : `Arcade • Быстрые действия и перки. (Экономика активна в Roguelike.)`;
+      }
+      
+      const html = this.getShopModalHTML();
+      this.setModalBody(html);
+      this.setupShopModalHandlers();
+    },
+    
+    openCharacterModal() {
+      this.buildOverlay();
+      const { modal, modalTitle } = AppState.zombies;
+      if (!modal) return;
+      
+      modal.classList.add("show");
+      if (modalTitle) modalTitle.textContent = "🎭 Character";
+      
+      const desc = modal.querySelector("#bcoZModalDesc");
+      if (desc) desc.textContent = "Выбор персонажа/скина сохраняется (state + CloudStorage).";
+      
+      const html = this.getCharacterModalHTML();
+      this.setModalBody(html);
+      this.setupCharacterModalHandlers();
+    },
+    
+    setModalBody(html) {
+      const { modalBody } = AppState.zombies;
+      if (!modalBody) return;
+      
+      const newBody = Utils.createElement("div");
+      newBody.id = "bcoZModalBody";
+      newBody.innerHTML = html;
+      
+      modalBody.replaceWith(newBody);
+      AppState.zombies.modalBody = newBody;
+      
+      newBody.style.pointerEvents = "auto";
+      newBody.style.touchAction = "pan-y";
+    },
+    
+    getShopModalHTML() {
+      const p = CONFIG.PRICES;
+      const relics = AppState.state.z_relics;
+      const wonderUnlocked = AppState.state.z_wonder_unlocked;
+      const isRoguelike = AppState.state.zombies_mode === "roguelike";
+      
+      return `
+        <div class="bco-z-grid">
+          <div class="bco-z-choice">
+            <div class="ttl">⬆️ Upgrade</div>
+            <div class="sub">Апгрейд оружия/урона/скорости.</div>
+            <button class="bco-shopbtn primary" type="button" data-act="upgrade">
+              Buy ${isRoguelike ? `• ${p.upgrade}💰` : ""}
+            </button>
+          </div>
+          
+          <div class="bco-z-choice">
+            <div class="ttl">🎲 Reroll</div>
+            <div class="sub">Переброс предложений.</div>
+            <button class="bco-shopbtn" type="button" data-act="reroll">
+              Roll ${isRoguelike ? `• ${p.reroll}💰` : ""}
+            </button>
+          </div>
+          
+          <div class="bco-z-choice">
+            <div class="ttl">🔄 Reload</div>
+            <div class="sub">Патроны/перезарядка.</div>
+            <button class="bco-shopbtn" type="button" data-act="reload">
+              Reload ${isRoguelike ? `• ${p.reload}💰` : ""}
+            </button>
+          </div>
+          
+          <div class="bco-z-choice">
+            <div class="ttl">🧪 Jug</div>
+            <div class="sub">Выживаемость.</div>
+            <button class="bco-shopbtn" type="button" data-perk="Jug">
+              Buy ${isRoguelike ? `• ${p.Jug}💰` : ""}
+            </button>
+          </div>
+          
+          <div class="bco-z-choice">
+            <div class="ttl">⚡ Speed</div>
+            <div class="sub">Скорость/мувмент.</div>
+            <button class="bco-shopbtn" type="button" data-perk="Speed">
+              Buy ${isRoguelike ? `• ${p.Speed}💰` : ""}
+            </button>
+          </div>
+          
+          <div class="bco-z-choice">
+            <div class="ttl">📦 Mag</div>
+            <div class="sub">Боезапас/магазин.</div>
+            <button class="bco-shopbtn" type="button" data-perk="Mag">
+              Buy ${isRoguelike ? `• ${p.Mag}💰` : ""}
+            </button>
+          </div>
+          
+          <div class="bco-z-choice">
+            <div class="ttl">🛡 Armor</div>
+            <div class="sub">Снижение урона.</div>
+            <button class="bco-shopbtn" type="button" data-perk="Armor">
+              Buy ${isRoguelike ? `• ${p.Armor}💰` : ""}
+            </button>
+          </div>
+          
+          <div class="bco-z-choice">
+            <div class="ttl">🎮 Mode</div>
+            <div class="sub">Arcade / Roguelike</div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+              <button class="bco-shopbtn" type="button" data-mode="arcade">Arcade</button>
+              <button class="bco-shopbtn" type="button" data-mode="roguelike">Roguelike</button>
+            </div>
+          </div>
+          
+          <div class="bco-z-choice">
+            <div class="ttl">👑 Wonder Quest</div>
+            <div class="sub">${wonderUnlocked ? "Открыто ✅" : `Реликвии: ${relics}/5`}</div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+              <button class="bco-shopbtn ${wonderUnlocked ? "primary" : ""}" type="button" data-wonder="status">
+                ${wonderUnlocked ? "Equip/Grant" : "How to get"}
+              </button>
+              <button class="bco-shopbtn" type="button" data-wonder="reset">Reset quest</button>
+            </div>
+          </div>
+        </div>
+      `;
+    },
+    
+    getCharacterModalHTML() {
+      const isMale = AppState.state.character === "male";
+      const isFemale = AppState.state.character === "female";
+      
+      return `
+        <div class="bco-z-grid">
+          <div class="bco-z-choice">
+            <div class="ttl">👨 Male</div>
+            <div class="sub">Текущий: ${isMale ? "✅" : "—"}</div>
+            <button class="bco-shopbtn ${isMale ? "primary" : ""}" type="button" data-char="male">
+              Select
+            </button>
+          </div>
+          
+          <div class="bco-z-choice">
+            <div class="ttl">👩 Female</div>
+            <div class="sub">Текущий: ${isFemale ? "✅" : "—"}</div>
+            <button class="bco-shopbtn ${isFemale ? "primary" : ""}" type="button" data-char="female">
+              Select
+            </button>
+          </div>
+          
+          <div class="bco-z-choice">
+            <div class="ttl">🎨 Skin</div>
+            <div class="sub">Сейчас: ${AppState.state.skin}</div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+              <button class="bco-shopbtn" type="button" data-skin="default">default</button>
+              <button class="bco-shopbtn" type="button" data-skin="neon">neon</button>
+              <button class="bco-shopbtn" type="button" data-skin="tactical">tactical</button>
+              <button class="bco-shopbtn" type="button" data-skin="shadow">shadow</button>
+            </div>
+          </div>
+          
+          <div class="bco-z-choice">
+            <div class="ttl">🖼 Render</div>
+            <div class="sub">Под 3D переход (пока 2D ядро)</div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+              <button class="bco-shopbtn" type="button" data-render="2d">2D</button>
+              <button class="bco-shopbtn" type="button" data-render="3d">3D (beta)</button>
+            </div>
+          </div>
+        </div>
+      `;
+    },
+    
+    setupShopModalHandlers() {
+      const { modalBody } = AppState.zombies;
+      if (!modalBody) return;
+      
+      TouchHandler.onTap(modalBody, async (e) => {
+        const button = e.target.closest(".bco-shopbtn");
+        if (!button) return;
+        
+        const action = button.getAttribute("data-act");
+        const perk = button.getAttribute("data-perk");
+        const mode = button.getAttribute("data-mode");
+        const wonder = button.getAttribute("data-wonder");
+        
+        if (action) this.shopAction(action);
+        if (perk) this.buyPerk(perk);
+        
+        if (mode) {
+          this.setMode(mode);
+          this.updateHUD();
+          Utils.toast(`Mode: ${mode}`);
+          await Storage.saveState();
+          this.openShopModal();
+        }
+        
         if (wonder === "status") {
-          if (state.z_wonder_unlocked) {
-            const ok = zombiesTryUnlockWonder();
-            toast(ok ? `Equipped: ${state.z_wonder_weapon}` : "Wonder unlocked ✅ (engine hook later)");
+          if (AppState.state.z_wonder_unlocked) {
+            const success = this.unlockWonderWeapon();
+            Utils.toast(success ? `Equipped: ${AppState.state.z_wonder_weapon}` : "Wonder unlocked ✅");
           } else {
-            toast("Реликвии падают в Roguelike с убийств. Собери 5.");
+            Utils.toast("Реликвии падают в Roguelike с убийств. Собери 5.");
           }
         }
-
+        
         if (wonder === "reset") {
-          state.z_relics = 0;
-          state.z_wonder_unlocked = false;
-          await saveState();
-          toast("Quest reset ✅");
-          openShopModal();
+          AppState.state.z_relics = 0;
+          AppState.state.z_wonder_unlocked = false;
+          await Storage.saveState();
+          Utils.toast("Quest reset ✅");
+          this.openShopModal();
         }
       }, { lockMs: 120 });
-    }
-  }
-
-  function openCharacterModal() {
-    buildOverlayDOM();
-    if (!GAME.modal) return;
-
-    GAME.modal.classList.add("show");
-    if (GAME.modalTitle) GAME.modalTitle.textContent = "🎭 Character";
-
-    const desc = GAME.modal.querySelector("#bcoZModalDesc");
-    if (desc) desc.textContent = "Выбор персонажа/скина сохраняется (state + CloudStorage).";
-
-    const maleOn = state.character === "male";
-    const femaleOn = state.character === "female";
-
-    const body = replaceModalBody(`
-      <div class="bco-z-grid">
-        <div class="bco-z-choice">
-          <div class="ttl">👨 Male</div>
-          <div class="sub">Текущий: ${maleOn ? "✅" : "—"}</div>
-          <button class="bco-shopbtn ${maleOn ? "primary" : ""}" type="button" data-char="male">Select</button>
-        </div>
-        <div class="bco-z-choice">
-          <div class="ttl">👩 Female</div>
-          <div class="sub">Текущий: ${femaleOn ? "✅" : "—"}</div>
-          <button class="bco-shopbtn ${femaleOn ? "primary" : ""}" type="button" data-char="female">Select</button>
-        </div>
-
-        <div class="bco-z-choice">
-          <div class="ttl">🎨 Skin</div>
-          <div class="sub">Сейчас: ${esc(state.skin)}</div>
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-            <button class="bco-shopbtn" type="button" data-skin="default">default</button>
-            <button class="bco-shopbtn" type="button" data-skin="neon">neon</button>
-            <button class="bco-shopbtn" type="button" data-skin="tactical">tactical</button>
-            <button class="bco-shopbtn" type="button" data-skin="shadow">shadow</button>
-          </div>
-        </div>
-
-        <div class="bco-z-choice">
-          <div class="ttl">🖼 Render</div>
-          <div class="sub">Под 3D переход (пока 2D ядро)</div>
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-            <button class="bco-shopbtn" type="button" data-render="2d">2D</button>
-            <button class="bco-shopbtn" type="button" data-render="3d">3D (beta)</button>
-          </div>
-        </div>
-      </div>
-    `);
-
-    if (body) {
-      onTap(body, async (e) => {
-        const b = e?.target?.closest?.(".bco-shopbtn");
-        if (!b) return;
-
-        const c = b.getAttribute("data-char");
-        const s = b.getAttribute("data-skin");
-        const r = b.getAttribute("data-render");
-
-        if (c) {
-          state.character = c;
-          await saveState();
-          toast(`Character: ${c}`);
-          try { ZB()?.setPlayerSkin?.(state.character, state.skin); } catch {}
-          try { ZB()?.open?.({ map: state.zombies_map, character: state.character, skin: state.skin }); } catch {}
-          openCharacterModal();
+    },
+    
+    setupCharacterModalHandlers() {
+      const { modalBody } = AppState.zombies;
+      if (!modalBody) return;
+      
+      TouchHandler.onTap(modalBody, async (e) => {
+        const button = e.target.closest(".bco-shopbtn");
+        if (!button) return;
+        
+        const character = button.getAttribute("data-char");
+        const skin = button.getAttribute("data-skin");
+        const render = button.getAttribute("data-render");
+        
+        if (character) {
+          AppState.state.character = character;
+          await Storage.saveState();
+          Utils.toast(`Character: ${character}`);
+          
+          const engine = this.getEngine();
+          if (engine) {
+            try { engine.setPlayerSkin?.(character, AppState.state.skin); } catch {}
+            try { engine.open?.({ map: AppState.state.zombies_map, character, skin: AppState.state.skin }); } catch {}
+          }
+          this.openCharacterModal();
         }
-
-        if (s) {
-          state.skin = s;
-          await saveState();
-          toast(`Skin: ${s}`);
-          try { ZB()?.setPlayerSkin?.(state.character, state.skin); } catch {}
-          try { ZB()?.open?.({ map: state.zombies_map, character: state.character, skin: state.skin }); } catch {}
-          openCharacterModal();
+        
+        if (skin) {
+          AppState.state.skin = skin;
+          await Storage.saveState();
+          Utils.toast(`Skin: ${skin}`);
+          
+          const engine = this.getEngine();
+          if (engine) {
+            try { engine.setPlayerSkin?.(AppState.state.character, skin); } catch {}
+          }
+          this.openCharacterModal();
         }
-
-        if (r) {
-          state.render = (r === "3d") ? "3d" : "2d";
-          await saveState();
-          toast(`Render: ${state.render}`);
-          try { ZB()?.setRenderMode?.(state.render); } catch {}
-          try { ZB()?.renderer?.(state.render); } catch {}
-          openCharacterModal();
+        
+        if (render) {
+          AppState.state.render = render === "3d" ? "3d" : "2d";
+          await Storage.saveState();
+          Utils.toast(`Render: ${AppState.state.render}`);
+          
+          const engine = this.getEngine();
+          if (engine) {
+            try { engine.setRenderMode?.(render); } catch {}
+            try { engine.renderer?.(render); } catch {}
+          }
+          this.openCharacterModal();
         }
       }, { lockMs: 120 });
-    }
-  }
-
-  function updateOverlayLabels(hudLike = null) {
-    if (!GAME.overlay) return;
-
-    const sub = GAME.overlay.querySelector("#bcoZSub");
-    if (sub) sub.textContent = `${String(state.zombies_mode).toUpperCase()} • ${state.zombies_map}`;
-
-    if (GAME.shop) GAME.shop.style.opacity = (state.zombies_mode === "roguelike") ? "1" : "0.85";
-
-    const h = hudLike || {};
-    const hp = (h.hp ?? h.health ?? "—");
-    const ammo = (h.ammo ?? "—");
-    const gun = (h.weapon ?? h.gun ?? "—");
-    const wave = Number.isFinite(+h.wave) ? clampInt(h.wave, 0, 999999) : (h.wave ?? "—");
-    const kills = Number.isFinite(+h.kills) ? clampInt(h.kills, 0, 999999) : (h.kills ?? "—");
-
-    const coinsEngine = (h.coins ?? h.money ?? null);
-    const coins = (coinsEngine != null) ? coinsEngine : (GAME.econ.coins ?? state.z_coins ?? 0);
-
-    const quest = state.z_wonder_unlocked
-      ? `👑 Wonder ✅`
-      : `🗿 ${clampInt(state.z_relics ?? 0, 0, 5)}/5`;
-
-    if (GAME.hudPill) GAME.hudPill.textContent = `❤️ ${hp} • 🔫 ${gun} (${ammo}) • 💰 ${coins}`;
-    if (GAME.hudPill2) GAME.hudPill2.textContent = `Wave ${wave} • Kills ${kills} • ${quest}`;
-  }
-
-  function attachEngineToOverlay() {
-    const z = ZB();
-    const c = ZCORE();
-    if (!GAME.canvas) return;
-
-    if (z) {
-      try { z.setCanvas?.(GAME.canvas); } catch {}
-      try { z.canvas?.(GAME.canvas); } catch {}
-      try { z.attach?.(GAME.canvas); } catch {}
-      try { z.mount?.(GAME.canvas); } catch {}
-      zombiesOpenCore();
-    }
-
-    // CORE: no renderer required here; but we can keep canvas sized correctly
-    if (c) {
-      try { c.resize?.(GAME.canvas.width || 1, GAME.canvas.height || 1); } catch {}
-    }
-
-    startInputPump();
-  }
-
-  async function enterGame() {
-    buildOverlayDOM();
-    updateOverlayLabels();
-
-    GAME.active = true;
-    GAME.overlay.style.display = "block";
-
-    setAppChromeHidden(true);
-    tgFullscreenHints(true);
-
-    document.body.style.overflow = "hidden";
-    await tryBrowserFullscreen(GAME.overlay);
-
-    econResetForRun();
-
-    attachEngineToOverlay();
-    zombiesSetMode(state.zombies_mode);
-    zombiesStartRun();
-
-    // ✅ ensure zoom guards are installed once (no stacking)
-    installNoZoomGuards();
-
-    haptic("notif", "success");
-    toast("Zombies: Fullscreen ▶");
-  }
-
-  function exitGame() {
-    if (!GAME.overlay) return;
-    GAME.active = false;
-
-    try { closeModal(); } catch {}
-    try { zombiesStopRun("exit"); } catch {}
-
-    stopInputPump();
-
-    GAME.overlay.style.display = "none";
-    setAppChromeHidden(false);
-
-    document.body.style.overflow = "";
-
-    try { if (document.fullscreenElement) document.exitFullscreen?.(); } catch {}
-
-    selectTab("game");
-
-    haptic("notif", "warning");
-    toast("Zombies: Exit");
-  }
-
-  // =========================================================
-  // ENGINE HUD / RESULT HOOKS (idempotent)
-  // =========================================================
-  function hookEngineHud() {
-    if (window.__BCO_ZHUD_HOOKED__) return;
-    const z = ZB();
-    if (!z) return;
-
-    const on = z.on || z.addEventListener;
-    if (!on) return;
-
-    window.__BCO_ZHUD_HOOKED__ = true;
-
-    try {
-      on.call(z, "hud", (hud) => {
-        const h = hud || {};
-        econOnHud(h);
-        updateOverlayLabels(h);
-      });
-    } catch {}
-
-    try {
-      on.call(z, "result", async (res) => {
-        const r = res || {};
-        const modeKey = state.zombies_mode === "roguelike" ? "roguelike" : "arcade";
-        const score = clampInt(r.score ?? r.points ?? 0, 0, 999999999);
-        if (!state.z_best) state.z_best = { arcade: 0, roguelike: 0 };
-        state.z_best[modeKey] = Math.max(clampInt(state.z_best[modeKey] ?? 0, 0, 999999999), score);
-
-        state.z_coins = clampInt(GAME.econ.coins ?? state.z_coins ?? 0, 0, 999999);
-        await saveState();
-
+    },
+    
+    // ==================== HUD и обновления ====================
+    updateHUD(hudData = null) {
+      if (!AppState.zombies.overlay) return;
+      const data = hudData || {};
+      const state = AppState.state;
+      
+      const sub = AppState.zombies.overlay.querySelector("#bcoZSub");
+      if (sub) sub.textContent = `${state.zombies_mode.toUpperCase()} • ${state.zombies_map}`;
+      
+      if (AppState.zombies.shop) {
+        AppState.zombies.shop.style.opacity = state.zombies_mode === "roguelike" ? "1" : "0.85";
+      }
+      
+      const health = data.hp ?? data.health ?? "—";
+      const ammo = data.ammo ?? "—";
+      const weapon = data.weapon ?? data.gun ?? "—";
+      const wave = Utils.clampInt(data.wave ?? 0, 0, 999999) || "—";
+      const kills = Utils.clampInt(data.kills ?? 0, 0, 999999) || "—";
+      
+      const coinsFromEngine = data.coins ?? data.money ?? null;
+      const coins = coinsFromEngine !== null 
+        ? coinsFromEngine 
+        : (AppState.zombies.econ.coins ?? state.z_coins ?? 0);
+      
+      const quest = state.z_wonder_unlocked ? `👑 Wonder ✅` : `🗿 ${Utils.clampInt(state.z_relics ?? 0, 0, 5)}/5`;
+      
+      if (AppState.zombies.hudPill) {
+        AppState.zombies.hudPill.textContent = `❤️ ${health} • 🔫 ${weapon} (${ammo}) • 💰 ${coins}`;
+      }
+      if (AppState.zombies.hudPill2) {
+        AppState.zombies.hudPill2.textContent = `Wave ${wave} • Kills ${kills} • ${quest}`;
+      }
+    },
+    
+    onHudUpdate(hud) {
+      if (!hud || typeof hud !== "object") return;
+      this.updateEconomy(hud);
+      this.updateHUD(hud);
+    },
+    
+    updateEconomy(hud) {
+      const kills = Utils.clampInt(hud.kills ?? hud.frags ?? 0, 0, 999999);
+      const wave = Utils.clampInt(hud.wave ?? hud.round ?? 0, 0, 999999);
+      
+      if (kills > AppState.zombies.econ.lastKills) {
+        const diff = kills - AppState.zombies.econ.lastKills;
+        AppState.zombies.econ.lastKills = kills;
+        
+        if (AppState.state.zombies_mode === "roguelike") {
+          this.addCoins(diff * CONFIG.COINS_PER_KILL);
+          for (let i = 0; i < diff; i++) this.tryDropRelic();
+        }
+      }
+      
+      if (wave > AppState.zombies.econ.lastWave) {
+        const diff = wave - AppState.zombies.econ.lastWave;
+        AppState.zombies.econ.lastWave = wave;
+        
+        if (AppState.state.zombies_mode === "roguelike") {
+          this.addCoins(diff * CONFIG.COINS_PER_WAVE, `Wave ${wave}`);
+        }
+      }
+    },
+    
+    // ==================== Движок и Canvas ====================
+    attachEngine() {
+      const { canvas } = AppState.zombies;
+      if (!canvas) return;
+      
+      const engine = this.getEngine();
+      if (engine) {
+        try { engine.setCanvas?.(canvas); } catch {}
+        try { engine.canvas?.(canvas); } catch {}
+        try { engine.attach?.(canvas); } catch {}
+        
         try {
-          sendToBot({
-            action: "game_result",
-            game: "zombies",
-            mode: state.zombies_mode,
-            map: state.zombies_map,
-            profile: true,
-            coins: state.z_coins,
-            relics: state.z_relics,
-            wonder_unlocked: !!state.z_wonder_unlocked,
-            wonder_weapon: state.z_wonder_unlocked ? state.z_wonder_weapon : null,
-            ...r
+          engine.open?.({
+            map: AppState.state.zombies_map,
+            character: AppState.state.character,
+            skin: AppState.state.skin,
+            mode: AppState.state.zombies_mode
           });
-          toast("Результат отправлен ✅");
         } catch {}
-      });
-    } catch {}
-  }
-
-  // =========================================================
-  // TELEGRAM NATIVE BUTTONS
-  // =========================================================
-  let tgButtonsWired = false;
-  let tgMainHandler = null;
-  let tgBackHandler = null;
-
-  function updateTelegramButtons() {
-    if (!tg) return;
-
-    if (GAME.active) {
-      try { tg.MainButton.hide(); } catch {}
-      try { tg.BackButton.hide(); } catch {}
-      return;
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core) {
+        try { core.resize?.(canvas.width, canvas.height); } catch {}
+      }
+    },
+    
+    resizeCanvas() {
+      const { canvas } = AppState.zombies;
+      if (!canvas) return;
+      
+      const dpr = window.devicePixelRatio || 1;
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      
+      const engine = this.getEngine();
+      if (engine) {
+        try { engine.resize?.(width, height); } catch {}
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core) {
+        try { core.resize?.(width, height); } catch {}
+      }
+    },
+    
+    startGame() {
+      const engine = this.getEngine();
+      if (engine) {
+        try {
+          engine.start?.({
+            map: AppState.state.zombies_map,
+            mode: AppState.state.zombies_mode,
+            character: AppState.state.character,
+            skin: AppState.state.skin
+          });
+          return;
+        } catch {}
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core?.start) {
+        try {
+          core.start(
+            AppState.state.zombies_mode,
+            AppState.zombies.canvas?.width || 1,
+            AppState.zombies.canvas?.height || 1,
+            {
+              map: AppState.state.zombies_map,
+              character: AppState.state.character,
+              skin: AppState.state.skin,
+              weaponKey: "SMG"
+            }
+          );
+        } catch {}
+      }
+    },
+    
+    stopGame(reason = "manual") {
+      const engine = this.getEngine();
+      if (engine) {
+        try { engine.stop?.(reason); } catch {}
+        try { engine.stop?.(); } catch {}
+      }
+      
+      const core = window.BCO_ZOMBIES_CORE;
+      if (core?.stop) {
+        try { core.stop?.(); } catch {}
+      }
+    },
+    
+    // ==================== Результаты и отправка ====================
+    onGameResult(result) {
+      const data = result || {};
+      const mode = AppState.state.zombies_mode;
+      const modeKey = mode === "roguelike" ? "roguelike" : "arcade";
+      
+      const score = Utils.clampInt(data.score ?? data.points ?? 0, 0, 999999999);
+      if (!AppState.state.z_best) AppState.state.z_best = { arcade: 0, roguelike: 0 };
+      
+      const currentBest = AppState.state.z_best[modeKey] || 0;
+      AppState.state.z_best[modeKey] = Math.max(currentBest, score);
+      
+      AppState.state.z_coins = Utils.clampInt(AppState.zombies.econ.coins ?? AppState.state.z_coins ?? 0, 0, 999999);
+      Storage.saveState();
+      
+      this.sendResult("game_end", data);
+    },
+    
+    sendResult(reason = "manual", extra = {}) {
+      const payload = {
+        action: "game_result",
+        game: "zombies",
+        mode: AppState.state.zombies_mode,
+        map: AppState.state.zombies_map,
+        reason,
+        profile: true,
+        coins: AppState.state.z_coins,
+        relics: AppState.state.z_relics,
+        wonder_unlocked: AppState.state.z_wonder_unlocked,
+        wonder_weapon: AppState.state.z_wonder_unlocked ? AppState.state.z_wonder_weapon : null,
+        ...extra
+      };
+      BotIntegration.sendData(payload);
+    },
+    
+    // ==================== Fullscreen и UI ====================
+    hideAppChrome(hide) {
+      const header = Utils.qs(".app-header");
+      const topTabs = Utils.qs(".top-tabs");
+      const bottomNav = Utils.qs(".bottom-nav");
+      
+      if (header) header.style.display = hide ? "none" : "";
+      if (topTabs) topTabs.style.display = hide ? "none" : "";
+      if (bottomNav) bottomNav.style.display = hide ? "none" : "";
+      
+      document.documentElement.classList.toggle("bco-game", hide);
+      document.body.classList.toggle("bco-game", hide);
+      document.body.style.overflow = hide ? "hidden" : "";
+    },
+    
+    async enterFullscreen() {
+      try {
+        if (!AppState.zombies.overlay) return false;
+        if (document.fullscreenElement) return true;
+        
+        if (AppState.zombies.overlay.requestFullscreen) {
+          await AppState.zombies.overlay.requestFullscreen({ navigationUI: "hide" });
+          return true;
+        }
+        return false;
+      } catch (error) {
+        Utils.error("Fullscreen failed", error);
+        return false;
+      }
+    },
+    
+    exitFullscreen() {
+      try {
+        if (document.fullscreenElement) document.exitFullscreen?.();
+      } catch {}
     }
+  };
 
-    try {
-      if (currentTab !== "home") tg.BackButton.show();
-      else tg.BackButton.hide();
-    } catch {}
-
-    try {
-      tg.MainButton.setParams({
-        is_visible: true,
-        text:
-          currentTab === "settings" ? "✅ Применить профиль" :
-          currentTab === "coach" ? "🎯 План тренировки" :
-          currentTab === "vod" ? "🎬 Отправить VOD" :
-          currentTab === "game" ? "🧟 Start Fullscreen" :
-          "💎 Premium"
-      });
-    } catch {}
-
-    if (tgButtonsWired) return;
-    tgButtonsWired = true;
-
-    tgMainHandler = () => {
-      haptic("impact", "medium");
-
-      if (currentTab === "settings") { sendToBot({ type: "set_profile", profile: true }); return; }
-      if (currentTab === "coach") { sendToBot({ type: "training_plan", focus: state.focus, profile: true }); return; }
-      if (currentTab === "vod") {
-        const t1 = (qs("#vod1")?.value || "").trim();
-        const t2 = (qs("#vod2")?.value || "").trim();
-        const t3 = (qs("#vod3")?.value || "").trim();
-        const note = (qs("#vodNote")?.value || "").trim();
-        sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
+  // =========================
+  // ✅ ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ
+  // =========================
+  const App = {
+    async init() {
+      try {
+        window.__BCO_JS_OK__ = true;
+        
+        if (document.readyState !== "complete") {
+          await new Promise(resolve => {
+            if (document.readyState === "complete") resolve();
+            else document.addEventListener("DOMContentLoaded", resolve, { once: true });
+          });
+        }
+        
+        await this.setup();
+        this.start();
+        Utils.log("Application initialized successfully");
+      } catch (error) {
+        Utils.error("Application initialization failed", error);
+        this.showError("Ошибка инициализации приложения");
+      }
+    },
+    
+    async setup() {
+      this.initTelegram();
+      const stateSource = await Storage.loadState();
+      
+      const statSession = Utils.qs("#statSession");
+      if (statSession) statSession.textContent = stateSource.toUpperCase();
+      
+      await Storage.loadChat();
+      
+      ThemeManager.init();
+      TouchHandler.init();
+      UIManager.init();
+      ChatManager.init();
+      AimGame.init();
+      AimGame.setupEventListeners();
+      ZombiesGame.init();
+      
+      this.updateBuildTag();
+    },
+    
+    initTelegram() {
+      if (!AppState.tg) {
+        Utils.log("Running in browser mode (no Telegram)");
         return;
       }
-      if (currentTab === "game") { enterGame(); return; }
-      openBotMenuHint("premium");
-    };
-
-    tgBackHandler = () => {
-      haptic("impact", "light");
-      selectTab("home");
-    };
-
-    try { tg.MainButton.offClick?.(tgMainHandler); } catch {}
-    try { tg.MainButton.onClick?.(tgMainHandler); } catch {}
-
-    try { tg.BackButton.offClick?.(tgBackHandler); } catch {}
-    try { tg.BackButton.onClick?.(tgBackHandler); } catch {}
-  }
-
-  // =========================
-  // BUILD TAG
-  // =========================
-  function ensureBuildTag() {
-    const buildFromIndex =
-      (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__")
-        ? window.__BCO_BUILD__
-        : null;
-
-    const txt = buildFromIndex ? `build ${buildFromIndex} • v${VERSION}` : `v${VERSION}`;
-    const buildTag = qs("#buildTag");
-    if (buildTag) buildTag.textContent = txt;
-  }
-
-  // =========================
-  // INIT TELEGRAM
-  // =========================
-  function initTelegram() {
-    const dbgUser = qs("#dbgUser");
-    const dbgChat = qs("#dbgChat");
-    const dbgInit = qs("#dbgInit");
-    const statOnline = qs("#statOnline");
-
-    if (!tg) {
-      if (statOnline) statOnline.textContent = "BROWSER";
-      if (dbgInit) dbgInit.textContent = "no tg";
-      return;
+      
+      try {
+        AppState.tg.ready();
+        AppState.tg.expand();
+        this.setupDebugInfo();
+        
+        const statOnline = Utils.qs("#statOnline");
+        if (statOnline) {
+          const hasUser = !!AppState.tg.initDataUnsafe?.user?.id;
+          statOnline.textContent = hasUser ? "TG_WEBVIEW" : "TG_NOUSER";
+        }
+        
+        Utils.log("Telegram WebApp initialized");
+      } catch (error) {
+        Utils.error("Telegram initialization failed", error);
+      }
+    },
+    
+    setupDebugInfo() {
+      if (!AppState.tg) return;
+      
+      const dbgUser = Utils.qs("#dbgUser");
+      const dbgChat = Utils.qs("#dbgChat");
+      const dbgInit = Utils.qs("#dbgInit");
+      
+      if (dbgUser) dbgUser.textContent = AppState.tg.initDataUnsafe?.user?.id ?? "—";
+      if (dbgChat) dbgChat.textContent = AppState.tg.initDataUnsafe?.chat?.id ?? "—";
+      if (dbgInit) {
+        const hasInit = !!(AppState.tg.initData && String(AppState.tg.initData).length > 10);
+        dbgInit.textContent = hasInit ? "ok" : "empty";
+      }
+    },
+    
+    updateBuildTag() {
+      const buildText = AppState.buildId !== "__BUILD__" 
+        ? `build ${AppState.buildId} • v${CONFIG.VERSION}`
+        : `v${CONFIG.VERSION}`;
+      
+      const buildTag = Utils.qs("#buildTag");
+      if (buildTag) buildTag.textContent = buildText;
+    },
+    
+    start() {
+      UIManager.selectTab("home");
+      
+      const hash = window.location.hash.replace("#", "").trim();
+      if (hash && ["home", "coach", "vod", "settings", "game"].includes(hash)) {
+        UIManager.selectTab(hash);
+      }
+      
+      UIManager.updateTelegramButtons();
+      AppState.isInitialized = true;
+      Utils.toast("BCO Mini App загружен ✅");
+    },
+    
+    showError(message) {
+      alert(`BCO Error: ${message}\n\nPlease refresh the page.`);
+      const errorDiv = Utils.createElement("div", "bco-error-overlay");
+      errorDiv.innerHTML = `
+        <div class="bco-error-card">
+          <h3>⚠️ Ошибка загрузки</h3>
+          <p>${Utils.escapeHtml(message)}</p>
+          <button onclick="window.location.reload()">Перезагрузить</button>
+        </div>
+      `;
+      document.body.appendChild(errorDiv);
+    },
+    
+    getState() {
+      return { config: CONFIG, appState: AppState, utils: Utils };
+    },
+    
+    resetApp() {
+      if (confirm("Сбросить все данные приложения?")) {
+        localStorage.clear();
+        window.location.reload();
+      }
     }
-
-    try { tg.ready(); } catch {}
-    try { tg.expand(); } catch {}
-
-    applyTelegramTheme();
-    try { tg.onEvent("themeChanged", applyTelegramTheme); } catch {}
-
-    const hasInit = !!(tg.initData && String(tg.initData).length > 10);
-    const hasUser = !!tg.initDataUnsafe?.user?.id;
-
-    if (dbgUser) dbgUser.textContent = tg.initDataUnsafe?.user?.id ?? "—";
-    if (dbgChat) dbgChat.textContent = tg.initDataUnsafe?.chat?.id ?? "—";
-    if (dbgInit) dbgInit.textContent = hasInit ? "ok" : "empty";
-
-    if (statOnline) {
-      statOnline.textContent = hasUser ? "TG_WEBVIEW" : (hasInit ? "TG_NOUSER" : "NO_INITDATA");
-    }
-
-    updateTelegramButtons();
-  }
+  };
 
   // =========================
-  // SEGMENTS WIRING
+  // ✅ ЗАПУСК ПРИЛОЖЕНИЯ
   // =========================
-  function wireSeg(rootId, onPick) {
-    const root = qs(rootId);
-    if (!root) return;
+  window.BCO_APP = App;
+  window.BCO_UTILS = Utils;
+  window.BCO_STORAGE = Storage;
+  window.BCO_ZOMBIES_MANAGER = ZombiesGame;
+  
+  App.init().catch(error => {
+    console.error("Fatal app error:", error);
+  });
 
-    const handler = async (btn) => {
-      haptic("impact", "light");
-      onPick(btn.dataset.value);
-
-      setActiveSeg(rootId, btn.dataset.value);
-      setChipText();
-
-      await saveState();
-      toast("Сохранено ✅");
-    };
-
-    onTap(root, (e) => {
-      const btn = e?.target?.closest?.(".seg-btn");
-      if (!btn) return;
-      handler(btn);
-    }, { lockMs: 120 });
-  }
-
-  // =========================
-  // NAV WIRING
-  // =========================
-  function wireNav() {
-    qsa(".nav-btn").forEach((btn) => {
-      onTap(btn, () => {
-        haptic("impact", "light");
-        selectTab(btn.dataset.tab);
-      });
-    });
-
-    qsa(".tab").forEach((btn) => {
-      onTap(btn, () => {
-        haptic("impact", "light");
-        selectTab(btn.dataset.tab);
-      });
-    });
-  }
-
-  // =========================
-  // HEADER CHIPS
-  // =========================
-  function wireHeaderChips() {
-    const chipVoice = qs("#chipVoice");
-    const chipMode = qs("#chipMode");
-    const chipPlatform = qs("#chipPlatform");
-
-    onTap(chipVoice, async () => {
-      haptic("impact", "light");
-      state.voice = (state.voice === "COACH") ? "TEAMMATE" : "COACH";
-      setChipText(); // ✅ FIX: was broken line causing runtime error
-      setActiveSeg("#segVoice", state.voice);
-      await saveState();
-      toast(state.voice === "COACH" ? "Коуч включён 📚" : "Тиммейт 🤝");
-    });
-
-    onTap(chipMode, async () => {
-      haptic("impact", "light");
-      state.mode = (state.mode === "Normal") ? "Pro" : (state.mode === "Pro" ? "Demon" : "Normal");
-      setChipText();
-      setActiveSeg("#segMode", state.mode);
-      await saveState();
-      toast(`Режим: ${state.mode}`);
-    });
-
-    onTap(chipPlatform, async () => {
-      haptic("impact", "light");
-      state.platform = (state.platform === "PC") ? "PlayStation" : (state.platform === "PlayStation" ? "Xbox" : "PC");
-      setChipText();
-      setActiveSeg("#segPlatform", state.platform);
-      await saveState();
-      toast(`Platform: ${state.platform}`);
-    });
-  }
-
-  // =========================================================
-  // BUTTONS WIRING (ALL)
-  // =========================================================
-  function wireButtons() {
-    onTap(qs("#btnClose"), () => { haptic("impact", "medium"); tg?.close?.(); });
-
-    onTap(qs("#btnShare"), () => {
-      const text =
-        "BLACK CROWN OPS 😈\n" +
-        "Тренировки, VOD, настройки, Zombies — всё в одном месте.\n" +
-        "Mini App + Fullscreen Zombies (dual-stick).";
-      tryShare(text);
-    });
-
-    onTap(qs("#btnBuyMonth"), () => sendToBot({ type: "pay", plan: "premium_month", profile: true }));
-    onTap(qs("#btnBuyLife"), () => sendToBot({ type: "pay", plan: "premium_lifetime", profile: true }));
-
-    onTap(qs("#btnOpenBot"), () => openBotMenuHint("main"));
-    onTap(qs("#btnPremium"), () => openBotMenuHint("premium"));
-    onTap(qs("#btnSync"), () => sendToBot({ type: "sync_request", profile: true }));
-
-    onTap(qs("#btnOpenTraining"), () => openBotMenuHint("training"));
-    onTap(qs("#btnSendPlan"), () => sendToBot({ type: "training_plan", focus: state.focus, profile: true }));
-
-    onTap(qs("#btnOpenVod"), () => openBotMenuHint("vod"));
-    onTap(qs("#btnSendVod"), () => {
-      const t1 = (qs("#vod1")?.value || "").trim();
-      const t2 = (qs("#vod2")?.value || "").trim();
-      const t3 = (qs("#vod3")?.value || "").trim();
-      const note = (qs("#vodNote")?.value || "").trim();
-      sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
-    });
-
-    onTap(qs("#btnOpenSettings"), () => openBotMenuHint("settings"));
-    onTap(qs("#btnApplyProfile"), () => sendToBot({ type: "set_profile", profile: true }));
-
-    onTap(qs("#btnChatSend"), () => sendChatFromUI());
-    onTap(qs("#btnChatClear"), async () => {
-      haptic("impact", "light");
-      chat.history = [];
-      await saveChat();
-      renderChat();
-      toast("Чат очищен ✅");
-    });
-    onTap(qs("#btnChatExport"), () => { haptic("impact", "light"); tryShare(exportChatText() || "— пусто —"); });
-
-    const chatInput = qs("#chatInput");
-    if (chatInput) {
-      chatInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatFromUI(); }
-      }, { passive: false });
-    }
-
-    // AIM
-    const { arena, target, btnStart, btnStop, btnSend } = aimEls();
-    onTap(btnStart, () => aimStart());
-    onTap(btnStop, () => aimStop(false));
-    onTap(btnSend, () => aimSendResult());
-
-    if (arena && target) {
-      onTap(target, (e) => {
-        if (!aim.running) return;
-        aim.shots += 1;
-        aim.hits += 1;
-        haptic("impact", "light");
-        aimMoveTarget();
-        aimUpdateUI();
-        e?.preventDefault?.();
-        e?.stopPropagation?.();
-      }, { lockMs: 60 });
-
-      onTap(arena, () => {
-        if (!aim.running) return;
-        aim.shots += 1;
-        haptic("impact", "light");
-        aimUpdateUI();
-      }, { lockMs: 60 });
-    }
-
-    // Zombies: preview buttons (Home)
-    onTap(qs("#btnZModeArcade"), () => { zombiesSetMode("arcade"); toast("Zombies: Arcade 💥"); });
-    onTap(qs("#btnZModeRogue"), () => { zombiesSetMode("roguelike"); toast("Zombies: Roguelike 😈"); });
-    onTap(qs("#btnZQuickPlay"), () => enterGame());
-    onTap(qs("#btnZGameSend"), () => zombiesSendResult("manual"));
-
-    onTap(qs("#btnZBuyJug"), () => shopPerk("Jug"));
-    onTap(qs("#btnZBuySpeed"), () => shopPerk("Speed"));
-    onTap(qs("#btnZBuyAmmo"), () => shopPerk("Mag"));
-
-    // GAME tab (launcher)
-    onTap(qs("#btnPlayZombies"), () => { selectTab("game"); enterGame(); });
-    onTap(qs("#btnZEnterGame"), () => enterGame());
-    onTap(qs("#btnZGameSend2"), () => zombiesSendResult("manual"));
-
-    onTap(qs("#btnZModeArcade2"), () => { zombiesSetMode("arcade"); updateOverlayLabels(); toast("Mode: Arcade 💥"); });
-    onTap(qs("#btnZModeRogue2"), () => { zombiesSetMode("roguelike"); updateOverlayLabels(); toast("Mode: Roguelike 😈"); });
-
-    onTap(qs("#btnZOpenHQ"), () => openBotMenuHint("zombies"));
-
-    // Zombies HQ buttons (bot)
-    onTap(qs("#btnOpenZombies"), () => sendToBot({ type: "zombies_open", map: state.zombies_map, profile: true }));
-    onTap(qs("#btnZPerks"), () => sendToBot({ type: "zombies", action: "perks", map: state.zombies_map, profile: true }));
-    onTap(qs("#btnZLoadout"), () => sendToBot({ type: "zombies", action: "loadout", map: state.zombies_map, profile: true }));
-    onTap(qs("#btnZEggs"), () => sendToBot({ type: "zombies", action: "eggs", map: state.zombies_map, profile: true }));
-    onTap(qs("#btnZRound"), () => sendToBot({ type: "zombies", action: "rounds", map: state.zombies_map, profile: true }));
-    onTap(qs("#btnZTips"), () => sendToBot({ type: "zombies", action: "tips", map: state.zombies_map, profile: true }));
-
-    // Safety: ESC exit
-    window.addEventListener("keydown", (e) => { if (e.key === "Escape" && GAME.active) exitGame(); }, { passive: true });
-  }
-
-  // =========================
-  // BOOT
-  // =========================
-  async function boot() {
-    if (document.readyState !== "complete" && document.readyState !== "interactive") {
-      await new Promise((r) => document.addEventListener("DOMContentLoaded", r, { once: true }));
-    }
-
-    initTelegram();
-    ensureBuildTag();
-
-    const src = await loadState();
-    const statSession = qs("#statSession");
-    if (statSession) statSession.textContent = src.toUpperCase();
-
-    await loadChat();
-
-    wireNav();
-
-    wireSeg("#segGame", (v) => { state.game = v; });
-    wireSeg("#segFocus", (v) => { state.focus = v; });
-    wireSeg("#segMode", (v) => { state.mode = v; });
-    wireSeg("#segPlatform", (v) => { state.platform = v; });
-    wireSeg("#segInput", (v) => { state.input = v; });
-    wireSeg("#segVoice", (v) => { state.voice = v; });
-
-    wireSeg("#segZMap", (v) => {
-      state.zombies_map = v;
-      updateOverlayLabels();
-    });
-
-    setChipText();
-
-    setActiveSeg("#segPlatform", state.platform);
-    setActiveSeg("#segInput", state.input);
-    setActiveSeg("#segVoice", state.voice);
-    setActiveSeg("#segMode", state.mode);
-    setActiveSeg("#segZMap", state.zombies_map);
-    setActiveSeg("#segGame", state.game);
-    setActiveSeg("#segFocus", state.focus);
-
-    wireHeaderChips();
-    wireButtons();
-
-    renderChat();
-    aimReset();
-
-    hookEngineHud();
-
-    selectTab("home");
-
-    try {
-      const hash = String(location.hash || "").replace("#", "").trim();
-      if (hash) selectTab(hash);
-    } catch {}
-
-    updateTelegramButtons();
-
-    // ✅ install once (used both in menu + during game)
-    installNoZoomGuards();
-  }
-
-  boot();
 })();
