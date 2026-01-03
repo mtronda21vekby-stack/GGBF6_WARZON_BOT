@@ -3,6 +3,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
+  <!-- PREMIUM: anti-zoom + safe-area + stable scaling -->
   <meta
     name="viewport"
     content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no"
@@ -15,15 +16,17 @@
   <meta name="mobile-web-app-capable" content="yes" />
 
   <title>BLACK CROWN OPS — Mini App</title>
+
   <base href="/webapp/">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
+  <!-- build marker -->
   <script>window.__BCO_BUILD__="__BUILD__";</script>
 
-  <!-- iOS anti-zoom (safe) -->
+  <!-- PREMIUM: disable pinch/double-tap zoom (iOS WebView hardening) -->
   <script>
     (function () {
       function prevent(e) { try { e.preventDefault(); } catch(_) {} }
@@ -70,7 +73,7 @@
   <!-- Telegram WebApp bootstrap -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-  <!-- TG HARDENING: insets + hide TG chrome by default -->
+  <!-- TG HARDENING: set CSS insets + hide TG chrome in takeover -->
   <script>
     (function () {
       function safe(fn){ try{ fn(); }catch(_){ } }
@@ -82,7 +85,10 @@
       function readInsets(wa){
         var inset = wa && (wa.safeAreaInset || wa.contentSafeAreaInset);
         if (inset && (typeof inset.top !== "undefined" || typeof inset.bottom !== "undefined")) {
-          return { top: Number(inset.top || 0), bottom: Number(inset.bottom || 0) };
+          return {
+            top: Number(inset.top || 0),
+            bottom: Number(inset.bottom || 0)
+          };
         }
         var isIOS = wa && String(wa.platform || "").toLowerCase() === "ios";
         return { top: isIOS ? 48 : 0, bottom: 0 };
@@ -108,10 +114,17 @@
       }
 
       function showChrome(){
+        if (!window.Telegram || !Telegram.WebApp) return;
+        var wa = Telegram.WebApp;
+        safe(function(){ wa.ready(); });
         applyInsets();
       }
 
-      window.BCO_TG = { applyInsets: applyInsets, hideChrome: hideChrome, showChrome: showChrome };
+      window.BCO_TG = {
+        applyInsets: applyInsets,
+        hideChrome: hideChrome,
+        showChrome: showChrome
+      };
 
       function initTG(){
         if (!window.Telegram || !Telegram.WebApp) return;
@@ -126,6 +139,7 @@
         safe(function(){ wa.BackButton && wa.BackButton.hide && wa.BackButton.hide(); });
 
         applyInsets();
+
         safe(function(){
           wa.onEvent && wa.onEvent("viewportChanged", function(){
             applyInsets();
@@ -164,6 +178,8 @@
       <button class="chip" id="chipPlatform" type="button">🖥 PC</button>
     </div>
   </header>
+
+  <div class="top-tabs" style="display:none;"></div>
 
   <main class="wrap app-main" role="main">
     <section class="hero card">
@@ -276,7 +292,10 @@
           </div>
 
           <div class="cardlite">
-            <div class="card-title">🧟 Zombies Survival</div>
+            <div class="card-title">🧟 Zombies Survival (Preview)</div>
+            <div class="hint">
+              Это превью/панель. Реальная игра теперь в отдельной вкладке <b>Game</b> и открывается полноэкранно.
+            </div>
 
             <div class="seg" style="margin:8px 0;">
               <button class="seg-btn active" id="btnZModeArcade" type="button">💥 Arcade</button>
@@ -284,7 +303,7 @@
             </div>
 
             <div class="actions" style="margin-top:10px;">
-              <button class="btn primary" id="btnZQuickPlay" type="button">🧟 Start Fullscreen</button>
+              <button class="btn primary" id="btnZQuickPlay" type="button">🧟 Open Fullscreen Game</button>
               <button class="btn" id="btnZGameSend" type="button">Send result → bot</button>
             </div>
 
@@ -293,6 +312,10 @@
               <button class="btn" id="btnZBuyJug" type="button">🧪 Jug (12)</button>
               <button class="btn" id="btnZBuySpeed" type="button">⚡ Speed (10)</button>
               <button class="btn" id="btnZBuyAmmo" type="button">🔫 Ammo (8)</button>
+            </div>
+
+            <div class="hint">
+              Кнопки магазина тут — быстрые хоткеи. Полный магазин/upgrade/reroll/reload — внутри Game fullscreen.
             </div>
           </div>
         </div>
@@ -411,10 +434,14 @@
       </div>
     </section>
 
-    <!-- ========================= GAME ========================== -->
+    <!-- ========================= GAME (ZOMBIES FULLSCREEN) ========================== -->
     <section class="grid tabpane" id="tab-game">
       <div class="card">
         <div class="card-title">🧟 Game: Zombies Survival</div>
+        <div class="hint">
+          Здесь — вход в полноценную игру. При запуске Mini App переходит в <b>full takeover</b>:
+          скрываем header/nav и отдаём экран игре.
+        </div>
 
         <div class="card-sub">Карта</div>
         <div class="seg" id="segZMap">
@@ -433,6 +460,11 @@
           <button class="btn" id="btnZOpenHQ" type="button">🧠 Zombies HQ (бот/гайды)</button>
           <button class="btn" id="btnZGameSend2" type="button">Send result → bot</button>
         </div>
+
+        <div class="hint">
+          Магазин/upgrade/reroll/reload/перки/скины — <b>внутри игры</b> (full overlay).
+          Эта вкладка — “лаунчер”, а не панель с мелкими кнопками.
+        </div>
       </div>
 
       <div class="card">
@@ -445,6 +477,7 @@
           <button class="btn" id="btnZRound" type="button">Стратегия</button>
           <button class="btn" id="btnZTips" type="button">Советы</button>
         </div>
+        <div class="hint">Если раньше “не отправляло” — это был type=open. Сейчас type=nav ✅</div>
       </div>
     </section>
 
@@ -454,7 +487,6 @@
     </footer>
   </main>
 
-  <!-- ✅ ВОССТАНОВЛЕНА 5-вкладочная навигация -->
   <nav class="bottombar bottom-nav" aria-label="Навигация">
     <button class="nav-btn active" data-tab="home" type="button" aria-selected="true">
       <span class="nav-ico">⭐</span><span class="nav-txt">Главная</span>
@@ -474,13 +506,16 @@
   </nav>
 
   <div class="toast" id="toast">OK</div>
+
   <div id="zOverlayMount" aria-hidden="true"></div>
 
-  <!-- ✅ LEGACY BOOT ONLY: НИКАКОГО new stack -->
+  <!-- BOOT LOADER (LEGACY zombies.* ONLY) -->
+  <!-- ВАЖНО: мы отключаем NEW stack (bco.*), потому что он ломает клики/обвязку Mini App -->
   <script>
     (function () {
       var build = window.__BCO_BUILD__ || String(Date.now());
       var health = document.getElementById("jsHealth");
+
       function setHealth(msg) { if (health) health.textContent = msg; }
 
       function load(src) {
@@ -505,16 +540,33 @@
         });
       }
 
-      setHealth("js: boot (LEGACY)…");
+      function chainOptional(list) {
+        var p = Promise.resolve(true);
+        for (var i = 0; i < list.length; i++) {
+          (function (src) {
+            p = p.then(function () {
+              return loadOptional(src).then(function (ok) {
+                if (!ok) console.warn("[BOOT] optional not loaded:", src);
+                return true;
+              });
+            });
+          })(list[i]);
+        }
+        return p;
+      }
 
-      loadOptional("/webapp/zombies.assets.js")
-        .then(function () { return loadOptional("/webapp/zombies.perks.js"); })
-        .then(function () { return loadOptional("/webapp/zombies.maps.js"); })
-        .then(function () { return loadOptional("/webapp/zombies.collisions.js"); })
-        .then(function () { return loadOptional("/webapp/zombies.bosses.js"); })
+      setHealth("js: boot (LEGACY zombies.*)…");
+
+      chainOptional([
+        "/webapp/zombies.assets.js",
+        "/webapp/zombies.perks.js",
+        "/webapp/zombies.maps.js",
+        "/webapp/zombies.collisions.js",
+        "/webapp/zombies.bosses.js",
+        "/webapp/zombies.world.js"
+      ])
         .then(function () { return load("/webapp/zombies.core.js"); })
         .then(function () { return load("/webapp/zombies.render.js"); })
-        .then(function () { return loadOptional("/webapp/zombies.world.js"); })
         .then(function () { return load("/webapp/zombies.game.js"); })
         .then(function () { return load("/webapp/zombies.init.js"); })
         .then(function () { return load("/webapp/app.js"); })
@@ -526,6 +578,27 @@
           console.error("BCO boot load error:", e);
           setHealth("js: BOOT ERROR (check console)");
         });
+    })();
+  </script>
+
+  <script>
+    (function () {
+      var el = document.getElementById("jsHealth");
+      if (!el) return;
+
+      var tries = 0;
+      var t = setInterval(function () {
+        tries++;
+        if (window.__BCO_JS_OK__ === true) {
+          el.textContent = "js: OK";
+          clearInterval(t);
+          return;
+        }
+        if (tries >= 25) {
+          el.textContent = "js: NOT LOADED (cache/route/path)";
+          clearInterval(t);
+        }
+      }, 120);
     })();
   </script>
 </body>
