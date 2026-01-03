@@ -1,192 +1,89 @@
 // app/webapp/static/bco.input.js
-// ULTRA: pointer-router + tap synthesis + gesture-guard for iOS WebView
 (() => {
   "use strict";
 
-  const CFG = window.BCO_CFG || {};
-  const ZC = (CFG.ZOMBIES || {});
-  const TAP_MAX_MOVE_PX = ZC.TAP_MAX_MOVE_PX || 12;
-  const TAP_MAX_MS = ZC.TAP_MAX_MS || 520;
+  window.BCO = window.BCO || {};
+  const CFG = window.BCO.CONFIG || {};
+  const IC = CFG.INPUT || { TAP_MAX_MOVE_PX: 12, TAP_MAX_MS: 450, CAPTURE: true };
 
-  const log = (...a) => { try { console.log("[BCO_INPUT]", ...a); } catch {} };
-
-  function isScrollableEl(el) {
-    if (!el) return false;
-    const cls = el.classList;
-    if (cls && (
-      cls.contains("bco-z-card") ||
-      cls.contains("bco-z-modal") ||
-      cls.contains("modal") ||
-      cls.contains("modal-body") ||
-      cls.contains("allow-scroll") ||
-      cls.contains("chat-log")
-    )) return true;
-
-    const st = window.getComputedStyle(el);
-    const oy = st ? st.overflowY : "";
-    return (oy === "auto" || oy === "scroll");
+  function withinModalScroll(target) {
+    return !!(target && target.closest && target.closest(".bco-modal-scroll"));
   }
 
-  function composedPath(e) {
-    try { return (e.composedPath && e.composedPath()) || []; } catch { return []; }
+  function isInteractive(target) {
+    if (!target) return false;
+    const tag = (target.tagName || "").toLowerCase();
+    if (tag === "button" || tag === "a" || tag === "input" || tag === "textarea") return true;
+    return !!(target.closest && target.closest("button,a,[role='button']"));
   }
 
-  function hasScrollableInPath(e) {
-    const p = composedPath(e);
-    for (const n of p) {
-      if (n && n.nodeType === 1 && isScrollableEl(n)) return true;
-    }
-    return false;
+  let active = null;
+
+  function onDown(ev) {
+    const t = ev.target;
+    if (!isInteractive(t)) return;
+    if (withinModalScroll(t)) return;
+
+    const pt = ev.touches && ev.touches[0] ? ev.touches[0] : ev;
+    active = {
+      t0: Date.now(),
+      x0: pt.clientX || 0,
+      y0: pt.clientY || 0,
+      moved: false,
+      canceled: false
+    };
   }
 
-  // GestureGuard: blocks pinch/zoom; blocks page-scroll ONLY when game takeover is active
-  const GestureGuard = {
-    _installed: false,
-    _isGame: () => !!window.BCO_Z_RUNTIME?.isInGame?.(),
+  function onMove(ev) {
+    if (!active || active.canceled) return;
+    const pt = ev.touches && ev.touches[0] ? ev.touches[0] : ev;
+    const dx = (pt.clientX || 0) - active.x0;
+    const dy = (pt.clientY || 0) - active.y0;
+    const d = Math.hypot(dx, dy);
+    if (d > (IC.TAP_MAX_MOVE_PX || 12)) active.moved = true;
+  }
 
-    install() {
-      if (this._installed) return true;
-      this._installed = true;
+  function onUp(ev) {
+    if (!active || active.canceled) return;
+    const dt = Date.now() - active.t0;
+    const okTap = (dt <= (IC.TAP_MAX_MS || 450)) && !active.moved;
 
-      const prevent = (e) => { try { e.preventDefault(); } catch {} };
+    // During takeover: kill ghost clicks except modal scroll areas
+    const takeover = document.body.classList.contains((CFG.FULLSCREEN && CFG.FULLSCREEN.TAKEOVER_CLASS) || "bco-game-takeover");
+    const t = ev.target;
 
-      // iOS pinch gestures
-      window.addEventListener("gesturestart", (e) => { if (this._isGame()) prevent(e); }, { passive: false });
-      window.addEventListener("gesturechange", (e) => { if (this._isGame()) prevent(e); }, { passive: false });
-      window.addEventListener("gestureend", (e) => { if (this._isGame()) prevent(e); }, { passive: false });
-
-      // multi-touch scroll/zoom
-      window.addEventListener("touchstart", (e) => {
-        if (!this._isGame()) return;
-        if (e.touches && e.touches.length > 1) prevent(e);
-      }, { passive: false });
-
-      // stop background scrolling, but DO NOT kill modal scroll
-      window.addEventListener("touchmove", (e) => {
-        if (!this._isGame()) return;
-        if (hasScrollableInPath(e)) return;
-        prevent(e);
-      }, { passive: false });
-
-      // ctrl+wheel zoom
-      window.addEventListener("wheel", (e) => {
-        if (!this._isGame()) return;
-        if (e.ctrlKey) prevent(e);
-      }, { passive: false });
-
-      log("GestureGuard installed");
-      return true;
+    if (takeover && okTap && !withinModalScroll(t)) {
+      try { ev.preventDefault(); } catch {}
+      try { ev.stopPropagation(); } catch {}
     }
-  };
 
-  // TapSynth: fixes “tap doesn’t click” in iOS WebView by synthesizing click on short pointer sequences.
-  const TapSynth = {
-    _installed: false,
-    _targets: null,
+    active = null;
+  }
 
-    install({ root = document, selector = "button, a, [role='button'], .btn, .chip, .seg-btn, .nav-btn" } = {}) {
-      if (this._installed) return true;
-      this._installed = true;
-      this._targets = { root, selector };
+  function onCancel() { active = null; }
 
-      let down = null;
+  function mount() {
+    const cap = !!IC.CAPTURE;
 
-      function findTarget(e) {
-        const t = e.target;
-        if (!t || !t.closest) return null;
-        return t.closest(selector);
-      }
+    document.addEventListener("pointerdown", onDown, { capture: cap, passive: false });
+    document.addEventListener("pointermove", onMove, { capture: cap, passive: false });
+    document.addEventListener("pointerup", onUp, { capture: cap, passive: false });
+    document.addEventListener("pointercancel", onCancel, { capture: cap, passive: false });
 
-      root.addEventListener("pointerdown", (e) => {
-        const tgt = findTarget(e);
-        if (!tgt) return;
-        // don't steal native scroll gestures
-        if (hasScrollableInPath(e)) return;
+    document.addEventListener("touchstart", onDown, { capture: cap, passive: false });
+    document.addEventListener("touchmove", onMove, { capture: cap, passive: false });
+    document.addEventListener("touchend", onUp, { capture: cap, passive: false });
+    document.addEventListener("touchcancel", onCancel, { capture: cap, passive: false });
 
-        down = {
-          id: e.pointerId,
-          t: performance.now(),
-          x: e.clientX,
-          y: e.clientY,
-          target: tgt
-        };
+    // ghost click killer only in takeover
+    document.addEventListener("click", (e) => {
+      const takeover = document.body.classList.contains((CFG.FULLSCREEN && CFG.FULLSCREEN.TAKEOVER_CLASS) || "bco-game-takeover");
+      if (!takeover) return;
+      if (withinModalScroll(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }, { capture: true, passive: false });
+  }
 
-        // Make sure we receive up/cancel even if finger slides
-        try { tgt.setPointerCapture && tgt.setPointerCapture(e.pointerId); } catch {}
-
-      }, { passive: true, capture: true });
-
-      root.addEventListener("pointerup", (e) => {
-        if (!down) return;
-        if (e.pointerId !== down.id) return;
-
-        const dt = performance.now() - down.t;
-        const dx = e.clientX - down.x;
-        const dy = e.clientY - down.y;
-
-        const moved = Math.hypot(dx, dy);
-        const okTap = (dt <= TAP_MAX_MS && moved <= TAP_MAX_MOVE_PX);
-
-        const tgt = down.target;
-        down = null;
-
-        if (!okTap) return;
-        if (!tgt || tgt.disabled) return;
-
-        // iOS: sometimes pointerup doesn't trigger click — synthesize
-        // But avoid double: only if event wasn't already default-handled.
-        try {
-          // focus + click
-          tgt.focus && tgt.focus({ preventScroll: true });
-        } catch {}
-
-        try {
-          // if element is inside label or has special, click still ok
-          tgt.click();
-        } catch {}
-      }, { passive: true, capture: true });
-
-      root.addEventListener("pointercancel", () => { down = null; }, { passive: true, capture: true });
-
-      log("TapSynth installed", selector);
-      return true;
-    }
-  };
-
-  // PointerRouter: normalized pointers for dual-stick etc.
-  const PointerRouter = {
-    _installed: false,
-    _handlers: new Set(),
-
-    install() {
-      if (this._installed) return true;
-      this._installed = true;
-
-      const on = (fn) => { if (typeof fn === "function") this._handlers.add(fn); return () => this._handlers.delete(fn); };
-
-      const emit = (type, e) => {
-        const payload = {
-          type,
-          pointerId: e.pointerId,
-          x: e.clientX,
-          y: e.clientY,
-          t: performance.now(),
-          target: e.target
-        };
-        for (const fn of this._handlers) { try { fn(payload); } catch {} }
-      };
-
-      // capture so we see it even if tg webview eats bubbling
-      window.addEventListener("pointerdown", (e) => emit("down", e), { passive: true, capture: true });
-      window.addEventListener("pointermove", (e) => emit("move", e), { passive: true, capture: true });
-      window.addEventListener("pointerup",   (e) => emit("up", e),   { passive: true, capture: true });
-      window.addEventListener("pointercancel",(e) => emit("cancel", e), { passive: true, capture: true });
-
-      log("PointerRouter installed");
-      return { on };
-    }
-  };
-
-  window.BCO_INPUT = { GestureGuard, TapSynth, PointerRouter };
-  console.log("[BCO_INPUT] loaded");
+  window.BCO.input = { mount };
 })();
