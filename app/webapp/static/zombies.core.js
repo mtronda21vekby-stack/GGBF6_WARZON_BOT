@@ -1,4 +1,4 @@
-// app/webapp/static/zombies.core.js  [ULTRA LUX COD-ZOMBIES-2D v1.4.2 | 3D-READY CORE]
+// app/webapp/static/zombies.core.js  [ULTRA LUX COD-ZOMBIES-2D v1.4.3 | 3D-READY CORE]
 // Core = gameplay/physics/state ONLY. Renderer (2D now / 3D later) reads snapshots.
 // ULTRA: real roguelike loop (coins/loot/rarities/levels/shop methods) + relic quest 0/5 -> wonder weapon.
 // - Armor/plates, reload + ammo reserve
@@ -11,10 +11,8 @@
 // - Boss hook compatible with zombies.bosses.js via CORE._onBulletHit
 // - Map bounds + collisions integration if optional modules exist
 // - Fixed-timestep simulation + stable snapshot API for 3D renderer
-// v1.4 FIX: economy always progresses (direct coins on kill + pickups), safer boss death path, stronger pickup magnet,
-//          safer mode detect, explicit install API for optional modules, snapshot has all HUD fields always.
-// v1.4.1 ZOOM: state.zoom + setZoomDelta(+0.5 contract) + zoom in snapshot (camera.zoom)
 // v1.4.2 ZOOM: quantize zoom to CFG.zoom.step (contract-safe), clamp+snap in setZoomLevel/setZoomDelta/start(opts.zoom)
+// v1.4.3 INPUT/COMPAT: add setInput() + tick(dt) + setZoom alias; events use sim time (tms) not wall-clock; harder input guards.
 (() => {
   "use strict";
 
@@ -74,16 +72,12 @@
   // Config
   // -------------------------
   const CFG = {
-    // Fixed sim timestep for determinism (3D-ready)
     tickHz: 60,
     dtFixed: 1 / 60,
     dtMax: 1 / 18,
     maxSubSteps: 6,
 
-    // fallback if map not loaded
     arenaRadius: 780,
-
-    // map edges if maps module provides w/h
     mapClampPadding: 80,
 
     // ✅ ZOOM (renderer should apply camera.zoom)
@@ -100,7 +94,6 @@
       hitbox: 16,
       iFramesMs: 230,
 
-      // armor system (COD-style)
       armorMax: 150,
       plateValue: 50,
       platesMax: 3,
@@ -132,7 +125,6 @@
       spawnRingMax: 880
     },
 
-    // Weapons base templates
     weapons: {
       SMG:  { name: "SMG",    type: "smg",  rpm: 820, dmg: 10, spread: 0.080, bullets: 1, mag: 32, reserve: 160, reloadMs: 980,  movePenalty: 0.00, crit: 0.06, pierce: 0 },
       AR:   { name: "AR",     type: "ar",   rpm: 640, dmg: 14, spread: 0.050, bullets: 1, mag: 30, reserve: 180, reloadMs: 1100, movePenalty: 0.02, crit: 0.08, pierce: 0 },
@@ -141,7 +133,6 @@
       MARK: { name: "DMR",    type: "dmr",  rpm: 310, dmg: 36, spread: 0.020, bullets: 1, mag: 12, reserve: 72,  reloadMs: 1350, movePenalty: 0.06, crit: 0.14, pierce: 1 },
       PIST: { name: "Pistol", type: "pist", rpm: 420, dmg: 12, spread: 0.060, bullets: 1, mag: 15, reserve: 90,  reloadMs: 880,  movePenalty: 0.00, crit: 0.06, pierce: 0 },
 
-      // Wonder weapon (3D-ready, used when relics >= 5)
       WONDER: { name: "WONDER", type: "wonder", rpm: 420, dmg: 54, spread: 0.030, bullets: 1, mag: 14, reserve: 140, reloadMs: 980, movePenalty: 0.02, crit: 0.18, pierce: 2 }
     },
 
@@ -166,7 +157,6 @@
       weaponChanceWaveBonus: 0.0025,
       eventChanceWaveBonus:  0.0015,
 
-      // Relic quest
       relicChanceElite: 0.16,
       relicChanceBoss: 0.65,
       relicNeed: 5,
@@ -214,9 +204,7 @@
     if (!Number.isFinite(v)) return CFG.zoom.default;
 
     const cl = clamp(v, min, max);
-    // quantize to step
     const q = Math.round(cl / step) * step;
-    // avoid floating drift (0.999999)
     const fixed = Math.round(q * 1000) / 1000;
     return clamp(fixed, min, max);
   }
@@ -283,6 +271,7 @@
     _acc: 0,
     _alpha: 0,
 
+    // Stable input (dual-stick ready)
     input: {
       moveX: 0, moveY: 0,
       aimX: 1, aimY: 0,
@@ -301,19 +290,16 @@
       w: 0, h: 0,
       camX: 0, camY: 0,
 
-      // ✅ ZOOM (renderer uses camera.zoom; default 1.0)
       zoom: CFG.zoom.default,
 
       timeMs: 0,
       wave: 1,
       kills: 0,
 
-      // roguelike economy/progression
       coins: 0,
       xp: 0,
       level: 1,
 
-      // quest
       relics: 0,
       wonderUnlocked: false,
 
@@ -358,7 +344,7 @@
     },
 
     // -------------------------------------------------------
-    // Public control
+    // Public control / install
     // -------------------------------------------------------
     install({ tickWorld, buyPerk, onBulletHit } = {}) {
       if (typeof tickWorld === "function") this._tickWorld = tickWorld;
@@ -367,10 +353,50 @@
       return true;
     },
 
-    // ✅ ZOOM API (contract: delta +0.5 to current)
-    getZoom() {
-      return Number(this.state.zoom) || CFG.zoom.default;
+    // ✅ INPUT API (ULTRA compat)
+    // Accepts:
+    // { moveX, moveY, aimX, aimY, shooting } OR nested { move:{x,y}, aim:{x,y}, shoot }
+    setInput(inputState) {
+      const i = inputState && typeof inputState === "object" ? inputState : {};
+
+      const mx = (i.move && typeof i.move === "object") ? i.move.x : i.moveX;
+      const my = (i.move && typeof i.move === "object") ? i.move.y : i.moveY;
+
+      const ax = (i.aim && typeof i.aim === "object") ? i.aim.x : i.aimX;
+      const ay = (i.aim && typeof i.aim === "object") ? i.aim.y : i.aimY;
+
+      const sh = (typeof i.shooting !== "undefined") ? i.shooting
+               : (typeof i.shoot !== "undefined") ? i.shoot
+               : (typeof i.fire !== "undefined") ? i.fire
+               : false;
+
+      this.setMove(mx, my);
+      this.setAim(ax, ay);
+      this.setShooting(!!sh);
+      return true;
     },
+
+    // Optional tick(dt) for other engine styles (kept 3D-ready)
+    tick(dtSeconds) {
+      if (!this.running) return false;
+      const dt = clamp(Number(dtSeconds) || 0, 0, CFG.dtMax);
+      const tms = _now();
+      this._acc += dt;
+      let steps = 0;
+      while (this._acc >= CFG.dtFixed && steps < CFG.maxSubSteps) {
+        this._tickFixed(CFG.dtFixed, tms);
+        this._acc -= CFG.dtFixed;
+        steps++;
+      }
+      this._alpha = clamp(this._acc / CFG.dtFixed, 0, 1);
+      return true;
+    },
+
+    // ✅ ZOOM API (contract: delta +0.5 to current)
+    getZoom() { return Number(this.state.zoom) || CFG.zoom.default; },
+
+    // Alias for older callers
+    setZoom(z) { return this.setZoomLevel(z); },
 
     setZoomLevel(level) {
       this.state.zoom = _snapZoom(level);
@@ -380,9 +406,7 @@
     setZoomDelta(delta) {
       const d = Number(delta);
       if (!Number.isFinite(d) || !d) return this.getZoom();
-
       const cur = Number(this.state.zoom) || CFG.zoom.default;
-      // contract-friendly: still supports any delta, but always snaps to CFG.zoom.step
       this.state.zoom = _snapZoom(cur + d);
       return this.getZoom();
     },
@@ -398,12 +422,10 @@
       if (opts.skin) this.meta.skin = String(opts.skin);
       if (opts.weaponKey && CFG.weapons[opts.weaponKey]) this.meta.weaponKey = opts.weaponKey;
 
-      // ✅ allow passing zoom on start (optional, snapped)
       if (opts.zoom != null) this.setZoomLevel(opts.zoom);
 
       this._resetRun();
 
-      // bosses module install (safe)
       try {
         const B = window.BCO_ZOMBIES_BOSSES;
         if (B?.install && !this._bossInstalled) {
@@ -435,13 +457,15 @@
     },
 
     setMove(x, y) {
-      this.input.moveX = clamp(Number(x) || 0, -1, 1);
-      this.input.moveY = clamp(Number(y) || 0, -1, 1);
+      const nx = Number(x); const ny = Number(y);
+      this.input.moveX = clamp(Number.isFinite(nx) ? nx : 0, -1, 1);
+      this.input.moveY = clamp(Number.isFinite(ny) ? ny : 0, -1, 1);
       return true;
     },
 
     setAim(x, y) {
-      const n = norm(Number(x) || 0, Number(y) || 0);
+      const nx = Number(x); const ny = Number(y);
+      const n = norm(Number.isFinite(nx) ? nx : 0, Number.isFinite(ny) ? ny : 0);
       if (n.L > 0.02) {
         this.input.aimX = n.x;
         this.input.aimY = n.y;
@@ -712,7 +736,7 @@
         reserveMax: S.weapon.reserveMax | 0
       } : null;
 
-      const ev = this._eventsActive();
+      const ev = this._eventsActive(this.lastFrameAt || _now());
 
       return {
         alpha: a,
@@ -734,7 +758,6 @@
           perks: { ...S.perks },
           weapon
         },
-        // ✅ camera.zoom included (renderer should apply)
         camera: { x: S.camX, y: S.camY, zoom: Number(S.zoom) || CFG.zoom.default },
         player,
         bullets,
@@ -806,7 +829,6 @@
       const S = this.state;
       const st = this._effectiveStats();
 
-      // keep zoom as-is (user controlled)
       S.zoom = _snapZoom(S.zoom);
 
       S.timeMs = 0;
@@ -914,9 +936,10 @@
       try { if (typeof this.hooks.onWave === "function") this.hooks.onWave(this, wave); } catch {}
     },
 
-    _eventsActive() {
+    // v1.4.3: use sim time, not wall-clock
+    _eventsActive(tms) {
       const e = this.state.events;
-      const t = _now();
+      const t = Number(tms) || _now();
       return {
         maxAmmo: t < (e.maxAmmoUntil || 0),
         doublePoints: t < (e.doublePointsUntil || 0),
@@ -927,7 +950,7 @@
     _weaponEffective() {
       const S = this.state;
       const st = this._effectiveStats();
-      const ev = this._eventsActive();
+      const ev = this._eventsActive(this.lastFrameAt || _now());
 
       const w = S.weapon || mkWeapon(this.meta.weaponKey, "common", 0);
 
@@ -1211,10 +1234,11 @@
       if (!pu) return false;
 
       const rogue = isRogue(this);
+      const tms = this.lastFrameAt || _now();
 
       if (pu.kind === "coins") {
         if (!rogue) return true;
-        const ev = this._eventsActive();
+        const ev = this._eventsActive(tms);
         const amt = Math.max(1, (pu.data?.amount | 0) || 1);
         S.coins += ev.doublePoints ? (amt * 2) : amt;
         try { if (typeof this.hooks.onPickup === "function") this.hooks.onPickup(this, pu); } catch {}
@@ -1268,7 +1292,7 @@
 
       if (pu.kind === "event") {
         if (!rogue) return true;
-        const t = _now();
+        const t = tms;
         const e = String(pu.data?.event || "");
 
         if (e === "max_ammo") {
@@ -1303,9 +1327,7 @@
         const amt = Math.max(1, (pu.data?.amount | 0) || 1);
         const need = CFG.loot.relicNeed | 0;
         S.relics = clamp((S.relics | 0) + amt, 0, need);
-
         this._maybeUnlockWonder();
-
         try { if (typeof this.hooks.onPickup === "function") this.hooks.onPickup(this, pu); } catch {}
         return true;
       }
@@ -1351,7 +1373,6 @@
       }
     },
 
-    // Fixed step tick (NO render here)
     _tickFixed(dt, tms) {
       const S = this.state;
       const rogue = isRogue(this);
@@ -1495,7 +1516,7 @@
                 // ECONOMY: always progress on kill (rogue) even if renderer doesn’t draw pickups
                 if (rogue) {
                   const baseCoin = z.elite ? 2 : 1;
-                  const ev = this._eventsActive();
+                  const ev = this._eventsActive(tms);
                   S.coins += ev.doublePoints ? baseCoin * 2 : baseCoin;
                 }
 
@@ -1511,7 +1532,6 @@
 
             // boss death rewards (safe even if bosses module manages removal)
             if (isBoss && z.hp <= 0) {
-              // ensure removed if still present
               const idx = S.zombies.indexOf(z);
               if (idx >= 0) S.zombies.splice(idx, 1);
 
@@ -1543,7 +1563,7 @@
         this._awardXP(CFG.progress.xpWave + Math.floor(S.wave * 0.6));
 
         if (rogue) {
-          const ev = this._eventsActive();
+          const ev = this._eventsActive(tms);
           const waveCoins = 2 + Math.floor(S.wave * 0.35);
           S.coins += ev.doublePoints ? waveCoins * 2 : waveCoins;
 
@@ -1565,5 +1585,5 @@
   };
 
   window.BCO_ZOMBIES_CORE = CORE;
-  console.log("[Z_CORE] loaded (ULTRA LUX COD-ZOMBIES-2D v1.4.2 | 3D-READY CORE + ZOOM SNAP)");
+  console.log("[Z_CORE] loaded (ULTRA LUX COD-ZOMBIES-2D v1.4.3 | 3D-READY CORE + INPUT COMPAT + SIM EVENTS)");
 })();
