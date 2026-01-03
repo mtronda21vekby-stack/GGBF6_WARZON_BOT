@@ -123,7 +123,6 @@ body, .bco-z-overlay{ overscroll-behavior: none; }
 
 /* =========================
    OPTIONAL PERF MODE (3D heavy scenes)
-   Add: <html class="bco-perf"> to disable expensive blur/shadows
 ========================= */
 html.bco-perf *{
   box-shadow: var(--perf-shadows) !important;
