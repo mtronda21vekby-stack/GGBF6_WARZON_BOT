@@ -2,61 +2,145 @@
 (() => {
   "use strict";
 
-  const log = (...a) => { try { console.log("[BCO_ENGINE]", ...a); } catch {} };
-  const CFG = window.BCO_CFG || {};
-  const ZC = CFG.ZOMBIES || {};
-  const ZOOM_BUMP = ZC.ZOOM_BUMP || 0.5;
+  window.BCO = window.BCO || {};
+  const CFG = window.BCO.CONFIG || {};
+  const ZOOM_BUMP = Number(CFG.ZOOM_BUMP || 0.5);
 
-  function core() { return window.BCO_ZOMBIES_CORE || null; }
-  function game() { return window.BCO_ZOMBIES_GAME || null; }
+  function qs(id) { return document.getElementById(id); }
+  function log(...a) { console.log("[BCO_ENGINE]", ...a); }
 
-  const Engine = {
-    // lifecycle
-    start({ mode, w, h, map, character, skin, weaponKey, zoom } = {}) {
-      const C = core();
-      if (!C || typeof C.start !== "function") return false;
-      return !!C.start(mode, w, h, { map, character, skin, weaponKey, zoom });
-    },
+  const Engine = (() => {
+    const st = {
+      core: null,
+      canvas: null,
+      ctx: null,
+      raf: 0,
+      running: false,
+      w: 0,
+      h: 0
+    };
 
-    stop() { try { return !!core()?.stop?.(); } catch { return false; } },
+    function detectCore() {
+      st.core = window.BCO_ZOMBIES_CORE || null;
+      return !!st.core;
+    }
 
-    resize(w, h) { try { return !!core()?.resize?.(w, h); } catch { return false; } },
+    function ensureCanvas() {
+      const mount = qs("zOverlayMount");
+      if (!mount) return null;
 
-    // canvas / loop
-    setCanvas(canvas) { try { return !!game()?.setCanvas?.(canvas); } catch { return false; } },
-    startLoop() { try { return !!game()?.startLoop?.(); } catch { return false; } },
-    stopLoop() { try { return !!game()?.stopLoop?.(); } catch { return false; } },
+      let c = mount.querySelector("#bcoZCanvas");
+      if (!c) {
+        c = document.createElement("canvas");
+        c.id = "bcoZCanvas";
+        c.style.position = "fixed";
+        c.style.left = "0";
+        c.style.top = "0";
+        c.style.width = "100vw";
+        c.style.height = "100vh";
+        c.style.zIndex = "9999";
+        c.style.display = "none";
+        c.style.background = "transparent";
+        c.style.pointerEvents = "none"; // UI overlay handles input
+        mount.appendChild(c);
+      }
 
-    setInGame(on) { try { return !!game()?.setInGame?.(on); } catch { return false; } },
-    isInGame() { try { return !!game()?.isInGame?.(); } catch { return false; } },
+      st.canvas = c;
+      st.ctx = c.getContext("2d", { alpha: true, desynchronized: true });
+      return c;
+    }
 
-    // input
-    setMove(x, y) { try { return !!core()?.setMove?.(x, y); } catch { return false; } },
-    setAim(x, y) { try { return !!core()?.setAim?.(x, y); } catch { return false; } },
-    setShooting(on) { try { return !!core()?.setShooting?.(on); } catch { return false; } },
+    function resize() {
+      if (!st.canvas) return;
+      const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      const w = Math.floor(window.innerWidth * dpr);
+      const h = Math.floor(window.innerHeight * dpr);
+      if (w === st.w && h === st.h) return;
+      st.w = w; st.h = h;
+      st.canvas.width = w;
+      st.canvas.height = h;
+      try { st.core?.resize?.(w, h); } catch {}
+    }
 
-    // shop passthrough (roguelike)
-    buyUpgrade() { try { return !!core()?.buyUpgrade?.(); } catch { return false; } },
-    rerollWeapon() { try { return !!core()?.rerollWeapon?.(); } catch { return false; } },
-    buyReload() { try { return !!core()?.buyReload?.(); } catch { return false; } },
-    buyPerk(id) { try { return !!core()?.buyPerk?.(id); } catch { return false; } },
-    reload() { try { return !!core()?.reload?.(); } catch { return false; } },
-    usePlate() { try { return !!core()?.usePlate?.(); } catch { return false; } },
+    function render(frame) {
+      const R = window.BCO_ZOMBIES_RENDER || window.BCO_ZOMBIES_RENDERER || null;
+      if (R && typeof R.renderFrame === "function") {
+        R.renderFrame(frame, st.ctx, st.canvas);
+        return;
+      }
+      if (R && typeof R.render === "function") {
+        R.render(frame, st.ctx, st.canvas);
+        return;
+      }
 
-    // zoom contract
-    getZoom() { try { return core()?.getZoom?.() ?? 1.0; } catch { return 1.0; } },
-    zoomIn() { try { return core()?.setZoomDelta?.(+ZOOM_BUMP) ?? this.getZoom(); } catch { return this.getZoom(); } },
-    zoomOut() { try { return core()?.setZoomDelta?.(-ZOOM_BUMP) ?? this.getZoom(); } catch { return this.getZoom(); } },
-    setZoomDelta(d) { try { return core()?.setZoomDelta?.(d) ?? this.getZoom(); } catch { return this.getZoom(); } },
-    setZoomLevel(z) { try { return core()?.setZoomLevel?.(z) ?? this.getZoom(); } catch { return this.getZoom(); } },
+      // fallback minimal debug
+      const ctx = st.ctx;
+      ctx.clearRect(0, 0, st.canvas.width, st.canvas.height);
+      ctx.save();
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.fillRect(18, 18, 420, 140);
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
+      ctx.font = "24px system-ui,-apple-system,Inter,Arial";
+      ctx.fillText("ZOMBIES (render missing)", 28, 52);
+      if (frame && frame.hud) {
+        ctx.font = "18px system-ui,-apple-system,Inter,Arial";
+        ctx.fillText(`wave ${frame.hud.wave} kills ${frame.hud.kills}`, 28, 82);
+        ctx.fillText(`coins ${frame.hud.coins} relics ${frame.hud.relics}/${frame.hud.relicNeed}`, 28, 108);
+        ctx.fillText(`zoom ${frame.camera?.zoom || "?"}`, 28, 134);
+      }
+      ctx.restore();
+    }
 
-    // snapshot
-    getFrame() { try { return core()?.getFrameData?.() ?? null; } catch { return null; } },
+    function loop() {
+      if (!st.running) return;
+      resize();
 
-    // send result (use GAME helper if exists)
-    sendResult(reason) { try { return !!game()?.sendResult?.(reason); } catch { return false; } }
-  };
+      const t = (performance && performance.now) ? performance.now() : Date.now();
+      try { st.core?.updateFrame?.(t); } catch {}
 
-  window.BCO_ENGINE = Engine;
-  log("loaded");
+      let frame = null;
+      try { frame = st.core?.getFrameData?.() || null; } catch {}
+      render(frame);
+
+      st.raf = requestAnimationFrame(loop);
+    }
+
+    function start({ mode, map }) {
+      if (!detectCore()) return false;
+      ensureCanvas();
+      resize();
+
+      const m = String(mode || "arcade").toLowerCase().includes("rogue") ? "roguelike" : "arcade";
+      const mp = map || "Ashes";
+
+      st.core.start(m, st.w, st.h, { map: mp }, (performance && performance.now) ? performance.now() : Date.now());
+
+      // contract zoom bump (+0.5 to current)
+      if (typeof st.core.setZoomDelta === "function") st.core.setZoomDelta(ZOOM_BUMP);
+
+      st.canvas.style.display = "block";
+      st.running = true;
+      loop();
+      log("started", m, mp);
+      return true;
+    }
+
+    function stop() {
+      st.running = false;
+      if (st.raf) cancelAnimationFrame(st.raf);
+      st.raf = 0;
+      try { st.core?.stop?.(); } catch {}
+      if (st.canvas) st.canvas.style.display = "none";
+      return true;
+    }
+
+    function getFrame() {
+      try { return st.core?.getFrameData?.() || null; } catch { return null; }
+    }
+
+    return { start, stop, getFrame };
+  })();
+
+  window.BCO.engine = Engine;
 })();
