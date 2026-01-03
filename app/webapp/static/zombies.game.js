@@ -9,6 +9,11 @@
 // - iOS dead taps: pointer events + proper capture.
 // - Prevent pinch/zoom ONLY while in game takeover.
 // - Fullscreen takeover best-effort via Telegram WebApp API.
+//
+// HOTFIX (vNext):
+// - НЕ цепляем чужой canvas (убран "canvas" общий селектор)
+// - Создаваемый fullscreen canvas по умолчанию НЕ перекрывает UI (display:none + pointerEvents:none)
+// - Canvas активируется только при start() и прячется при stop()
 
 (() => {
   "use strict";
@@ -37,16 +42,15 @@
   const overlayMount = pickEl(["#zOverlayMount", "[data-z-overlay-mount]"]);
 
   function ensureCanvas() {
-    // Try existing canvas
+    // Try existing *game* canvas only (DO NOT grab any random canvas on page)
     let c = pickEl([
       "#zombiesCanvas",
       "#zCanvas",
       "canvas#zombies",
-      "canvas#game",
-      "canvas"
+      "canvas#game"
     ]);
 
-    // If none — create inside #zOverlayMount (this is REQUIRED for your current index.html)
+    // If none — create inside #zOverlayMount (REQUIRED for your current index.html)
     if (!c) {
       if (!overlayMount) {
         warn("No canvas and no #zOverlayMount. Cannot create game surface.");
@@ -62,13 +66,15 @@
       c.style.width = "100vw";
       c.style.height = "100vh";
       c.style.zIndex = "9999";
-      c.style.display = "block";
-      c.style.pointerEvents = "auto";
+
+      // IMPORTANT: inactive by default (menu scroll/click must work)
+      c.style.display = "none";
+      c.style.pointerEvents = "none";
       c.style.touchAction = "none";
       c.style.background = "transparent";
 
       overlayMount.appendChild(c);
-      log("Canvas created in #zOverlayMount");
+      log("Canvas created in #zOverlayMount (inactive)");
     }
 
     return c;
@@ -76,6 +82,19 @@
 
   // Canvas ref (lazy-safe)
   let canvas = null;
+
+  function setCanvasActive(on) {
+    if (!canvas) return;
+    if (on) {
+      canvas.style.display = "block";
+      canvas.style.pointerEvents = "auto";
+      canvas.style.touchAction = "none";
+    } else {
+      canvas.style.pointerEvents = "none";
+      canvas.style.display = "none";
+      canvas.style.touchAction = "";
+    }
+  }
 
   // Left/right joystick containers (optional; may be provided by other modules/HTML)
   const stickL = pickEl([
@@ -560,6 +579,9 @@
       return false;
     }
 
+    // ACTIVATE overlay canvas only now (menu must stay interactive)
+    setCanvasActive(true);
+
     // apply opts -> local state
     if (opts && typeof opts === "object") {
       if (opts.map) STATE.map = String(opts.map);
@@ -602,16 +624,15 @@
     try { c?.stop?.(reason); } catch {}
 
     STATE.inGame = false;
-    setHardening(false);
 
+    // Stop loop first
     stopLoop();
 
-    // optional: hide canvas (do not destroy)
-    try {
-      if (canvas) {
-        // keep it in DOM for next start; just stop drawing.
-      }
-    } catch {}
+    // Leave takeover / restore scroll
+    setHardening(false);
+
+    // Hide overlay canvas so UI becomes clickable/scrollable again
+    setCanvasActive(false);
 
     health("stopped");
     return true;
@@ -697,6 +718,9 @@
 
     // Prepare canvas lazily (do not force takeover)
     canvas = ensureCanvas();
+
+    // Ensure menu is interactive at boot (canvas hidden + no pointer capture)
+    setCanvasActive(false);
 
     // sticks (if present)
     const moveStick = makeStick(stickL, "move");
