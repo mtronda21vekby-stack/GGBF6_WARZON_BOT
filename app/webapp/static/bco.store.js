@@ -2,53 +2,82 @@
 (() => {
   "use strict";
 
-  const CFG = window.BCO_CFG || { STORAGE_KEY: "bco_state_v1" };
+  window.BCO = window.BCO || {};
+  const CFG = window.BCO.CONFIG || { STORAGE_KEY: "bco_state_v1" };
+  const KEY = CFG.STORAGE_KEY;
 
-  function safeParse(s, fallback) {
-    try { return JSON.parse(s); } catch { return fallback; }
+  const safeParse = (s, fb) => { try { return JSON.parse(s); } catch { return fb; } };
+  const safeStr = (o, fb = "{}") => { try { return JSON.stringify(o); } catch { return fb; } };
+
+  function tg() {
+    return (window.Telegram && Telegram.WebApp) ? Telegram.WebApp : null;
   }
 
-  const Store = {
-    load() {
-      const raw = localStorage.getItem(CFG.STORAGE_KEY);
-      const st = safeParse(raw, null) || {};
-      // minimal defaults (do not override user state)
-      if (!st.profile) st.profile = {};
-      if (!st.profile.voice) st.profile.voice = (CFG.DEFAULT_VOICE || "TEAMMATE");
-      if (!st.profile.mode) st.profile.mode = "Normal";
-      if (!st.profile.platform) st.profile.platform = "PC";
-      if (!st.profile.input) st.profile.input = "Controller";
-      if (!st.profile.game) st.profile.game = "Warzone";
-      if (!st.profile.role) st.profile.role = "Flex";
-      if (!st.profile.bf6_class) st.profile.bf6_class = "Assault";
+  async function load() {
+    let base = safeParse(localStorage.getItem(KEY) || "{}", {});
+    const wa = tg();
+    if (wa && wa.CloudStorage) {
+      const cloudVal = await new Promise((resolve) => {
+        wa.CloudStorage.getItem(KEY, (err, val) => resolve(err ? null : val));
+      });
+      const cloudObj = cloudVal ? safeParse(cloudVal, null) : null;
+      if (cloudObj && typeof cloudObj === "object") base = { ...base, ...cloudObj };
+    }
+    return base;
+  }
 
-      if (!st.zombies) st.zombies = {};
-      if (!st.zombies.map) st.zombies.map = "Ashes";
-      if (!st.zombies.mode) st.zombies.mode = "arcade";
-      if (st.zombies.zoom == null) st.zombies.zoom = 1.0;
-      if (!st.zombies.character) st.zombies.character = "male";
-      if (!st.zombies.skin) st.zombies.skin = "default";
+  async function save(obj) {
+    localStorage.setItem(KEY, safeStr(obj, "{}"));
+    const wa = tg();
+    if (wa && wa.CloudStorage) {
+      await new Promise((resolve) => {
+        wa.CloudStorage.setItem(KEY, safeStr(obj, "{}"), () => resolve(true));
+      });
+    }
+    return true;
+  }
 
-      return st;
+  function getPath(obj, path, fb) {
+    const parts = String(path || "").split(".").filter(Boolean);
+    let cur = obj;
+    for (const k of parts) {
+      if (!cur || typeof cur !== "object" || !(k in cur)) return fb;
+      cur = cur[k];
+    }
+    return (cur === undefined) ? fb : cur;
+  }
+
+  function setPath(obj, path, value) {
+    const parts = String(path || "").split(".").filter(Boolean);
+    if (!parts.length) return obj;
+    let cur = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const k = parts[i];
+      if (!cur[k] || typeof cur[k] !== "object") cur[k] = {};
+      cur = cur[k];
+    }
+    cur[parts[parts.length - 1]] = value;
+    return obj;
+  }
+
+  const store = {
+    async get(path, fb) {
+      const obj = await load();
+      return getPath(obj, path, fb);
     },
-
-    save(state) {
-      try {
-        localStorage.setItem(CFG.STORAGE_KEY, JSON.stringify(state || {}));
-        return true;
-      } catch {
-        return false;
-      }
+    async set(path, value) {
+      const obj = await load();
+      setPath(obj, path, value);
+      await save(obj);
+      return true;
     },
-
-    patch(mutator) {
-      const st = Store.load();
-      const next = (typeof mutator === "function") ? (mutator(st) || st) : st;
-      Store.save(next);
-      return next;
+    async patch(p) {
+      const obj = await load();
+      const merged = { ...obj, ...(p || {}) };
+      await save(merged);
+      return true;
     }
   };
 
-  window.BCO_STORE = Store;
-  console.log("[BCO_STORE] loaded");
+  window.BCO.store = store;
 })();
