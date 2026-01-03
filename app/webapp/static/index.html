@@ -3,7 +3,6 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <!-- PREMIUM: anti-zoom + safe-area + stable scaling -->
   <meta
     name="viewport"
     content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no"
@@ -16,17 +15,15 @@
   <meta name="mobile-web-app-capable" content="yes" />
 
   <title>BLACK CROWN OPS — Mini App</title>
-
   <base href="/webapp/">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-  <!-- build marker -->
   <script>window.__BCO_BUILD__="__BUILD__";</script>
 
-  <!-- PREMIUM: disable pinch/double-tap zoom (iOS WebView hardening) -->
+  <!-- iOS anti-zoom (safe) -->
   <script>
     (function () {
       function prevent(e) { try { e.preventDefault(); } catch(_) {} }
@@ -73,7 +70,7 @@
   <!-- Telegram WebApp bootstrap -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-  <!-- TG HARDENING: set CSS insets + hide TG chrome in takeover -->
+  <!-- TG HARDENING: insets + hide TG chrome by default -->
   <script>
     (function () {
       function safe(fn){ try{ fn(); }catch(_){ } }
@@ -111,9 +108,6 @@
       }
 
       function showChrome(){
-        if (!window.Telegram || !Telegram.WebApp) return;
-        var wa = Telegram.WebApp;
-        safe(function(){ wa.ready(); });
         applyInsets();
       }
 
@@ -132,9 +126,10 @@
         safe(function(){ wa.BackButton && wa.BackButton.hide && wa.BackButton.hide(); });
 
         applyInsets();
-
         safe(function(){
-          wa.onEvent && wa.onEvent("viewportChanged", function(){ applyInsets(); });
+          wa.onEvent && wa.onEvent("viewportChanged", function(){
+            applyInsets();
+          });
         });
       }
 
@@ -170,11 +165,41 @@
     </div>
   </header>
 
-  <div class="top-tabs" style="display:none;"></div>
-
   <main class="wrap app-main" role="main">
-    <!-- ТВОЙ UI ОСТАЁТСЯ КАК БЫЛ (я не режу) -->
-    <!-- (вставка твоих секций 1-в-1) -->
+    <section class="hero card">
+      <div class="hero-left">
+        <div class="hero-kicker">Твой штаб управления</div>
+        <div class="hero-title">Доминируй. Учись. Выигрывай.</div>
+        <div class="hero-desc">
+          Mini App = чат + управление профилем + мини-игры.<br/>
+          Всё отправляется в бота одной кнопкой. 😈
+        </div>
+        <div class="hero-actions">
+          <button class="btn ghost" id="btnShare" type="button">📤 Share</button>
+          <button class="btn ghost" id="btnClose" type="button">✖ Close</button>
+        </div>
+      </div>
+
+      <div class="hero-right">
+        <div class="stat">
+          <div class="stat-label">Статус</div>
+          <div class="stat-value" id="statOnline">ONLINE</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Сессия</div>
+          <div class="stat-value" id="statSession">SYNC</div>
+        </div>
+
+        <div class="premium cardlite">
+          <div class="premium-title">💎 Premium</div>
+          <div class="premium-desc">Оплата через бота (Invoice). Mini App отправит команду.</div>
+          <div class="actions">
+            <button class="btn primary" id="btnBuyMonth" type="button">Купить • Month</button>
+            <button class="btn" id="btnBuyLife" type="button">Купить • Lifetime</button>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <!-- ========================= HOME ========================== -->
     <section class="grid tabpane active" id="tab-home">
@@ -191,22 +216,234 @@
         </div>
       </div>
 
+      <div class="chat-shell">
+        <div class="chat-head">
+          <div class="left">
+            <div class="chat-badge">😈</div>
+            <div>
+              <div class="chat-title">Чат с мозгом</div>
+              <div class="chat-sub" id="chatSub">TEAMMATE • Normal • PC</div>
+            </div>
+          </div>
+          <div class="right">
+            <button class="chat-mini" id="btnChatClear" type="button">🧹 Очистить</button>
+            <button class="chat-mini" id="btnChatExport" type="button">📋 Copy</button>
+          </div>
+        </div>
+
+        <div class="chat-log" id="chatLog" aria-label="Chat log"></div>
+
+        <div class="chat-compose">
+          <textarea id="chatInput" class="input" rows="2"
+            placeholder="Напиши: игра | input | где умираешь | цель"></textarea>
+          <button class="chat-send" id="btnChatSend" type="button" aria-label="Send">➤</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🎮 Игра</div>
+        <div class="seg" id="segGame">
+          <button class="seg-btn active" data-value="Warzone" type="button">🔥 Warzone</button>
+          <button class="seg-btn" data-value="BO7" type="button">💣 BO7</button>
+          <button class="seg-btn" data-value="BF6" type="button">🪖 BF6</button>
+        </div>
+        <div class="mini-row">
+          <div class="pill" id="pillRole">🎭 Role: Flex</div>
+          <div class="pill" id="pillBf6">🟩 Class: Assault</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🎮 Mini Games (2 режима)</div>
+        <div class="hint">
+          Aim Trial = аркада на точность. Zombies = Arcade / Roguelike.
+          Результаты отправляются в бота (action=game_result).
+        </div>
+
+        <div class="grid" style="margin-top:10px;">
+          <div class="cardlite">
+            <div class="card-title">🎯 Aim Trial (ARCADE)</div>
+            <div class="hint">20 секунд. Тап по цели = hit. Тап мимо = miss.</div>
+            <div class="game-arena aim-arena" id="aimArena" aria-label="Aim arena">
+              <button class="aim-target" id="aimTarget" type="button" aria-label="Aim target"></button>
+            </div>
+            <div class="game-stat mono aim-stat" id="aimStat">🎯 0/0 • Acc 0%</div>
+            <div class="actions" style="margin-top:10px;">
+              <button class="btn primary" id="btnAimStart" type="button">Start</button>
+              <button class="btn" id="btnAimStop" type="button">Stop</button>
+              <button class="btn" id="btnAimSend" type="button">Send result → bot</button>
+            </div>
+          </div>
+
+          <div class="cardlite">
+            <div class="card-title">🧟 Zombies Survival</div>
+
+            <div class="seg" style="margin:8px 0;">
+              <button class="seg-btn active" id="btnZModeArcade" type="button">💥 Arcade</button>
+              <button class="seg-btn" id="btnZModeRogue" type="button">😈 Roguelike</button>
+            </div>
+
+            <div class="actions" style="margin-top:10px;">
+              <button class="btn primary" id="btnZQuickPlay" type="button">🧟 Start Fullscreen</button>
+              <button class="btn" id="btnZGameSend" type="button">Send result → bot</button>
+            </div>
+
+            <div class="card-sub">Shop (в игре • Roguelike)</div>
+            <div class="actions">
+              <button class="btn" id="btnZBuyJug" type="button">🧪 Jug (12)</button>
+              <button class="btn" id="btnZBuySpeed" type="button">⚡ Speed (10)</button>
+              <button class="btn" id="btnZBuyAmmo" type="button">🔫 Ammo (8)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================= COACH ========================== -->
+    <section class="grid tabpane" id="tab-coach">
+      <div class="card">
+        <div class="card-title">🎯 План тренировки (20 минут)</div>
+        <div class="list">
+          <div class="li"><span class="dot"></span>5 мин — контроль (разминка)</div>
+          <div class="li"><span class="dot"></span>10 мин — слабое место (аим/мувмент/позиционка)</div>
+          <div class="li"><span class="dot"></span>5 мин — закрепление в бою</div>
+        </div>
+
+        <div class="card-sub">Выбери фокус</div>
+        <div class="seg" id="segFocus">
+          <button class="seg-btn active" data-value="aim" type="button">🎯 Aim</button>
+          <button class="seg-btn" data-value="movement" type="button">🧠 Мувмент</button>
+          <button class="seg-btn" data-value="position" type="button">🗺 Позиционка</button>
+        </div>
+
+        <div class="actions">
+          <button class="btn primary" id="btnSendPlan" type="button">Сгенерировать план в боте</button>
+          <button class="btn" id="btnOpenTraining" type="button">Открыть “🎯 Тренировка”</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">😈 Режим мышления</div>
+        <div class="seg" id="segMode">
+          <button class="seg-btn active" data-value="Normal" type="button">🧠 Normal</button>
+          <button class="seg-btn" data-value="Pro" type="button">🔥 Pro</button>
+          <button class="seg-btn" data-value="Demon" type="button">😈 Demon</button>
+        </div>
+        <div class="hint">Меняет стиль рекомендаций (TEAMMATE — дефолт, COACH — элита).</div>
+      </div>
+    </section>
+
+    <!-- ========================= VOD ========================== -->
+    <section class="grid tabpane" id="tab-vod">
+      <div class="card">
+        <div class="card-title">🎬 VOD: разбор без видео</div>
+        <div class="hint">Кинь 3 таймкода и что хотел сделать — бот разберёт решения.</div>
+        <div class="grid2">
+          <input class="input" id="vod1" placeholder="00:12" />
+          <input class="input" id="vod2" placeholder="01:40" />
+          <input class="input" id="vod3" placeholder="03:05" />
+        </div>
+        <textarea class="input" id="vodNote" rows="3" placeholder="Что ты хотел сделать / какой был план"></textarea>
+        <div class="actions">
+          <button class="btn primary" id="btnSendVod" type="button">Отправить в бота</button>
+          <button class="btn" id="btnOpenVod" type="button">Открыть “🎬 VOD”</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================= SETTINGS ========================== -->
+    <section class="grid tabpane" id="tab-settings">
+      <div class="card">
+        <div class="card-title">⚙️ Профиль</div>
+
+        <div class="grid2">
+          <div class="field">
+            <div class="label">Platform</div>
+            <div class="seg" id="segPlatform">
+              <button class="seg-btn active" data-value="PC" type="button">🖥 PC</button>
+              <button class="seg-btn" data-value="PlayStation" type="button">🎮 PS</button>
+              <button class="seg-btn" data-value="Xbox" type="button">🎮 Xbox</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="label">Input</div>
+            <div class="seg" id="segInput">
+              <button class="seg-btn" data-value="KBM" type="button">⌨️ KBM</button>
+              <button class="seg-btn active" data-value="Controller" type="button">🎮 Controller</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="label">Voice</div>
+          <div class="seg" id="segVoice">
+            <button class="seg-btn active" data-value="TEAMMATE" type="button">🤝 Тиммейт</button>
+            <button class="seg-btn" data-value="COACH" type="button">📚 Коуч</button>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn primary" id="btnApplyProfile" type="button">Применить и сохранить</button>
+          <button class="btn" id="btnOpenSettings" type="button">Открыть “⚙️ Настройки”</button>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-title">🧠 Диагностика</div>
-        <div class="hint" id="buildTag" style="margin-top:8px; opacity:.85;">build: __BUILD__</div>
-        <div class="hint" id="jsHealth" style="margin-top:6px; opacity:.85; color:rgba(255,255,255,.65);">
+        <div class="list mono">
+          <div class="li">user_id: <span id="dbgUser">—</span></div>
+          <div class="li">chat: <span id="dbgChat">—</span></div>
+          <div class="li">theme: <span id="dbgTheme">—</span></div>
+          <div class="li">initData: <span id="dbgInit">—</span></div>
+        </div>
+
+        <div class="hint">Если initData = empty — ты открыл не из Telegram.</div>
+
+        <div class="hint" id="buildTag" style="margin-top:8px; opacity:.85;">
+          build: __BUILD__
+        </div>
+
+        <div class="hint" id="jsHealth"
+             style="margin-top:6px; opacity:.85; color:rgba(255,255,255,.65);">
           js: loading…
         </div>
       </div>
     </section>
 
-    <!-- ========================= GAME (ZOMBIES FULLSCREEN) ========================== -->
+    <!-- ========================= GAME ========================== -->
     <section class="grid tabpane" id="tab-game">
       <div class="card">
         <div class="card-title">🧟 Game: Zombies Survival</div>
+
+        <div class="card-sub">Карта</div>
+        <div class="seg" id="segZMap">
+          <button class="seg-btn active" data-value="Ashes" type="button">🧟 Ashes</button>
+          <button class="seg-btn" data-value="Astra" type="button">🧟 Astra</button>
+        </div>
+
+        <div class="card-sub">Режим</div>
+        <div class="seg" style="margin-top:8px;">
+          <button class="seg-btn active" id="btnZModeArcade2" type="button">💥 Arcade</button>
+          <button class="seg-btn" id="btnZModeRogue2" type="button">😈 Roguelike</button>
+        </div>
+
         <div class="actions" style="margin-top:10px;">
           <button class="btn primary" id="btnZEnterGame" type="button">▶ Start Fullscreen</button>
+          <button class="btn" id="btnZOpenHQ" type="button">🧠 Zombies HQ (бот/гайды)</button>
           <button class="btn" id="btnZGameSend2" type="button">Send result → bot</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🧟 Zombies: штаб (команды боту)</div>
+        <div class="actions">
+          <button class="btn primary" id="btnOpenZombies" type="button">Открыть Zombies в боте</button>
+          <button class="btn" id="btnZPerks" type="button">Перки</button>
+          <button class="btn" id="btnZLoadout" type="button">Оружие</button>
+          <button class="btn" id="btnZEggs" type="button">Пасхалки</button>
+          <button class="btn" id="btnZRound" type="button">Стратегия</button>
+          <button class="btn" id="btnZTips" type="button">Советы</button>
         </div>
       </div>
     </section>
@@ -217,9 +454,19 @@
     </footer>
   </main>
 
+  <!-- ✅ ВОССТАНОВЛЕНА 5-вкладочная навигация -->
   <nav class="bottombar bottom-nav" aria-label="Навигация">
     <button class="nav-btn active" data-tab="home" type="button" aria-selected="true">
       <span class="nav-ico">⭐</span><span class="nav-txt">Главная</span>
+    </button>
+    <button class="nav-btn" data-tab="coach" type="button" aria-selected="false">
+      <span class="nav-ico">🎯</span><span class="nav-txt">Тренировка</span>
+    </button>
+    <button class="nav-btn" data-tab="vod" type="button" aria-selected="false">
+      <span class="nav-ico">🎬</span><span class="nav-txt">VOD</span>
+    </button>
+    <button class="nav-btn" data-tab="settings" type="button" aria-selected="false">
+      <span class="nav-ico">⚙️</span><span class="nav-txt">Настройки</span>
     </button>
     <button class="nav-btn" data-tab="game" type="button" aria-selected="false">
       <span class="nav-ico">🕹️</span><span class="nav-txt">Game</span>
@@ -229,62 +476,56 @@
   <div class="toast" id="toast">OK</div>
   <div id="zOverlayMount" aria-hidden="true"></div>
 
-  <!-- ✅ ANTI-BRICK BOOT: НИЧЕГО НЕ ПАДАЕТ, app.js ГРУЗИТСЯ ВСЕГДА -->
+  <!-- ✅ LEGACY BOOT ONLY: НИКАКОГО new stack -->
   <script>
     (function () {
       var build = window.__BCO_BUILD__ || String(Date.now());
       var health = document.getElementById("jsHealth");
-
       function setHealth(msg) { if (health) health.textContent = msg; }
 
-      function loadAny(src) {
-        return new Promise(function (resolve) {
+      function load(src) {
+        return new Promise(function (resolve, reject) {
           var s = document.createElement("script");
           s.src = src + "?build=" + encodeURIComponent(build);
           s.async = false;
-          s.onload = function () { resolve({ src: src, ok: true }); };
-          s.onerror = function () {
-            console.warn("[BOOT] missing:", src);
-            resolve({ src: src, ok: false });
-          };
+          s.onload = function () { resolve(true); };
+          s.onerror = function () { reject(new Error("Failed: " + src)); };
           document.body.appendChild(s);
         });
       }
 
-      function loadChain(list) {
-        var p = Promise.resolve(true);
-        list.forEach(function (src) {
-          p = p.then(function () { return loadAny(src); });
+      function loadOptional(src) {
+        return new Promise(function (resolve) {
+          var s = document.createElement("script");
+          s.src = src + "?build=" + encodeURIComponent(build);
+          s.async = false;
+          s.onload = function () { resolve(true); };
+          s.onerror = function () { resolve(false); };
+          document.body.appendChild(s);
         });
-        return p;
       }
 
-      setHealth("js: boot…");
+      setHealth("js: boot (LEGACY)…");
 
-      // Пытаемся подхватить твои модули, НО это НЕ обязаловка.
-      // Главное — app.js в конце.
-      loadChain([
-        "/webapp/bco.input.js",
-        "/webapp/bco.engine.js",
-
-        // legacy zombies.* (если есть)
-        "/webapp/zombies.assets.js",
-        "/webapp/zombies.perks.js",
-        "/webapp/zombies.maps.js",
-        "/webapp/zombies.collisions.js",
-        "/webapp/zombies.bosses.js",
-        "/webapp/zombies.core.js",
-        "/webapp/zombies.render.js",
-        "/webapp/zombies.world.js",
-        "/webapp/zombies.game.js",
-        "/webapp/zombies.init.js",
-
-        // ✅ ВСЕГДА ГРУЗИМ app.js
-        "/webapp/app.js"
-      ]).then(function () {
-        window.__BCO_JS_OK__ = true;
-        setHealth("js: OK (booted)");
-      });
+      loadOptional("/webapp/zombies.assets.js")
+        .then(function () { return loadOptional("/webapp/zombies.perks.js"); })
+        .then(function () { return loadOptional("/webapp/zombies.maps.js"); })
+        .then(function () { return loadOptional("/webapp/zombies.collisions.js"); })
+        .then(function () { return loadOptional("/webapp/zombies.bosses.js"); })
+        .then(function () { return load("/webapp/zombies.core.js"); })
+        .then(function () { return load("/webapp/zombies.render.js"); })
+        .then(function () { return loadOptional("/webapp/zombies.world.js"); })
+        .then(function () { return load("/webapp/zombies.game.js"); })
+        .then(function () { return load("/webapp/zombies.init.js"); })
+        .then(function () { return load("/webapp/app.js"); })
+        .then(function () {
+          window.__BCO_JS_OK__ = true;
+          setHealth("js: OK (booted)");
+        })
+        .catch(function (e) {
+          console.error("BCO boot load error:", e);
+          setHealth("js: BOOT ERROR (check console)");
+        });
     })();
   </script>
 </body>
