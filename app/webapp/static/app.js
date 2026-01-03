@@ -86,12 +86,15 @@
 
   // =========================================================
   // ✅ ULTRA TAP (iOS SAFE) — no dead clicks, no double fires
+  // - idempotent + blocks click-after-pointerup double fire
   // =========================================================
   function onTap(el, handler, opts = {}) {
     if (!el) return;
     const lockMs = Math.max(120, opts.lockMs ?? 220);
 
     let locked = false;
+    let lastPointerUpAt = 0;
+
     const lock = () => {
       locked = true;
       setTimeout(() => (locked = false), lockMs);
@@ -106,17 +109,25 @@
     if (window.PointerEvent) {
       el.style.touchAction = el.style.touchAction || "manipulation";
 
+      // capture early (but do NOT prevent default here)
       el.addEventListener("pointerdown", (e) => {
         if (typeof e.button === "number" && e.button !== 0) return;
         try { el.setPointerCapture?.(e.pointerId); } catch {}
       }, { capture: true, passive: true });
 
+      // main trigger
       el.addEventListener("pointerup", (e) => {
         if (typeof e.button === "number" && e.button !== 0) return;
+        lastPointerUpAt = now();
         fire(e);
       }, { capture: true, passive: true });
 
-      el.addEventListener("click", (e) => fire(e), { capture: true, passive: true });
+      // click fallback, but ignore if a pointerup happened recently (iOS double-trigger)
+      el.addEventListener("click", (e) => {
+        if (now() - lastPointerUpAt < 380) return;
+        fire(e);
+      }, { capture: true, passive: true });
+
       return;
     }
 
@@ -396,8 +407,12 @@
 
   // =========================================================
   // ✅ STOP ZOOM (premium): kill pinch/double-tap zoom in GAME
+  // - idempotent (won't stack listeners)
   // =========================================================
   function installNoZoomGuards() {
+    if (window.__BCO_NOZOOM_INSTALLED__) return;
+    window.__BCO_NOZOOM_INSTALLED__ = true;
+
     let lastTouchEnd = 0;
 
     document.addEventListener("gesturestart", (e) => {
@@ -1361,6 +1376,7 @@
         card.style.overflow = "auto";
         card.style.webkitOverflowScrolling = "touch";
         card.style.pointerEvents = "auto";
+        card.style.touchAction = "pan-y";
       }
       modal.style.pointerEvents = "auto";
       modal.style.touchAction = "pan-y";
@@ -1799,6 +1815,7 @@
     zombiesSetMode(state.zombies_mode);
     zombiesStartRun();
 
+    // ✅ ensure zoom guards are installed once (no stacking)
     installNoZoomGuards();
 
     haptic("notif", "success");
@@ -1828,14 +1845,17 @@
   }
 
   // =========================================================
-  // ENGINE HUD / RESULT HOOKS
+  // ENGINE HUD / RESULT HOOKS (idempotent)
   // =========================================================
   function hookEngineHud() {
+    if (window.__BCO_ZHUD_HOOKED__) return;
     const z = ZB();
     if (!z) return;
 
     const on = z.on || z.addEventListener;
     if (!on) return;
+
+    window.__BCO_ZHUD_HOOKED__ = true;
 
     try {
       on.call(z, "hud", (hud) => {
@@ -2044,7 +2064,7 @@
     onTap(chipVoice, async () => {
       haptic("impact", "light");
       state.voice = (state.voice === "COACH") ? "TEAMMATE" : "COACH";
-      setChipText();
+      setChipText(); // ✅ FIX: was broken line causing runtime error
       setActiveSeg("#segVoice", state.voice);
       await saveState();
       toast(state.voice === "COACH" ? "Коуч включён 📚" : "Тиммейт 🤝");
@@ -2238,6 +2258,7 @@
 
     updateTelegramButtons();
 
+    // ✅ install once (used both in menu + during game)
     installNoZoomGuards();
   }
 
