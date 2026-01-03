@@ -4,10 +4,10 @@
 
   // Contract:
   // - no UI redesign
-  // - iOS clicks 100%
+  // - iOS clicks 100% (handled by bco.input.js + zombies/ui.js)
   // - fullscreen takeover hides TG chrome
-  // - engine interface via window.BCO.engine (single source)
-  // - Arcade/Roguelike mode switch (real differences live in CORE, runtime only selects)
+  // - engine interface via window.BCO.engine (preferred) with compatibility fallback
+  // - Arcade/Roguelike switch chooses mode; real differences live in CORE
 
   window.BCO = window.BCO || {};
   window.BCO.zombies = window.BCO.zombies || {};
@@ -28,6 +28,7 @@
   const Takeover = (() => {
     let savedY = 0;
     let pushedState = false;
+    let pushToken = 0;
 
     const takeoverClass = FS.TAKEOVER_CLASS || "bco-game-takeover";
     const activeClass = FS.ACTIVE_CLASS || "bco-game-active";
@@ -38,7 +39,6 @@
       if (on) {
         savedY = window.scrollY || 0;
 
-        // fixed body lock (iOS safe)
         document.body.style.position = "fixed";
         document.body.style.top = `-${savedY}px`;
         document.body.style.left = "0";
@@ -61,23 +61,18 @@
       safe(() => wa.ready());
       safe(() => wa.expand());
 
-      if (on) {
-        safe(() => wa.MainButton?.hide?.());
-        safe(() => wa.BackButton?.hide?.());
-        safe(() => wa.enableClosingConfirmation?.());
-      } else {
-        // we still keep TG chrome minimal by default (as in your index.html)
-        safe(() => wa.MainButton?.hide?.());
-        safe(() => wa.BackButton?.hide?.());
-        safe(() => wa.disableClosingConfirmation?.());
-      }
+      // ALWAYS hide TG chrome for this app (your index.html already does it),
+      // but we re-apply during takeover for 100% reliability.
+      safe(() => wa.MainButton?.hide?.());
+      safe(() => wa.BackButton?.hide?.());
 
-      // apply insets if helper exists
+      if (on) safe(() => wa.enableClosingConfirmation?.());
+      else safe(() => wa.disableClosingConfirmation?.());
+
       safe(() => window.BCO_TG?.applyInsets?.());
     }
 
     function hideUI(on) {
-      // No redesign: just hide/show existing layout containers.
       const header = document.querySelector("header.app-header");
       const nav = document.querySelector("nav.bottom-nav");
       const main = document.querySelector("main.app-main");
@@ -97,18 +92,26 @@
     }
 
     function pushBackHandler() {
-      // Elite iOS/Android: make “Back” exit game even if TG hides BackButton.
+      // Make hardware/browser back exit game reliably
       if (pushedState) return;
       pushedState = true;
+      pushToken = Date.now();
       try {
-        history.pushState({ bcoGame: true }, "", location.href);
+        history.pushState({ bcoGame: true, token: pushToken }, "", location.href);
       } catch {}
     }
 
-    function popBackHandler() {
+    function clearBackHandlerMarker() {
+      // Don’t force history.back() (can kick user out of WebApp).
+      // Just “neutralize” state marker so next popstate is normal.
       if (!pushedState) return;
       pushedState = false;
-      // Pop happens automatically by user; nothing to undo.
+      try {
+        const st = history.state || {};
+        if (st && st.bcoGame) {
+          history.replaceState({ ...st, bcoGame: false }, "", location.href);
+        }
+      } catch {}
     }
 
     function enter() {
@@ -130,7 +133,7 @@
       hideUI(false);
       hideTG(false);
       lockScroll(false);
-      popBackHandler();
+      clearBackHandlerMarker();
 
       bus?.emit?.("zombies:takeover", { on: false });
     }
@@ -153,7 +156,6 @@
   function setMode(m) {
     state.mode = (String(m).toUpperCase().includes("ROGUE")) ? "ROGUELIKE" : "ARCADE";
 
-    // sync both mode button pairs (NO redesign)
     const a1 = qs("btnZModeArcade");
     const r1 = qs("btnZModeRogue");
     const a2 = qs("btnZModeArcade2");
@@ -179,16 +181,59 @@
     bus?.emit?.("zombies:map", { map: state.map });
   }
 
+  // -------------------------
+  // Engine compatibility layer (object-start OR (mode,opts)-start)
+  // -------------------------
+  function getEngine() {
+    // Prefer your render-loop engine (bco.engine.js): window.BCO.engine
+    // Fallbacks: adapter / legacy
+    return window.BCO?.engine || window.BCO_ENGINE || window.BCO_ENGINE_ADAPTER || null;
+  }
+
+  function engineStart(engine, payload) {
+    if (!engine) return false;
+
+    // payload: { mode: "arcade|roguelike", map: "Ashes|Astra" }
+    const m = (payload.mode || "arcade");
+    const mp = (payload.map || "Ashes");
+
+    // 1) bco.engine.js version (expects start({mode,map}))
+    try {
+      if (typeof engine.start === "function") {
+        // detect signature by trying object start first (safe)
+        const r = engine.start({ mode: m, map: mp });
+        if (typeof r === "boolean") return r;
+        // if it didn't return boolean, treat as success unless it threw
+        return true;
+      }
+    } catch {}
+
+    // 2) adapter style start(mode, opts)
+    try {
+      if (typeof engine.start === "function") {
+        engine.start(m, { map: mp });
+        return true;
+      }
+    } catch {}
+
+    return false;
+  }
+
+  function engineStop(engine) {
+    try { engine?.stop?.(); } catch {}
+    return true;
+  }
+
   function startGame() {
-    const engine = window.BCO.engine || window.BCO_ENGINE || null;
-    if (!engine || typeof engine.start !== "function") {
+    const engine = getEngine();
+    if (!engine) {
       console.warn("[Z_RUNTIME] engine missing");
       return false;
     }
 
     Takeover.enter();
 
-    const ok = engine.start({
+    const ok = engineStart(engine, {
       mode: (state.mode === "ROGUELIKE") ? "roguelike" : "arcade",
       map: state.map
     });
@@ -204,8 +249,8 @@
   }
 
   function stopGame() {
-    const engine = window.BCO.engine || window.BCO_ENGINE || null;
-    safe(() => engine?.stop?.());
+    const engine = getEngine();
+    engineStop(engine);
     Takeover.exit();
     bus?.emit?.("zombies:stopped", {});
     return true;
@@ -241,9 +286,19 @@
       if (e.key === "Escape") stopGame();
     });
 
-    // Browser back exits (history pushState in takeover)
-    window.addEventListener("popstate", () => {
-      if (Takeover.isActive()) stopGame();
+    // Browser/back exits game ONLY if takeover is active.
+    window.addEventListener("popstate", (e) => {
+      const st = e && e.state ? e.state : null;
+      if (Takeover.isActive()) {
+        // Always exit game on any pop during takeover (most reliable).
+        stopGame();
+        return;
+      }
+      // If not in takeover: ignore.
+      if (st && st.bcoGame) {
+        // neutralize marker if any
+        try { history.replaceState({ ...st, bcoGame: false }, "", location.href); } catch {}
+      }
     });
 
     // If app becomes visible again during takeover, re-hide TG chrome
@@ -253,6 +308,11 @@
         safe(() => tg()?.BackButton?.hide?.());
         safe(() => window.BCO_TG?.applyInsets?.());
       }
+    });
+
+    // External stop request (future-proof)
+    bus?.on?.("zombies:stop", () => {
+      if (Takeover.isActive()) stopGame();
     });
 
     return true;
@@ -265,12 +325,19 @@
       modalScrollSelector: ".bco-modal-scroll"
     }));
 
-    // default state
+    // Default state apply
     setMode(state.mode);
     setMap(state.map);
 
     bind();
     return true;
+  }
+
+  // Auto-init
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
   }
 
   // Expose runtime API (stable)
