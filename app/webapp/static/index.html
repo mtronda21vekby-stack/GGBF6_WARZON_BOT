@@ -15,6 +15,11 @@
   <meta name="format-detection" content="telephone=no,date=no,address=no,email=no" />
   <meta name="mobile-web-app-capable" content="yes" />
 
+  <!-- HARD NO-CACHE HINTS (works partially, but helps) -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+
   <title>BLACK CROWN OPS — Mini App</title>
 
   <base href="/webapp/">
@@ -25,6 +30,21 @@
 
   <!-- build marker -->
   <script>window.__BCO_BUILD__="__BUILD__";</script>
+
+  <!-- 🔥 HTML CACHE KILLER (Telegram iOS WebView) -->
+  <!-- If we opened /webapp without query, force one reload with ?r=... to bypass cached HTML -->
+  <script>
+    (function () {
+      try {
+        var href = String(location.href || "");
+        var hasR = /[?&]r=/.test(href);
+        if (!hasR) {
+          var sep = href.indexOf("?") >= 0 ? "&" : "?";
+          location.replace(href + sep + "r=" + Date.now());
+        }
+      } catch (_) {}
+    })();
+  </script>
 
   <!-- PREMIUM: disable pinch/double-tap zoom (iOS WebView hardening) -->
   <script>
@@ -506,17 +526,17 @@
   </nav>
 
   <div class="toast" id="toast">OK</div>
-
   <div id="zOverlayMount" aria-hidden="true"></div>
 
-  <!-- BOOT LOADER (LEGACY zombies.* ONLY) -->
-  <!-- ВАЖНО: мы отключаем NEW stack (bco.*), потому что он ломает клики/обвязку Mini App -->
-  <!-- ДОБАВЛЕНО: bco.bridge.js (легкий, без UI, только мост/формат sendData) -->
+  <!-- BOOT LOADER (SINGLE STACK) -->
   <script>
     (function () {
-      var build = window.__BCO_BUILD__ || String(Date.now());
-      var health = document.getElementById("jsHealth");
+      var build = (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__")
+        ? window.__BCO_BUILD__
+        : String(Date.now());
+      window.__BCO_BUILD__ = build;
 
+      var health = document.getElementById("jsHealth");
       function setHealth(msg) { if (health) health.textContent = msg; }
 
       function load(src) {
@@ -556,12 +576,16 @@
         return p;
       }
 
-      setHealth("js: boot (LEGACY zombies.*)…");
+      setHealth("js: boot…");
 
-      // 0) Мост MiniApp<->Bot/Server (не обязателен, но чинит формат payload)
+      // 0) Bot bridge (optional but recommended)
       loadOptional("/webapp/bco.bridge.js")
-        .then(function (ok) {
-          if (!ok) console.warn("[BOOT] optional not loaded: /webapp/bco.bridge.js");
+        .then(function () {
+          // 1) Unified input + engine facade (required)
+          return load("/webapp/bco.input.js");
+        })
+        .then(function () {
+          // 2) Zombies modules (your current legacy stack)
           return chainOptional([
             "/webapp/zombies.assets.js",
             "/webapp/zombies.perks.js",
@@ -575,14 +599,25 @@
         .then(function () { return load("/webapp/zombies.render.js"); })
         .then(function () { return load("/webapp/zombies.game.js"); })
         .then(function () { return load("/webapp/zombies.init.js"); })
-        .then(function () { return load("/webapp/app.js"); })
+        .then(function () {
+          // 3) Engine facade after zombies stack is present
+          return load("/webapp/bco.engine.js");
+        })
+        .then(function () {
+          // 4) UI LAST
+          return load("/webapp/app.js");
+        })
         .then(function () {
           window.__BCO_JS_OK__ = true;
-          setHealth("js: OK (booted)");
+          setHealth("js: OK (booted) • build=" + build);
+          try {
+            var bt = document.getElementById("buildTag");
+            if (bt) bt.textContent = "build: " + build;
+          } catch (_) {}
         })
         .catch(function (e) {
           console.error("BCO boot load error:", e);
-          setHealth("js: BOOT ERROR (check console)");
+          setHealth("js: BOOT ERROR (check console) • build=" + build);
         });
     })();
   </script>
@@ -596,7 +631,7 @@
       var t = setInterval(function () {
         tries++;
         if (window.__BCO_JS_OK__ === true) {
-          el.textContent = "js: OK";
+          el.textContent = el.textContent || "js: OK";
           clearInterval(t);
           return;
         }
