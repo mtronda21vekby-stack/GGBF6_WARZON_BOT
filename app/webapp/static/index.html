@@ -1,139 +1,70 @@
-<!-- app/webapp/static/index.html -->
 <!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no"
-  />
-  <meta name="color-scheme" content="dark light" />
+  <meta name="viewport"
+        content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no" />
   <meta name="theme-color" content="#07070b" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="format-detection" content="telephone=no,date=no,address=no,email=no" />
-  <meta name="mobile-web-app-capable" content="yes" />
-
   <title>BLACK CROWN OPS — Mini App</title>
+
   <base href="/webapp/">
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
-
-  <script>window.__BCO_BUILD__="__BUILD__";</script>
+  <link rel="stylesheet" href="/webapp/style.css">
 
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <!-- iOS anti-zoom -->
+  <script>
+    (function(){
+      function p(e){ try{e.preventDefault()}catch{} }
+      window.addEventListener("gesturestart",p,{passive:false});
+      window.addEventListener("gesturechange",p,{passive:false});
+      window.addEventListener("gestureend",p,{passive:false});
+    })();
+  </script>
 </head>
 
 <body>
-  <div class="bg" aria-hidden="true">
-    <div class="stars"></div>
-    <div class="nebula"></div>
-    <div class="gridfx"></div>
-  </div>
-
-  <header class="top app-header">
-    <div class="brand">
-      <div class="logo">👑</div>
-      <div class="brand-text">
-        <div class="title brand-title">BLACK CROWN OPS</div>
-        <div class="sub brand-sub">premium • FPS coach</div>
-      </div>
-    </div>
-  </header>
 
   <main class="wrap app-main">
 
-    <!-- ================= HOME ================= -->
-    <section class="grid tabpane active" id="tab-home">
-      <div class="card">
-        <div class="card-title">🚀 Быстрые действия</div>
-        <div class="actions">
-          <button class="btn primary" type="button"
-            data-action="zombies:open">
-            🧟 Play Zombies (Fullscreen)
-          </button>
-        </div>
+    <!-- === GAME / ZOMBIES === -->
+    <section class="card">
+      <h2>🧟 Game: Zombies Survival</h2>
+
+      <div class="seg">
+        <button class="seg-btn active" id="btnZMapAshes">Ashes</button>
+        <button class="seg-btn" id="btnZMapAstra">Astra</button>
       </div>
-    </section>
 
-    <!-- ================= GAME ================= -->
-    <section class="grid tabpane" id="tab-game">
-      <div class="card">
-        <div class="card-title">🧟 Game: Zombies Survival</div>
+      <div class="seg">
+        <button class="seg-btn active" id="btnZModeArcade">Arcade</button>
+        <button class="seg-btn" id="btnZModeRogue">Roguelike</button>
+      </div>
 
-        <div class="seg" id="segZMap">
-          <button class="seg-btn active" data-value="Ashes" type="button">Ashes</button>
-          <button class="seg-btn" data-value="Astra" type="button">Astra</button>
-        </div>
-
-        <div class="seg" style="margin-top:8px;">
-          <button class="seg-btn active" id="btnZModeArcade2" type="button">Arcade</button>
-          <button class="seg-btn" id="btnZModeRogue2" type="button">Roguelike</button>
-        </div>
-
-        <div class="actions" style="margin-top:10px;">
-          <button class="btn primary" type="button"
-            id="btnZEnterGame"
-            data-action="zombies:start">
-            ▶ Start Fullscreen
-          </button>
-
-          <button class="btn" type="button"
-            data-action="zombies:hq">
-            🧠 Zombies HQ
-          </button>
-
-          <button class="btn" type="button"
-            data-action="zombies:send">
-            Send result → bot
-          </button>
-        </div>
+      <div class="actions">
+        <button class="btn primary" id="btnZStart">▶ Start Fullscreen</button>
+        <button class="btn" id="btnZSend">Send result → bot</button>
       </div>
     </section>
 
   </main>
 
-  <nav class="bottombar bottom-nav">
-    <button class="nav-btn active" data-tab="home"><span>⭐</span></button>
-    <button class="nav-btn" data-tab="game"><span>🕹️</span></button>
-  </nav>
-
   <div id="zOverlayMount"></div>
 
-  <!-- BOOT -->
-  <script>
-    (function () {
-      var build = window.__BCO_BUILD__ || String(Date.now());
+  <!-- ================= LEGACY ZOMBIES STACK (КАК БЫЛО) ================= -->
+  <script src="/webapp/zombies.assets.js"></script>
+  <script src="/webapp/zombies.perks.js"></script>
+  <script src="/webapp/zombies.maps.js"></script>
+  <script src="/webapp/zombies.collisions.js"></script>
+  <script src="/webapp/zombies.bosses.js"></script>
+  <script src="/webapp/zombies.core.js"></script>
+  <script src="/webapp/zombies.render.js"></script>
+  <script src="/webapp/zombies.world.js"></script>
+  <script src="/webapp/zombies.game.js"></script>
+  <script src="/webapp/zombies.init.js"></script>
 
-      function load(src) {
-        return new Promise(function (res, rej) {
-          var s = document.createElement("script");
-          s.src = src + "?build=" + build;
-          s.async = false;
-          s.onload = () => res(true);
-          s.onerror = () => rej(src);
-          document.body.appendChild(s);
-        });
-      }
+  <script src="/webapp/app.js"></script>
 
-      load("/webapp/bco.config.js")
-        .then(() => load("/webapp/bco.store.js"))
-        .then(() => load("/webapp/bco.eventbus.js"))
-        .then(() => load("/webapp/bco.input.js"))
-        .then(() => load("/webapp/bco.engine.js"))
-        .then(() => load("/webapp/zombies/runtime.js"))
-        .then(() => load("/webapp/zombies/economy.js"))
-        .then(() => load("/webapp/app.js"))
-        .then(() => {
-          window.__BCO_JS_OK__ = true;
-          console.log("[BCO] boot OK");
-        })
-        .catch(err => {
-          console.error("BOOT ERROR", err);
-        });
-    })();
-  </script>
 </body>
 </html>
