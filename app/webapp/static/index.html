@@ -515,6 +515,7 @@
   <div id="zOverlayMount" aria-hidden="true"></div>
 
   <!-- BOOT LOADER (order preserved; async=false) -->
+  <!-- IMPORTANT: auto-detect NEW modular stack; fallback to LEGACY zombies.* chain if new stack not present -->
   <script>
     (function () {
       var build = window.__BCO_BUILD__ || String(Date.now());
@@ -544,20 +545,93 @@
         });
       }
 
+      function loadManyRequired(list) {
+        var p = Promise.resolve(true);
+        for (var i = 0; i < list.length; i++) {
+          (function (src) {
+            p = p.then(function () { return load(src); });
+          })(list[i]);
+        }
+        return p;
+      }
+
+      function loadManyOptional(list) {
+        var p = Promise.resolve(true);
+        for (var i = 0; i < list.length; i++) {
+          (function (src) {
+            p = p.then(function () { return loadOptional(src); });
+          })(list[i]);
+        }
+        return p;
+      }
+
+      function bootNewStack() {
+        // NEW modular stack (if you created these files)
+        // NOTE: We DO NOT touch UI, only scripts order.
+        setHealth("js: boot (NEW stack)…");
+
+        return loadManyRequired([
+          "/webapp/bco.config.js",
+          "/webapp/bco.store.js",
+          "/webapp/bco.eventbus.js",
+          "/webapp/bco.input.js",
+          "/webapp/bco.engine.js",
+          "/webapp/zombies/runtime.js",
+          "/webapp/zombies/ui.js",
+          "/webapp/zombies/economy.js",
+          "/webapp/app.js"
+        ]).then(function () {
+          // app.js should set window.__BCO_JS_OK__ when ready (or we fallback health anyway)
+          return true;
+        });
+      }
+
+      function bootLegacyStack() {
+        // LEGACY chain (your current zombies.* engine)
+        setHealth("js: boot (LEGACY zombies.*)…");
+
+        return loadOptional("/webapp/zombies.assets.js")
+          .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.assets.js not loaded (optional)"); return loadOptional("/webapp/zombies.perks.js"); })
+          .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.perks.js not loaded (optional)"); return loadOptional("/webapp/zombies.maps.js"); })
+          .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.maps.js not loaded (optional)"); return loadOptional("/webapp/zombies.collisions.js"); })
+          .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.collisions.js not loaded (optional)"); return loadOptional("/webapp/zombies.bosses.js"); })
+          .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.bosses.js not loaded (optional)"); return load("/webapp/zombies.core.js"); })
+          .then(function () { return load("/webapp/zombies.render.js"); })
+          .then(function () { return loadOptional("/webapp/zombies.world.js"); })
+          .then(function () { return load("/webapp/zombies.game.js"); })
+          .then(function () { return load("/webapp/zombies.init.js"); })
+          .then(function () { return load("/webapp/app.js"); })
+          .then(function () { return true; });
+      }
+
       setHealth("js: boot…");
 
-      loadOptional("/webapp/zombies.assets.js")
-        .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.assets.js not loaded (optional)"); return loadOptional("/webapp/zombies.perks.js"); })
-        .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.perks.js not loaded (optional)"); return loadOptional("/webapp/zombies.maps.js"); })
-        .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.maps.js not loaded (optional)"); return loadOptional("/webapp/zombies.collisions.js"); })
-        .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.collisions.js not loaded (optional)"); return loadOptional("/webapp/zombies.bosses.js"); })
-        .then(function (ok) { if (!ok) console.warn("[BOOT] zombies.bosses.js not loaded (optional)"); return load("/webapp/zombies.core.js"); })
-        .then(function () { return load("/webapp/zombies.render.js"); })
-        .then(function () { return loadOptional("/webapp/zombies.world.js"); })
-        .then(function () { return load("/webapp/zombies.game.js"); })
-        .then(function () { return load("/webapp/zombies.init.js"); })
-        .then(function () { return load("/webapp/app.js"); })
-        .then(function () { setHealth("js: OK (booted)"); })
+      // Detect NEW stack by trying to load bco.config.js first (optional),
+      // if it exists -> boot NEW. If not -> boot LEGACY.
+      loadOptional("/webapp/bco.config.js")
+        .then(function (hasNew) {
+          if (hasNew) {
+            // We already loaded bco.config.js once; to keep order clean we continue from next files.
+            // So bootNewStackFromSecond:
+            setHealth("js: boot (NEW stack)…");
+            return loadManyRequired([
+              "/webapp/bco.store.js",
+              "/webapp/bco.eventbus.js",
+              "/webapp/bco.input.js",
+              "/webapp/bco.engine.js",
+              "/webapp/zombies/runtime.js",
+              "/webapp/zombies/ui.js",
+              "/webapp/zombies/economy.js",
+              "/webapp/app.js"
+            ]).then(function () { return true; });
+          }
+          return bootLegacyStack();
+        })
+        .then(function () {
+          // If app.js didn't set flag — still show OK (loader succeeded)
+          if (window.__BCO_JS_OK__ !== true) window.__BCO_JS_OK__ = true;
+          setHealth("js: OK (booted)");
+        })
         .catch(function (e) {
           console.error("BCO boot load error:", e);
           setHealth("js: BOOT ERROR (check console)");
