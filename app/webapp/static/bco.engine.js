@@ -2,10 +2,6 @@
 (() => {
   "use strict";
 
-  // BCO_ENGINE: single stable facade for Zombies engine.
-  // Goal: no matter what internal engine exists (BCO_ZOMBIES or BCO_ZOMBIES_CORE),
-  // UI talks to ONE object: window.BCO_GAME.
-
   const W = window;
 
   function pickEngine() {
@@ -49,15 +45,11 @@
 
   const bus = makeEventBus();
 
-  // We expose ONE stable API: window.BCO_GAME
   const BCO_GAME = {
-    // read-only: which engine is active right now
     get engine() { return pickEngine(); },
 
-    // events
     on(evt, fn) { return bus.on(evt, fn); },
 
-    // attach canvas (best-effort across engines)
     setCanvas(canvas) {
       const e = pickEngine();
       if (!e || !canvas) return false;
@@ -67,14 +59,12 @@
       ok = !!safe(() => e.canvas?.(canvas)) || ok;
       ok = !!safe(() => e.attach?.(canvas)) || ok;
 
-      // some cores expect resize after canvas attach
       ok = !!safe(() => e.resize?.(canvas.clientWidth || 1, canvas.clientHeight || 1)) || ok;
       ok = !!safe(() => W.BCO_ZOMBIES_CORE?.resize?.(canvas.width || 1, canvas.height || 1)) || ok;
 
       return ok;
     },
 
-    // open/start/stop (best-effort)
     open(opts = {}) {
       const e = pickEngine();
       if (!e) return false;
@@ -91,7 +81,6 @@
 
       ok = !!safe(() => e.start?.(opts)) || ok;
 
-      // compatibility: some core uses start(mode,w,h,meta)
       if (!ok && W.BCO_ZOMBIES_CORE?.start) {
         const mode = String(opts.mode || "arcade");
         const w = Number(opts.w || opts.width || 1) || 1;
@@ -111,7 +100,6 @@
       return ok;
     },
 
-    // input: single path for move/aim/firing
     input(data = {}) {
       const input = ensureInputBridge();
       if (data.move) {
@@ -142,28 +130,24 @@
     }
   };
 
-  // Hook engine events if they exist
   function hookEngineEvents() {
     const e = pickEngine();
     if (!e || e.__BCO_EVENTS_HOOKED__) return;
     e.__BCO_EVENTS_HOOKED__ = true;
 
-    // If engine has its own event emitter
     safe(() => e.on?.("hud", (hud) => bus.emit("hud", hud)));
     safe(() => e.on?.("result", (res) => bus.emit("result", res)));
 
-    // If engine updates via callbacks
     if (typeof e.setOnHud === "function") safe(() => e.setOnHud((hud) => bus.emit("hud", hud)));
     if (typeof e.setOnResult === "function") safe(() => e.setOnResult((r) => bus.emit("result", r)));
   }
 
-  // watch for engine appearing later (script load order)
   let tries = 0;
   (function waitEngine() {
     hookEngineEvents();
     tries++;
-    if (pickEngine() || tries > 80) return; // ~4-5 sec
-    setTimeout(waitEngine, 60);
+    if (pickEngine() || tries > 120) return;
+    setTimeout(waitEngine, 50);
   })();
 
   W.BCO_GAME = BCO_GAME;
