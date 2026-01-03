@@ -1,144 +1,46 @@
+// app/webapp/static/zombies/economy.js
 (() => {
   "use strict";
 
-  const { clamp } = window.BCO_UTILS;
+  window.BCO = window.BCO || {};
+  const bus = window.BCO.bus;
 
-  /**
-   * Economy module:
-   * - Arcade: simple coins/score
-   * - Roguelike: coins + relic quest + rarity rolls + shop hooks
-   */
-  function createEconomy() {
-    const cfg = window.BCO_CONFIG?.ZOMBIES || {};
-    const ARC = cfg.ARCADE || {};
-    const ROG = cfg.ROGUELIKE || {};
+  // This module does not change gameplay. It only provides safe wrappers for UI/hotkeys.
+  function core() { return window.BCO_ZOMBIES_CORE || null; }
 
-    const state = {
-      mode: "ARCADE",
-      coins: 0,
-      relics: 0,
-      relicsGoal: 5,
-      lastDropAt: 0,
-      runLevel: 1,
-      runXP: 0,
-      rarityTable: ROG.RARITY || { common: 0.62, rare: 0.25, epic: 0.10, legendary: 0.03 },
-      stats: {
-        kills: 0,
-        waves: 0,
-        score: 0,
-        durationMs: 0,
-      },
-    };
+  function can() { return !!core(); }
 
-    function setMode(mode) {
-      state.mode = (mode === "ROGUELIKE") ? "ROGUELIKE" : "ARCADE";
-      resetRun();
-    }
+  function buyUpgrade() { try { return !!core()?.buyUpgrade?.(); } catch { return false; } }
+  function rerollWeapon() { try { return !!core()?.rerollWeapon?.(); } catch { return false; } }
+  function buyReload() { try { return !!core()?.buyReload?.(); } catch { return false; } }
+  function usePlate() { try { return !!core()?.usePlate?.(); } catch { return false; } }
+  function buyPerk(id) { try { return !!core()?.buyPerk?.(id); } catch { return false; } }
 
-    function resetRun() {
-      state.coins = 0;
-      state.relics = 0;
-      state.runLevel = 1;
-      state.runXP = 0;
-      state.stats.kills = 0;
-      state.stats.waves = 0;
-      state.stats.score = 0;
-      state.stats.durationMs = 0;
-    }
+  // Expose
+  window.BCO.zombies = window.BCO.zombies || {};
+  window.BCO.zombies.economy = { can, buyUpgrade, rerollWeapon, buyReload, usePlate, buyPerk };
 
-    function _rand() { return Math.random(); }
+  // Optional: hotkey buttons in HOME panel (your existing ids)
+  function bindHotkeys() {
+    const jug = document.getElementById("btnZBuyJug");
+    const spd = document.getElementById("btnZBuySpeed");
+    const ammo = document.getElementById("btnZBuyAmmo");
 
-    function onKill() {
-      state.stats.kills += 1;
+    jug?.addEventListener("click", () => {
+      const ok = buyPerk("Jug");
+      bus?.emit?.("zombies:perk", { id: "Jug", ok });
+    }, { passive: true });
 
-      if (state.mode === "ROGUELIKE") {
-        state.coins += (ROG.COINS_PER_KILL ?? 1);
-        state.stats.score += 10;
-        // relic chance
-        const chance = clamp(ROG.RELIC_DROP_CHANCE ?? 0.04, 0, 1);
-        if (_rand() < chance) {
-          state.relics = clamp(state.relics + 1, 0, state.relicsGoal);
-          return { drop: "relic" };
-        }
-        return { drop: "coin" };
-      }
+    spd?.addEventListener("click", () => {
+      const ok = buyPerk("Speed");
+      bus?.emit?.("zombies:perk", { id: "Speed", ok });
+    }, { passive: true });
 
-      // ARCADE
-      state.coins += (ARC.COINS_PER_KILL ?? 1);
-      state.stats.score += 8;
-      const chanceA = clamp(ARC.RELIC_DROP_CHANCE ?? 0.02, 0, 1);
-      if (_rand() < chanceA) {
-        state.relics = clamp(state.relics + 1, 0, state.relicsGoal);
-        return { drop: "relic" };
-      }
-      return { drop: "coin" };
-    }
-
-    function onWaveComplete() {
-      state.stats.waves += 1;
-
-      if (state.mode === "ROGUELIKE") {
-        state.coins += (ROG.COINS_PER_WAVE ?? 8);
-        state.stats.score += 50;
-        gainXP(20 + state.stats.waves * 2);
-      } else {
-        state.stats.score += 35;
-      }
-    }
-
-    function gainXP(xp) {
-      if (state.mode !== "ROGUELIKE") return;
-      state.runXP += Math.max(0, xp | 0);
-      // simple leveling curve
-      while (state.runXP >= xpToNext(state.runLevel)) {
-        state.runXP -= xpToNext(state.runLevel);
-        state.runLevel += 1;
-      }
-    }
-
-    function xpToNext(level) {
-      return 60 + (level * 20);
-    }
-
-    function rollRarity() {
-      const t = state.rarityTable;
-      const r = _rand();
-      let acc = 0;
-      for (const k of ["common", "rare", "epic", "legendary"]) {
-        acc += t[k] || 0;
-        if (r <= acc) return k;
-      }
-      return "common";
-    }
-
-    function canWonderWeapon() {
-      return state.relics >= state.relicsGoal;
-    }
-
-    function spendCoins(n) {
-      n = Math.max(0, n | 0);
-      if (state.coins < n) return false;
-      state.coins -= n;
-      return true;
-    }
-
-    function snapshot() {
-      return JSON.parse(JSON.stringify(state));
-    }
-
-    return {
-      state,
-      setMode,
-      resetRun,
-      onKill,
-      onWaveComplete,
-      gainXP,
-      rollRarity,
-      canWonderWeapon,
-      spendCoins,
-      snapshot,
-    };
+    ammo?.addEventListener("click", () => {
+      const ok = buyReload();
+      bus?.emit?.("zombies:reloadbuy", { ok });
+    }, { passive: true });
   }
 
-  window.BCO_ZOMBIES_ECON = createEconomy();
+  window.BCO.zombies.economy._bind = bindHotkeys;
 })();
