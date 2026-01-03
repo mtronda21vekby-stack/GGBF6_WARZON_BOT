@@ -1,517 +1,291 @@
 // app/webapp/static/app.js
-// BCO Mini App Entry — FIXED (iOS taps + bot sync + Aim Trial) | NO UI CHANGES
+// BCO Mini App — RESTORE BRIDGE (Mini App == bot inside) | UI untouched
 (() => {
   "use strict";
 
   const log = (...a) => { try { console.log("[BCO_APP]", ...a); } catch {} };
   const warn = (...a) => { try { console.warn("[BCO_APP]", ...a); } catch {} };
-  const err = (...a) => { try { console.error("[BCO_APP]", ...a); } catch {} };
 
   function safe(fn) { try { return fn(); } catch (e) { return undefined; } }
   function q(id) { return document.getElementById(id); }
-  function qs(sel) { return document.querySelector(sel); }
 
-  const TG = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-
-  const CONFIG = (window.BCO && window.BCO.CONFIG) || window.BCO_CONFIG || window.CONFIG || {
-    VERSION: "restore-2.0.1",
-    MAX_PAYLOAD_SIZE: 15000,
-    AIM_DURATION: 20000
-  };
-
-  // -------------------------
-  // Health
-  // -------------------------
   function setHealth(msg) {
     const el = q("jsHealth");
     if (el) el.textContent = String(msg || "");
   }
 
-  // -------------------------
-  // State (minimal, safe)
-  // -------------------------
-  const STATE = {
-    profile: {
-      voice: "TEAMMATE",
-      mode: "Normal",
-      platform: "PC",
-      game: "Warzone",
-      input: "Controller",
-      role: "Flex",
-      bf6_class: "Assault"
-    },
-    zombies: {
-      mode: "ARCADE", // ARCADE | ROGUELIKE
-      map: "Ashes"    // Ashes | Astra
-    },
-    aim: {
-      running: false,
-      t0: 0,
-      hits: 0,
-      misses: 0,
-      timer: 0
-    }
-  };
+  // --------- Chat UI (inside Mini App) ----------
+  function addChatLine(role, text) {
+    const logEl = q("chatLog");
+    if (!logEl) return;
 
-  // -------------------------
-  // Telegram helpers
-  // -------------------------
-  function tgReady() {
-    if (!TG) return false;
-    safe(() => TG.ready());
-    safe(() => TG.expand());
-    // не трогаем UI, просто не даем TG кнопкам перекрывать
-    safe(() => TG.MainButton?.hide?.());
-    safe(() => TG.BackButton?.hide?.());
-    return true;
+    const item = document.createElement("div");
+    item.className = "chat-item " + (role === "user" ? "me" : "bot");
+
+    const bubble = document.createElement("div");
+    bubble.className = "chat-bubble";
+    bubble.textContent = String(text || "");
+
+    item.appendChild(bubble);
+    logEl.appendChild(item);
+
+    // scroll to bottom
+    try { logEl.scrollTop = logEl.scrollHeight; } catch {}
   }
 
-  function clampPayloadSize(str) {
-    const max = Number(CONFIG.MAX_PAYLOAD_SIZE || 15000);
-    if (!str || str.length <= max) return str;
-    return str.slice(0, max - 16) + `…(cut:${str.length})`;
+  function bindClick(id, fn) {
+    const el = q(id);
+    if (!el) return;
+    el.addEventListener("click", (e) => {
+      // НЕ делаем глобальные preventDefault — чтобы не убивать iOS клики
+      safe(() => fn(e));
+    }, { passive: true });
   }
 
-  function sendData(payloadObj) {
-    if (!TG || typeof TG.sendData !== "function") {
-      warn("TG.sendData missing");
-      return false;
-    }
-    try {
-      // всегда приклеиваем профиль, чтобы бот был “одним целым” с мини-аппом
-      const p = {
-        ...payloadObj,
-        profile: payloadObj.profile || STATE.profile,
-        _src: "miniapp",
-        _v: String(CONFIG.VERSION || "unknown")
-      };
-      const json = clampPayloadSize(JSON.stringify(p));
-      TG.sendData(json);
-      return true;
-    } catch (e) {
-      warn("sendData failed", e);
-      return false;
-    }
-  }
-
-  // NAV контракт (у тебя в боте это обрабатывается)
-  function sendNav(key, extra) {
-    return sendData({
-      type: "nav",
-      nav: String(key || ""),
-      ...((extra && typeof extra === "object") ? extra : {})
-    });
-  }
-
-  // Команда/действие (но НЕ type=cmd, потому что бот сейчас отвечает “принял, без действия”)
-  // Мы отправляем как nav + cmd, чтобы router точно пошел по nav ветке.
-  function sendCmd(cmd, extra) {
-    return sendData({
-      type: "nav",
-      nav: "cmd",
-      cmd: String(cmd || ""),
-      ...((extra && typeof extra === "object") ? extra : {})
-    });
-  }
-
-  // -------------------------
-  // iOS FastTap (НЕ ломает скролл)
-  // -------------------------
-  function bindFastTap(el, handler) {
-    if (!el || typeof handler !== "function") return false;
-
-    let down = null;
-
-    function getPt(ev) {
-      const t = (ev.touches && ev.touches[0]) ? ev.touches[0]
-        : (ev.changedTouches && ev.changedTouches[0]) ? ev.changedTouches[0]
-        : ev;
-      return { x: Number(t.clientX || 0), y: Number(t.clientY || 0) };
-    }
-
-    function isScrollAllowedTarget(target) {
-      // ничего не блокируем внутри скролл-зон
-      return !!(target && target.closest && target.closest(".bco-modal-scroll, .modal, [role='dialog'], .chat-log, .chat-shell"));
-    }
-
-    function onDown(ev) {
-      if (isScrollAllowedTarget(ev.target)) return;
-      down = { t: Date.now(), ...getPt(ev) };
-    }
-
-    function onUp(ev) {
-      if (!down) return;
-      if (isScrollAllowedTarget(ev.target)) { down = null; return; }
-
-      const up = getPt(ev);
-      const dt = Date.now() - down.t;
-      const dx = up.x - down.x;
-      const dy = up.y - down.y;
-      const dist = Math.sqrt(dx*dx + dy*dy);
-
-      down = null;
-
-      if (dt > 450) return;
-      if (dist > 14) return;
-
-      // ✅ важно: не делаем глобальный preventDefault по документу
-      // только на конкретной кнопке, чтобы не было “мертвых” тапов
-      safe(() => ev.preventDefault());
-      safe(() => ev.stopPropagation());
-
-      safe(() => handler(ev));
-    }
-
-    el.addEventListener("pointerdown", onDown, { passive: true });
-    el.addEventListener("pointerup", onUp, { passive: false });
-
-    // touch fallback (iOS WebView)
-    el.addEventListener("touchstart", onDown, { passive: true });
-    el.addEventListener("touchend", onUp, { passive: false });
-
-    // click fallback (desktop)
-    el.addEventListener("click", (e) => { safe(() => handler(e)); }, { passive: true });
-
-    return true;
-  }
-
-  // -------------------------
-  // UI helpers (toggle active классы, не меняя верстку)
-  // -------------------------
-  function setSegActive(containerEl, value) {
-    if (!containerEl) return;
-    const btns = Array.from(containerEl.querySelectorAll(".seg-btn"));
-    for (const b of btns) {
-      const v = b.getAttribute("data-value");
-      b.classList.toggle("active", String(v) === String(value));
-    }
-  }
-
-  function setModeButtons(activeArcade) {
-    const a1 = q("btnZModeArcade");
-    const r1 = q("btnZModeRogue");
-    const a2 = q("btnZModeArcade2");
-    const r2 = q("btnZModeRogue2");
-
-    if (a1) a1.classList.toggle("active", !!activeArcade);
-    if (r1) r1.classList.toggle("active", !activeArcade);
-    if (a2) a2.classList.toggle("active", !!activeArcade);
-    if (r2) r2.classList.toggle("active", !activeArcade);
-  }
-
-  // -------------------------
-  // Aim Trial (working снова)
-  // -------------------------
-  function aimUpdateUI() {
-    const stat = q("aimStat");
-    const total = STATE.aim.hits + STATE.aim.misses;
-    const acc = total ? Math.round((STATE.aim.hits / total) * 100) : 0;
-    if (stat) stat.textContent = `🎯 ${STATE.aim.hits}/${total} • Acc ${acc}%`;
-  }
-
-  function aimMoveTarget() {
-    const arena = q("aimArena");
-    const target = q("aimTarget");
-    if (!arena || !target) return;
-
-    const rect = arena.getBoundingClientRect();
-    const size = Math.min(rect.width, rect.height);
-
-    // safe margins
-    const pad = 18;
-    const x = pad + Math.random() * Math.max(1, (rect.width - pad*2 - 44));
-    const y = pad + Math.random() * Math.max(1, (rect.height - pad*2 - 44));
-
-    target.style.left = `${x}px`;
-    target.style.top = `${y}px`;
-  }
-
-  function aimStart() {
-    if (STATE.aim.running) return;
-    STATE.aim.running = true;
-    STATE.aim.t0 = Date.now();
-    STATE.aim.hits = 0;
-    STATE.aim.misses = 0;
-    aimUpdateUI();
-    aimMoveTarget();
-
-    // таймер авто-стоп
-    clearTimeout(STATE.aim.timer);
-    STATE.aim.timer = setTimeout(() => {
-      aimStop();
-    }, Number(CONFIG.AIM_DURATION || 20000));
-
-    setHealth("aim: running");
-  }
-
-  function aimStop() {
-    if (!STATE.aim.running) return;
-    STATE.aim.running = false;
-    clearTimeout(STATE.aim.timer);
-    STATE.aim.timer = 0;
-    setHealth("aim: stopped");
-  }
-
-  function aimSend() {
-    const total = STATE.aim.hits + STATE.aim.misses;
-    const acc = total ? Math.round((STATE.aim.hits / total) * 100) : 0;
-
-    sendData({
-      action: "game_result",
-      type: "game_result",
-      game: "aim_trial",
-      mode: "ARCADE",
-      durationMs: Number(CONFIG.AIM_DURATION || 20000),
-      hits: STATE.aim.hits,
-      misses: STATE.aim.misses,
-      total,
-      acc
-    });
-  }
-
-  // -------------------------
-  // Zombies launcher (НЕ ломаем mini app; просто дергаем runtime/engine)
-  // -------------------------
+  // --------- Zombies launcher ----------
   function zombiesStartFullscreen() {
-    // 1) runtime new-stack
     const rt = window.BCO?.zombies?.runtime || window.BCO_ZOMBIES_RUNTIME || null;
-    if (rt && typeof rt.startGame === "function") {
-      return !!safe(() => rt.startGame());
-    }
+    if (rt && typeof rt.startGame === "function") return !!safe(() => rt.startGame());
 
-    // 2) engine direct
     const engine = window.BCO?.engine || window.BCO_ENGINE || null;
     if (engine && typeof engine.start === "function") {
-      const mode = (STATE.zombies.mode === "ROGUELIKE") ? "roguelike" : "arcade";
-      const map = STATE.zombies.map;
+      // читаем текущий UI (active классы)
+      const modeBtnR = q("btnZModeRogue2");
+      const mode = (modeBtnR && modeBtnR.classList.contains("active")) ? "roguelike" : "arcade";
+      let map = "Ashes";
+      const seg = q("segZMap");
+      if (seg) {
+        const b = seg.querySelector(".seg-btn.active");
+        if (b) map = b.getAttribute("data-value") || "Ashes";
+      }
       const ok = safe(() => engine.start({ mode, map }));
       return (typeof ok === "boolean") ? ok : true;
     }
 
-    // 3) legacy game runner (if you use BCO_ZOMBIES_GAME + core already started elsewhere)
-    const game = window.BCO_ZOMBIES_GAME || null;
-    if (game && typeof game.startLoop === "function") {
-      const ok = safe(() => game.startLoop());
-      return !!ok;
-    }
-
-    warn("No zombies runtime/engine found");
+    warn("Zombies runtime/engine missing");
     return false;
   }
 
-  function zombiesSendResult() {
-    // просим существующий модуль, если он уже умеет
-    const game = window.BCO_ZOMBIES_GAME || null;
-    if (game && typeof game.sendResult === "function") {
-      return !!safe(() => game.sendResult("miniapp"));
-    }
-    // fallback
-    sendData({
-      action: "game_result",
-      type: "game_result",
-      game: "zombies",
-      reason: "miniapp_send",
-      mode: (STATE.zombies.mode === "ROGUELIKE") ? "roguelike" : "arcade",
-      map: STATE.zombies.map
-    });
-    return true;
+  // --------- Aim Trial (самодостаточный, без бота) ----------
+  const AIM = { running: false, hits: 0, misses: 0, timer: 0, duration: 20000 };
+
+  function aimStat() {
+    const el = q("aimStat");
+    if (!el) return;
+    const total = AIM.hits + AIM.misses;
+    const acc = total ? Math.round((AIM.hits / total) * 100) : 0;
+    el.textContent = `🎯 ${AIM.hits}/${total} • Acc ${acc}%`;
   }
 
-  // -------------------------
-  // Bind buttons (IDs from твоего index.html)
-  // -------------------------
-  function bindAllButtons() {
-    // HOME quick actions
-    bindFastTap(q("btnOpenBot"), () => {
-      // открыть меню бота
-      sendNav("open_bot_menu", { hint: "menu" });
-    });
-
-    bindFastTap(q("btnSync"), () => {
-      // запрос синхронизации профиля с ботом
-      sendNav("sync_profile");
-    });
-
-    bindFastTap(q("btnPremium"), () => {
-      sendNav("premium_hub");
-    });
-
-    bindFastTap(q("btnPlayZombies"), () => {
-      // просто старт fullscreen зомби
-      zombiesStartFullscreen();
-    });
-
-    // GAME tab launcher
-    bindFastTap(q("btnZEnterGame"), () => { zombiesStartFullscreen(); });
-    bindFastTap(q("btnZQuickPlay"), () => { zombiesStartFullscreen(); });
-
-    bindFastTap(q("btnZGameSend"), () => { zombiesSendResult(); });
-    bindFastTap(q("btnZGameSend2"), () => { zombiesSendResult(); });
-
-    bindFastTap(q("btnZOpenHQ"), () => {
-      // открыть zombies hub в боте
-      sendNav("zombies_hq");
-    });
-
-    bindFastTap(q("btnOpenZombies"), () => { sendNav("zombies_open"); });
-    bindFastTap(q("btnZPerks"), () => { sendNav("zombies_perks"); });
-    bindFastTap(q("btnZLoadout"), () => { sendNav("zombies_loadout"); });
-    bindFastTap(q("btnZEggs"), () => { sendNav("zombies_eggs"); });
-    bindFastTap(q("btnZRound"), () => { sendNav("zombies_round"); });
-    bindFastTap(q("btnZTips"), () => { sendNav("zombies_tips"); });
-
-    // Zombies mode buttons
-    bindFastTap(q("btnZModeArcade"), () => {
-      STATE.zombies.mode = "ARCADE";
-      setModeButtons(true);
-      sendNav("zombies_mode", { mode: "ARCADE" });
-    });
-
-    bindFastTap(q("btnZModeRogue"), () => {
-      STATE.zombies.mode = "ROGUELIKE";
-      setModeButtons(false);
-      sendNav("zombies_mode", { mode: "ROGUELIKE" });
-    });
-
-    bindFastTap(q("btnZModeArcade2"), () => {
-      STATE.zombies.mode = "ARCADE";
-      setModeButtons(true);
-      sendNav("zombies_mode", { mode: "ARCADE" });
-    });
-
-    bindFastTap(q("btnZModeRogue2"), () => {
-      STATE.zombies.mode = "ROGUELIKE";
-      setModeButtons(false);
-      sendNav("zombies_mode", { mode: "ROGUELIKE" });
-    });
-
-    // Zombies map seg
-    const segMap = q("segZMap");
-    if (segMap) {
-      segMap.addEventListener("click", (e) => {
-        const b = e.target && e.target.closest ? e.target.closest(".seg-btn") : null;
-        if (!b) return;
-        const mp = b.getAttribute("data-value") || "Ashes";
-        STATE.zombies.map = (String(mp) === "Astra") ? "Astra" : "Ashes";
-        setSegActive(segMap, STATE.zombies.map);
-        sendNav("zombies_map", { map: STATE.zombies.map });
-      }, { passive: true });
-    }
-
-    // Aim Trial buttons
-    bindFastTap(q("btnAimStart"), () => aimStart());
-    bindFastTap(q("btnAimStop"), () => aimStop());
-    bindFastTap(q("btnAimSend"), () => aimSend());
-
-    // Aim target hit/miss
+  function aimMoveTarget() {
     const arena = q("aimArena");
-    const target = q("aimTarget");
+    const t = q("aimTarget");
+    if (!arena || !t) return;
 
-    if (arena && target) {
-      // hit
-      bindFastTap(target, () => {
-        if (!STATE.aim.running) return;
-        STATE.aim.hits++;
-        aimUpdateUI();
-        aimMoveTarget();
-      });
+    const r = arena.getBoundingClientRect();
+    const pad = 18;
+    const x = pad + Math.random() * Math.max(1, (r.width - pad * 2 - 44));
+    const y = pad + Math.random() * Math.max(1, (r.height - pad * 2 - 44));
 
-      // miss (tap on arena but not target)
-      arena.addEventListener("click", (e) => {
-        if (!STATE.aim.running) return;
-        const t = e.target;
-        if (t === target || (t && t.closest && t.closest("#aimTarget"))) return;
-        STATE.aim.misses++;
-        aimUpdateUI();
-        aimMoveTarget();
-      }, { passive: true });
-    }
-
-    // Chat send (минимально: шлём в бота как nav:chat, чтобы router точно обрабатывал)
-    bindFastTap(q("btnChatSend"), () => {
-      const input = q("chatInput");
-      const text = input ? String(input.value || "").trim() : "";
-      if (!text) return;
-      if (input) input.value = "";
-      sendNav("chat", { text });
-    });
-
-    // Share/Close
-    bindFastTap(q("btnShare"), () => {
-      if (!TG) return;
-      safe(() => TG.shareMessage?.(TG.initDataUnsafe?.start_param || ""));
-      // если shareMessage нет — просто отправим hint в бота
-      sendNav("share");
-    });
-
-    bindFastTap(q("btnClose"), () => {
-      if (TG && TG.close) safe(() => TG.close());
-      else sendNav("close");
-    });
-
-    // Premium buy
-    bindFastTap(q("btnBuyMonth"), () => { sendNav("buy_premium", { plan: "month" }); });
-    bindFastTap(q("btnBuyLife"), () => { sendNav("buy_premium", { plan: "lifetime" }); });
-
-    // Hotkeys shop (быстрые)
-    bindFastTap(q("btnZBuyJug"), () => { sendNav("zombies_buy", { item: "jug" }); });
-    bindFastTap(q("btnZBuySpeed"), () => { sendNav("zombies_buy", { item: "speed" }); });
-    bindFastTap(q("btnZBuyAmmo"), () => { sendNav("zombies_buy", { item: "ammo" }); });
+    t.style.left = `${x}px`;
+    t.style.top = `${y}px`;
   }
 
-  // -------------------------
-  // Optional: mount your input router (НО он не должен ломать ID-кнопки)
-  // -------------------------
-  function mountInputRouter() {
-    // твой новый iOS input модуль
-    const inp = window.BCO?.input || window.BCO_INPUT || null;
-    if (inp && typeof inp.mount === "function") {
-      safe(() => inp.mount());
-      return true;
-    }
-    return false;
+  function aimStart() {
+    if (AIM.running) return;
+    AIM.running = true;
+    AIM.hits = 0;
+    AIM.misses = 0;
+    aimStat();
+    aimMoveTarget();
+
+    clearTimeout(AIM.timer);
+    AIM.timer = setTimeout(() => aimStop(), AIM.duration);
   }
 
-  // -------------------------
-  // Init
-  // -------------------------
-  function init() {
+  function aimStop() {
+    if (!AIM.running) return;
+    AIM.running = false;
+    clearTimeout(AIM.timer);
+    AIM.timer = 0;
+  }
+
+  async function aimSendResult() {
+    const bridge = window.BCO?.bridge;
+    const total = AIM.hits + AIM.misses;
+    const acc = total ? Math.round((AIM.hits / total) * 100) : 0;
+
+    // 1) отправляем на сервер (чтобы Mini App был “ботом внутри”)
+    if (bridge && bridge.api) {
+      await safe(() => bridge.api("game_result", {
+        game: "aim_trial",
+        mode: "ARCADE",
+        hits: AIM.hits,
+        misses: AIM.misses,
+        total,
+        acc,
+        durationMs: AIM.duration
+      }));
+    }
+
+    // 2) sync в бота (fallback)
+    bridge?.sendToBot?.({
+      type: "game_result",
+      action: "game_result",
+      game: "aim_trial",
+      mode: "ARCADE",
+      hits: AIM.hits,
+      misses: AIM.misses,
+      total,
+      acc,
+      durationMs: AIM.duration
+    });
+  }
+
+  // --------- MAIN ----------
+  async function start() {
     setHealth("js: starting…");
 
-    // TG
-    tgReady();
-    safe(() => window.BCO_TG?.applyInsets?.());
+    const bridge = window.BCO?.bridge;
+    if (!bridge) {
+      setHealth("js: ERROR (bridge missing)");
+      return;
+    }
 
-    // IMPORTANT:
-    // НЕ ставим глобальный “click killer” по document — он и убил тебе UI.
-    // Только безопасный fastTap на нужных кнопках.
+    // TG ready
+    safe(() => bridge.tgReady());
 
-    // input router (если есть) — он совместим, потому что без data-action он не блокирует native click
-    mountInputRouter();
+    // ✅ Главное: Mini App <-> Server bridge
+    // если серверный мост не отвечает — мы всё равно не ломаем UI, просто пишем в health.
+    let bridgeOk = false;
+    try {
+      const ping = await bridge.api("ping", { t: Date.now() });
+      bridgeOk = !!ping?.ok;
+    } catch {
+      bridgeOk = false;
+    }
 
-    // bind all UI buttons
-    bindAllButtons();
+    setHealth(bridgeOk ? "js: OK (bridge)" : "js: OK (NO BRIDGE, bot-sync only)");
 
-    // default UI state
-    setModeButtons(STATE.zombies.mode === "ARCADE");
-    setSegActive(q("segZMap"), STATE.zombies.map);
-    aimUpdateUI();
-
-    // mark ok
-    window.__BCO_JS_OK__ = true;
-    setHealth("js: OK (restored)");
-
-    log("ready", {
-      tg: !!TG,
-      input: !!(window.BCO?.input || window.BCO_INPUT),
-      zombiesRuntime: !!(window.BCO?.zombies?.runtime || window.BCO_ZOMBIES_RUNTIME),
-      engine: !!(window.BCO?.engine || window.BCO_ENGINE)
+    // --- Buttons -> Server actions (Mini App работает сам), + fallback sendToBot ---
+    bindClick("btnOpenBot", async () => {
+      // в мини-апп можно показать “меню бота” как текст/карточки через сервер
+      const r = await safe(() => bridge.nav("open_bot_menu"));
+      if (r?.ok && r?.text) addChatLine("bot", r.text);
+      bridge.sendToBot({ type: "nav", nav: "open_bot_menu" });
     });
+
+    bindClick("btnSync", async () => {
+      const r = await safe(() => bridge.nav("sync_profile"));
+      if (r?.ok && r?.text) addChatLine("bot", r.text);
+      bridge.sendToBot({ type: "nav", nav: "sync_profile" });
+    });
+
+    bindClick("btnPremium", async () => {
+      const r = await safe(() => bridge.nav("premium_hub"));
+      if (r?.ok && r?.text) addChatLine("bot", r.text);
+      bridge.sendToBot({ type: "nav", nav: "premium_hub" });
+    });
+
+    bindClick("btnPlayZombies", () => zombiesStartFullscreen());
+    bindClick("btnZEnterGame", () => zombiesStartFullscreen());
+    bindClick("btnZQuickPlay", () => zombiesStartFullscreen());
+
+    bindClick("btnZOpenHQ", async () => {
+      const r = await safe(() => bridge.nav("zombies_hq"));
+      if (r?.ok && r?.text) addChatLine("bot", r.text);
+      bridge.sendToBot({ type: "nav", nav: "zombies_hq" });
+    });
+
+    bindClick("btnOpenZombies", async () => {
+      const r = await safe(() => bridge.nav("zombies_open"));
+      if (r?.ok && r?.text) addChatLine("bot", r.text);
+      bridge.sendToBot({ type: "nav", nav: "zombies_open" });
+    });
+
+    bindClick("btnZPerks", async () => {
+      const r = await safe(() => bridge.nav("zombies_perks"));
+      if (r?.ok && r?.text) addChatLine("bot", r.text);
+      bridge.sendToBot({ type: "nav", nav: "zombies_perks" });
+    });
+
+    bindClick("btnZLoadout", async () => {
+      const r = await safe(() => bridge.nav("zombies_loadout"));
+      if (r?.ok && r?.text) addChatLine("bot", r.text);
+      bridge.sendToBot({ type: "nav", nav: "zombies_loadout" });
+    });
+
+    bindClick("btnZEggs", async () => {
+      const r = await safe(() => bridge.nav("zombies_eggs"));
+      if (r?.ok && r?.text) addChatLine("bot", r.text);
+      bridge.sendToBot({ type: "nav", nav: "zombies_eggs" });
+    });
+
+    bindClick("btnZRound", async () => {
+      const r = await safe(() => bridge.nav("zombies_round"));
+      if (r?.ok && r?.text) addChatLine("bot", r.text);
+      bridge.sendToBot({ type: "nav", nav: "zombies_round" });
+    });
+
+    bindClick("btnZTips", async () => {
+      const r = await safe(() => bridge.nav("zombies_tips"));
+      if (r?.ok && r?.text) addChatLine("bot", r.text);
+      bridge.sendToBot({ type: "nav", nav: "zombies_tips" });
+    });
+
+    // --- Aim Trial ---
+    bindClick("btnAimStart", () => aimStart());
+    bindClick("btnAimStop", () => aimStop());
+    bindClick("btnAimSend", () => aimSendResult());
+
+    const target = q("aimTarget");
+    const arena = q("aimArena");
+    if (target) {
+      target.addEventListener("click", () => {
+        if (!AIM.running) return;
+        AIM.hits++;
+        aimStat();
+        aimMoveTarget();
+      }, { passive: true });
+    }
+    if (arena) {
+      arena.addEventListener("click", (e) => {
+        if (!AIM.running) return;
+        const t = e.target;
+        if (t === target || (t && t.closest && t.closest("#aimTarget"))) return;
+        AIM.misses++;
+        aimStat();
+        aimMoveTarget();
+      }, { passive: true });
+    }
+    aimStat();
+
+    // --- Chat внутри Mini App ---
+    bindClick("btnChatSend", async () => {
+      const inp = q("chatInput");
+      const text = inp ? String(inp.value || "").trim() : "";
+      if (!text) return;
+      if (inp) inp.value = "";
+
+      addChatLine("user", text);
+
+      // 1) основной путь: сервер отвечает текстом -> показываем внутри Mini App
+      const r = await safe(() => bridge.chat(text));
+      if (r?.ok && r?.text) addChatLine("bot", r.text);
+      else addChatLine("bot", "⚠️ Сервер-мост не ответил. Проверь /webapp/api/ping");
+
+      // 2) sync в бота (по желанию)
+      bridge.sendToBot({ type: "nav", nav: "chat", text });
+    });
+
+    // mark OK
+    window.__BCO_JS_OK__ = true;
+    log("started", { bridgeOk });
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init, { once: true });
+    document.addEventListener("DOMContentLoaded", start, { once: true });
   } else {
-    init();
+    start();
   }
 })();
