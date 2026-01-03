@@ -2,47 +2,28 @@
 (() => {
   "use strict";
 
-  const CFG = {
-    VERSION: "3.0.0-vnext",
+  const CONFIG = {
+    VERSION: "3.1.0-modular",
     STORAGE_KEY: "bco_state_v1",
-    CHAT_KEY: "bco_chat_v1",
-    BUILD_KEY: "bco_build",
+    MAX_PAYLOAD_SIZE: 15000,
 
     // Contract
     DEFAULT_VOICE: "TEAMMATE",
-    COACH_VOICE: "COACH",
+    ZOOM_BUMP: 0.5, // +0.5 to current
 
-    // Zombies vNext
-    ZOMBIES: {
-      // zoom bump contract (core snaps to 0.5 step)
-      ZOOM_BUMP: 0.5,
-
-      // input
-      DEADZONE: 0.10,
-      AIM_DEADZONE: 0.06,
-
-      // iOS tap/gesture guard
+    INPUT: {
       TAP_MAX_MOVE_PX: 12,
-      TAP_MAX_MS: 520,
+      TAP_MAX_MS: 450,
+      CAPTURE: true
+    },
 
-      // Game loop
-      RAF_RESIZE_THROTTLE_MS: 120,
-
-      // Runtime: “real different” modes policy knobs (core already has rogue vs arcade)
-      MODES: {
-        arcade: {
-          name: "arcade",
-          // arcade = no coin economy / no pickups application (core already guards on isRogue)
-          allowShop: false
-        },
-        roguelike: {
-          name: "roguelike",
-          allowShop: true
-        }
-      }
+    FULLSCREEN: {
+      TAKEOVER_CLASS: "bco-game-takeover",
+      ACTIVE_CLASS: "bco-game-active",
+      LOCK_BODY_SCROLL: true
     }
   };
 
-  window.BCO_CFG = CFG;
-  console.log("[BCO_CFG] loaded", CFG.VERSION);
+  window.BCO = window.BCO || {};
+  window.BCO.CONFIG = CONFIG;
 })();
