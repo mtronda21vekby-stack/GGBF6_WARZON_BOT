@@ -1,4 +1,4 @@
-// app/webapp/static/zombies.core.js  [ULTRA LUX COD-ZOMBIES-2D v1.4 | 3D-READY CORE]
+// app/webapp/static/zombies.core.js  [ULTRA LUX COD-ZOMBIES-2D v1.4.2 | 3D-READY CORE]
 // Core = gameplay/physics/state ONLY. Renderer (2D now / 3D later) reads snapshots.
 // ULTRA: real roguelike loop (coins/loot/rarities/levels/shop methods) + relic quest 0/5 -> wonder weapon.
 // - Armor/plates, reload + ammo reserve
@@ -14,6 +14,7 @@
 // v1.4 FIX: economy always progresses (direct coins on kill + pickups), safer boss death path, stronger pickup magnet,
 //          safer mode detect, explicit install API for optional modules, snapshot has all HUD fields always.
 // v1.4.1 ZOOM: state.zoom + setZoomDelta(+0.5 contract) + zoom in snapshot (camera.zoom)
+// v1.4.2 ZOOM: quantize zoom to CFG.zoom.step (contract-safe), clamp+snap in setZoomLevel/setZoomDelta/start(opts.zoom)
 (() => {
   "use strict";
 
@@ -203,6 +204,24 @@
   };
 
   // -------------------------
+  // ZOOM snap helper (contract-safe)
+  // -------------------------
+  function _snapZoom(z) {
+    const step = Number(CFG.zoom.step) || 0.5;
+    const min = Number(CFG.zoom.min) || 0.5;
+    const max = Number(CFG.zoom.max) || 2.5;
+    const v = Number(z);
+    if (!Number.isFinite(v)) return CFG.zoom.default;
+
+    const cl = clamp(v, min, max);
+    // quantize to step
+    const q = Math.round(cl / step) * step;
+    // avoid floating drift (0.999999)
+    const fixed = Math.round(q * 1000) / 1000;
+    return clamp(fixed, min, max);
+  }
+
+  // -------------------------
   // Build weapon instance for run
   // -------------------------
   function mkWeapon(key, rarityId, upgradeLevel = 0) {
@@ -354,17 +373,17 @@
     },
 
     setZoomLevel(level) {
-      const z = Number(level);
-      if (!Number.isFinite(z)) return this.getZoom();
-      this.state.zoom = clamp(z, CFG.zoom.min, CFG.zoom.max);
+      this.state.zoom = _snapZoom(level);
       return this.getZoom();
     },
 
     setZoomDelta(delta) {
       const d = Number(delta);
       if (!Number.isFinite(d) || !d) return this.getZoom();
-      const next = (Number(this.state.zoom) || CFG.zoom.default) + d;
-      this.state.zoom = clamp(next, CFG.zoom.min, CFG.zoom.max);
+
+      const cur = Number(this.state.zoom) || CFG.zoom.default;
+      // contract-friendly: still supports any delta, but always snaps to CFG.zoom.step
+      this.state.zoom = _snapZoom(cur + d);
       return this.getZoom();
     },
 
@@ -379,7 +398,7 @@
       if (opts.skin) this.meta.skin = String(opts.skin);
       if (opts.weaponKey && CFG.weapons[opts.weaponKey]) this.meta.weaponKey = opts.weaponKey;
 
-      // ✅ allow passing zoom on start (optional)
+      // ✅ allow passing zoom on start (optional, snapped)
       if (opts.zoom != null) this.setZoomLevel(opts.zoom);
 
       this._resetRun();
@@ -786,6 +805,9 @@
     _resetRun() {
       const S = this.state;
       const st = this._effectiveStats();
+
+      // keep zoom as-is (user controlled)
+      S.zoom = _snapZoom(S.zoom);
 
       S.timeMs = 0;
       S.wave = 1;
@@ -1543,5 +1565,5 @@
   };
 
   window.BCO_ZOMBIES_CORE = CORE;
-  console.log("[Z_CORE] loaded (ULTRA LUX COD-ZOMBIES-2D v1.4.1 | 3D-READY CORE + ZOOM)");
+  console.log("[Z_CORE] loaded (ULTRA LUX COD-ZOMBIES-2D v1.4.2 | 3D-READY CORE + ZOOM SNAP)");
 })();
