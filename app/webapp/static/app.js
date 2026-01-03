@@ -1,5 +1,5 @@
 // app/webapp/static/app.js
-// BCO App Entry — STABLE UI (DO NOT TOUCH VISUAL) + iOS FastTap + Proper Takeover
+// BCO Mini App — STABLE UI (NO VISUAL CHANGES) + iOS TAP FIX + FULL BINDINGS (RESTORE FUNCTIONALITY)
 (() => {
   "use strict";
 
@@ -8,64 +8,151 @@
 
   const TG = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
 
-  function q(id) { return document.getElementById(id); }
-  function qa(sel) { return Array.from(document.querySelectorAll(sel)); }
+  // -------------------------
+  // Config / Storage (compatible with your earlier keys)
+  // -------------------------
+  const STORAGE_KEY = "bco_state_v1";
+  const CHAT_KEY = "bco_chat_v1";
+  const CHAT_LIMIT = 80;
+  const MAX_PAYLOAD = 15000;
+
   function safe(fn) { try { return fn(); } catch { return undefined; } }
+  function q(id) { return document.getElementById(id); }
+  function qs(sel) { return document.querySelector(sel); }
+  function qa(sel) { return Array.from(document.querySelectorAll(sel)); }
 
   function setHealth(msg) {
     const el = q("jsHealth");
     if (el) el.textContent = String(msg || "");
   }
 
-  // ------------------------------------------------------------
-  // 1) Tabs (UI only, no visual changes)
-  // ------------------------------------------------------------
-  function setTab(name) {
-    const panes = qa(".tabpane");
-    const navs = qa(".bottom-nav .nav-btn");
+  // -------------------------
+  // Toast
+  // -------------------------
+  const Toast = (() => {
+    const el = () => q("toast");
+    let t = 0;
 
-    for (const p of panes) {
-      const ok = p.id === ("tab-" + name);
-      p.classList.toggle("active", ok);
+    function show(msg, ms = 1400) {
+      const e = el();
+      if (!e) return;
+      e.textContent = String(msg || "OK");
+      e.style.opacity = "1";
+      e.style.transform = "translateY(0)";
+      clearTimeout(t);
+      t = setTimeout(() => {
+        try {
+          e.style.opacity = "0";
+          e.style.transform = "translateY(6px)";
+        } catch {}
+      }, ms);
+    }
+    return { show };
+  })();
+
+  // -------------------------
+  // State/Profile
+  // -------------------------
+  const State = (() => {
+    const DEFAULT = {
+      profile: {
+        voice: "TEAMMATE", // TEAMMATE | COACH
+        mode: "Normal",    // Normal | Pro | Demon
+        platform: "PC",    // PC | PlayStation | Xbox
+        input: "Controller", // Controller | KBM
+        game: "Warzone",   // Warzone | BO7 | BF6
+        role: "Flex",
+        bf6_class: "Assault"
+      },
+      ui: {
+        tab: "home",
+        zMode: "arcade",   // arcade | roguelike
+        zMap: "Ashes"      // Ashes | Astra
+      }
+    };
+
+    function load() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return structuredClone(DEFAULT);
+        const parsed = JSON.parse(raw);
+        return {
+          profile: { ...DEFAULT.profile, ...(parsed.profile || {}) },
+          ui: { ...DEFAULT.ui, ...(parsed.ui || {}) }
+        };
+      } catch {
+        return structuredClone(DEFAULT);
+      }
     }
 
-    for (const b of navs) {
-      const ok = b.getAttribute("data-tab") === name;
-      b.classList.toggle("active", ok);
-      b.setAttribute("aria-selected", ok ? "true" : "false");
+    function save(st) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
+        return true;
+      } catch {
+        return false;
+      }
     }
 
-    try { location.hash = "#" + name; } catch {}
+    let st = load();
+
+    function get() { return st; }
+    function set(next) { st = next; save(st); return st; }
+    function patch(partial) {
+      st = {
+        profile: { ...st.profile, ...(partial.profile || {}) },
+        ui: { ...st.ui, ...(partial.ui || {}) }
+      };
+      save(st);
+      return st;
+    }
+
+    return { get, set, patch, save };
+  })();
+
+  // -------------------------
+  // SendData (single reliable pipe)
+  // -------------------------
+  function sendToBot(payload) {
+    try {
+      if (!payload || typeof payload !== "object") payload = { value: String(payload || "") };
+
+      const st = State.get();
+      const pack = {
+        ...payload,
+        profile: st.profile,
+        ts: Date.now()
+      };
+
+      const json = JSON.stringify(pack);
+      if (json.length > MAX_PAYLOAD) {
+        Toast.show("Payload too big");
+        warn("sendToBot payload too big", json.length);
+        return false;
+      }
+
+      if (TG && typeof TG.sendData === "function") {
+        TG.sendData(json);
+        return true;
+      }
+
+      // Fallback (opened outside TG)
+      warn("TG.sendData missing. Payload:", pack);
+      return false;
+    } catch (e) {
+      warn("sendToBot failed", e);
+      return false;
+    }
   }
 
-  function bindTabs() {
-    const nav = document.querySelector(".bottom-nav");
-    if (!nav) return;
-
-    nav.addEventListener("click", (e) => {
-      const b = e.target && e.target.closest ? e.target.closest(".nav-btn") : null;
-      if (!b) return;
-      const name = b.getAttribute("data-tab") || "home";
-      setTab(name);
-    }, { passive: true });
-
-    const h = (location.hash || "").replace("#", "");
-    if (h && q("tab-" + h)) setTab(h);
-    else setTab("home");
-  }
-
-  // ------------------------------------------------------------
-  // 2) iOS FastTap (fix "buttons not responding")
-  // - Works for ALL buttons/links + any element with role=button
-  // - Does NOT break scroll inside modal areas
-  // - Prevents ghost double fire
-  // ------------------------------------------------------------
+  // -------------------------
+  // iOS FastTap (fix dead taps)
+  // -------------------------
   const FastTap = (() => {
     const MODAL_SCROLL_SEL = ".bco-modal-scroll, .modal, .modal-body, [role='dialog'], .allow-scroll";
     const TAP_MAX_MOVE = 14;
     const TAP_MAX_MS = 450;
-
-    let active = null; // {t0,x0,y0,target,moved}
+    let active = null;
     let lastFireAt = 0;
 
     function withinScrollable(target) {
@@ -74,17 +161,10 @@
 
     function isInteractive(target) {
       if (!target) return false;
-
-      // If inside scroll modal, allow native (don't hijack)
       if (withinScrollable(target)) return false;
-
+      if (target.closest && target.closest("[data-tab],[data-value],[data-action],[data-route],[data-z]")) return true;
       const el = target.closest ? target.closest("button,a,[role='button'],input,textarea,select,label") : null;
-      if (el) return true;
-
-      // Any element with click handler attributes / dataset that your app uses
-      if (target.closest && target.closest("[data-tab],[data-action],[data-route],[data-z]")) return true;
-
-      return false;
+      return !!el;
     }
 
     function getPoint(ev) {
@@ -96,15 +176,8 @@
     function onDown(ev) {
       const t = ev.target;
       if (!isInteractive(t)) return;
-
       const p = getPoint(ev);
-      active = {
-        t0: Date.now(),
-        x0: p.clientX || 0,
-        y0: p.clientY || 0,
-        moved: false,
-        target: t
-      };
+      active = { t0: Date.now(), x0: p.clientX || 0, y0: p.clientY || 0, moved: false, target: t };
     }
 
     function onMove(ev) {
@@ -118,48 +191,36 @@
       if (dist > TAP_MAX_MOVE) active.moved = true;
     }
 
-    function fireClick(target, ev) {
-      const now = Date.now();
-      if (now - lastFireAt < 220) return; // anti double-fire
-      lastFireAt = now;
-
-      const el =
-        (target && target.closest && target.closest("button,a,[role='button'],[data-tab],[data-action],[data-route],[data-z]"))
-        || target;
-
-      if (!el) return;
-
-      // We trigger native click reliably
-      safe(() => el.click());
-    }
-
     function onUp(ev) {
       if (!active) return;
-
       const dt = Date.now() - active.t0;
       const okTap = (dt <= TAP_MAX_MS) && !active.moved;
       const t = ev.target || active.target;
-
       active = null;
 
       if (!okTap) return;
       if (!isInteractive(t)) return;
 
-      // Prevent iOS "sometimes no click" + stop ghost chain
+      const now = Date.now();
+      if (now - lastFireAt < 220) return;
+      lastFireAt = now;
+
       safe(() => ev.preventDefault());
       safe(() => ev.stopPropagation());
 
-      fireClick(t, ev);
+      const el =
+        (t && t.closest && t.closest("button,a,[role='button'],[data-tab],[data-value],[data-action],[data-route],[data-z]"))
+        || t;
+
+      safe(() => el && el.click && el.click());
     }
 
     function mount() {
-      // Pointer first
       document.addEventListener("pointerdown", onDown, { capture: true, passive: false });
       document.addEventListener("pointermove", onMove, { capture: true, passive: false });
       document.addEventListener("pointerup", onUp, { capture: true, passive: false });
       document.addEventListener("pointercancel", () => { active = null; }, { capture: true, passive: true });
 
-      // Touch fallback
       document.addEventListener("touchstart", onDown, { capture: true, passive: false });
       document.addEventListener("touchmove", onMove, { capture: true, passive: false });
       document.addEventListener("touchend", onUp, { capture: true, passive: false });
@@ -171,12 +232,272 @@
     return { mount };
   })();
 
-  // ------------------------------------------------------------
-  // 3) Takeover (DO NOT KILL main UI полностью)
-  // - Hide only header/nav/footer (visual unchanged)
-  // - Keep main in DOM so game overlays/handlers still work
-  // - zOverlayMount pointer events: off in UI, on in takeover
-  // ------------------------------------------------------------
+  // -------------------------
+  // Tabs (restore nav)
+  // -------------------------
+  function setTab(name) {
+    const panes = qa(".tabpane");
+    const navs = qa(".bottom-nav .nav-btn");
+    for (const p of panes) p.classList.toggle("active", p.id === ("tab-" + name));
+    for (const b of navs) {
+      const ok = b.getAttribute("data-tab") === name;
+      b.classList.toggle("active", ok);
+      b.setAttribute("aria-selected", ok ? "true" : "false");
+    }
+    State.patch({ ui: { tab: name } });
+    safe(() => { location.hash = "#" + name; });
+  }
+
+  function bindTabs() {
+    const nav = qs(".bottom-nav");
+    if (nav) {
+      nav.addEventListener("click", (e) => {
+        const b = e.target && e.target.closest ? e.target.closest(".nav-btn") : null;
+        if (!b) return;
+        const name = b.getAttribute("data-tab") || "home";
+        setTab(name);
+      }, { passive: true });
+    }
+
+    const st = State.get();
+    const h = (location.hash || "").replace("#", "");
+    if (h && q("tab-" + h)) setTab(h);
+    else if (st.ui.tab && q("tab-" + st.ui.tab)) setTab(st.ui.tab);
+    else setTab("home");
+  }
+
+  // -------------------------
+  // Chips / Segments (restore behavior)
+  // -------------------------
+  function refreshChips() {
+    const st = State.get();
+
+    const chipVoice = q("chipVoice");
+    const chipMode = q("chipMode");
+    const chipPlatform = q("chipPlatform");
+
+    if (chipVoice) chipVoice.textContent = (st.profile.voice === "COACH") ? "📚 Коуч" : "🤝 Тиммейт";
+    if (chipMode) chipMode.textContent = `🧠 ${st.profile.mode || "Normal"}`;
+    if (chipPlatform) {
+      const p = st.profile.platform || "PC";
+      chipPlatform.textContent = (p === "PlayStation") ? "🎮 PS" : (p === "Xbox") ? "🎮 Xbox" : "🖥 PC";
+    }
+
+    const chatSub = q("chatSub");
+    if (chatSub) chatSub.textContent = `${st.profile.voice} • ${st.profile.mode} • ${st.profile.platform}`;
+  }
+
+  function bindProfileControls() {
+    const st = State.get();
+
+    // Voice seg in Settings
+    qa("#segVoice .seg-btn").forEach((b) => {
+      const v = b.getAttribute("data-value");
+      b.classList.toggle("active", v === st.profile.voice);
+      b.addEventListener("click", () => {
+        State.patch({ profile: { voice: v } });
+        qa("#segVoice .seg-btn").forEach(x => x.classList.toggle("active", x === b));
+        refreshChips();
+        Toast.show("Voice: " + v);
+      }, { passive: true });
+    });
+
+    // Mode seg in Coach
+    qa("#segMode .seg-btn").forEach((b) => {
+      const v = b.getAttribute("data-value");
+      b.classList.toggle("active", v === st.profile.mode);
+      b.addEventListener("click", () => {
+        State.patch({ profile: { mode: v } });
+        qa("#segMode .seg-btn").forEach(x => x.classList.toggle("active", x === b));
+        refreshChips();
+        Toast.show("Mode: " + v);
+      }, { passive: true });
+    });
+
+    // Platform seg in Settings
+    qa("#segPlatform .seg-btn").forEach((b) => {
+      const v = b.getAttribute("data-value");
+      b.classList.toggle("active", v === st.profile.platform);
+      b.addEventListener("click", () => {
+        State.patch({ profile: { platform: v } });
+        qa("#segPlatform .seg-btn").forEach(x => x.classList.toggle("active", x === b));
+        refreshChips();
+        Toast.show("Platform: " + v);
+      }, { passive: true });
+    });
+
+    // Input seg in Settings
+    qa("#segInput .seg-btn").forEach((b) => {
+      const v = b.getAttribute("data-value");
+      b.classList.toggle("active", v === st.profile.input);
+      b.addEventListener("click", () => {
+        State.patch({ profile: { input: v } });
+        qa("#segInput .seg-btn").forEach(x => x.classList.toggle("active", x === b));
+        refreshChips();
+        Toast.show("Input: " + v);
+      }, { passive: true });
+    });
+
+    // Game seg in Home
+    qa("#segGame .seg-btn").forEach((b) => {
+      const v = b.getAttribute("data-value");
+      b.classList.toggle("active", v === st.profile.game);
+      b.addEventListener("click", () => {
+        State.patch({ profile: { game: v } });
+        qa("#segGame .seg-btn").forEach(x => x.classList.toggle("active", x === b));
+        Toast.show("Game: " + v);
+      }, { passive: true });
+    });
+
+    // Chip quick toggles
+    q("chipVoice")?.addEventListener("click", () => {
+      const cur = State.get().profile.voice;
+      const next = (cur === "COACH") ? "TEAMMATE" : "COACH";
+      State.patch({ profile: { voice: next } });
+      qa("#segVoice .seg-btn").forEach((b) => b.classList.toggle("active", b.getAttribute("data-value") === next));
+      refreshChips();
+      Toast.show("Voice: " + next);
+    }, { passive: true });
+
+    q("chipMode")?.addEventListener("click", () => {
+      const order = ["Normal", "Pro", "Demon"];
+      const cur = State.get().profile.mode || "Normal";
+      const i = Math.max(0, order.indexOf(cur));
+      const next = order[(i + 1) % order.length];
+      State.patch({ profile: { mode: next } });
+      qa("#segMode .seg-btn").forEach((b) => b.classList.toggle("active", b.getAttribute("data-value") === next));
+      refreshChips();
+      Toast.show("Mode: " + next);
+    }, { passive: true });
+
+    q("chipPlatform")?.addEventListener("click", () => {
+      const order = ["PC", "PlayStation", "Xbox"];
+      const cur = State.get().profile.platform || "PC";
+      const i = Math.max(0, order.indexOf(cur));
+      const next = order[(i + 1) % order.length];
+      State.patch({ profile: { platform: next } });
+      qa("#segPlatform .seg-btn").forEach((b) => b.classList.toggle("active", b.getAttribute("data-value") === next));
+      refreshChips();
+      Toast.show("Platform: " + next);
+    }, { passive: true });
+
+    q("btnApplyProfile")?.addEventListener("click", () => {
+      State.save(State.get());
+      Toast.show("✅ Profile saved");
+      sendToBot({ type: "profile", action: "sync_profile" });
+    }, { passive: true });
+  }
+
+  // -------------------------
+  // Chat (restore basic)
+  // -------------------------
+  function loadChat() {
+    try {
+      const raw = localStorage.getItem(CHAT_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr.slice(-CHAT_LIMIT) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveChat(arr) {
+    try {
+      localStorage.setItem(CHAT_KEY, JSON.stringify(arr.slice(-CHAT_LIMIT)));
+    } catch {}
+  }
+
+  function renderChat() {
+    const logEl = q("chatLog");
+    if (!logEl) return;
+    const items = loadChat();
+    logEl.innerHTML = "";
+    for (const it of items) {
+      const row = document.createElement("div");
+      row.className = "chat-row";
+      row.style.margin = "8px 0";
+      row.style.display = "flex";
+      row.style.gap = "10px";
+      row.style.alignItems = "flex-start";
+
+      const badge = document.createElement("div");
+      badge.textContent = (it.who === "me") ? "🫵" : "😈";
+      badge.style.width = "30px";
+      badge.style.flex = "0 0 30px";
+      badge.style.opacity = "0.9";
+
+      const bubble = document.createElement("div");
+      bubble.textContent = it.text || "";
+      bubble.style.padding = "10px 12px";
+      bubble.style.borderRadius = "12px";
+      bubble.style.maxWidth = "82%";
+      bubble.style.whiteSpace = "pre-wrap";
+      bubble.style.wordBreak = "break-word";
+      bubble.style.background = (it.who === "me") ? "rgba(140,120,255,0.22)" : "rgba(255,255,255,0.10)";
+
+      row.appendChild(badge);
+      row.appendChild(bubble);
+      logEl.appendChild(row);
+    }
+    try { logEl.scrollTop = logEl.scrollHeight; } catch {}
+  }
+
+  function pushChat(who, text) {
+    const items = loadChat();
+    items.push({ who, text: String(text || ""), t: Date.now() });
+    saveChat(items);
+    renderChat();
+  }
+
+  function bindChat() {
+    const inp = q("chatInput");
+    const btn = q("btnChatSend");
+    const btnClear = q("btnChatClear");
+    const btnCopy = q("btnChatExport");
+
+    function send() {
+      const txt = (inp && inp.value) ? inp.value.trim() : "";
+      if (!txt) return;
+      if (inp) inp.value = "";
+      pushChat("me", txt);
+
+      // send to bot
+      sendToBot({ type: "chat", action: "chat", text: txt });
+      Toast.show("Sent → bot");
+    }
+
+    btn?.addEventListener("click", send, { passive: true });
+    inp?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+
+    btnClear?.addEventListener("click", () => {
+      saveChat([]);
+      renderChat();
+      Toast.show("Chat cleared");
+    }, { passive: true });
+
+    btnCopy?.addEventListener("click", async () => {
+      const items = loadChat();
+      const text = items.map(x => (x.who === "me" ? "ME: " : "BOT: ") + x.text).join("\n");
+      try {
+        await navigator.clipboard.writeText(text);
+        Toast.show("Copied");
+      } catch {
+        Toast.show("Copy failed");
+      }
+    }, { passive: true });
+
+    renderChat();
+  }
+
+  // -------------------------
+  // Zombies Launcher (restore)
+  // -------------------------
   const Takeover = (() => {
     const takeoverClass = "bco-game-takeover";
     const activeClass = "bco-game-active";
@@ -195,16 +516,13 @@
     function setOverlayPointer(on) {
       const mount = q("zOverlayMount");
       if (!mount) return;
-      // In UI: must not block clicks
-      // In game: allow overlays/controls to be clickable
       mount.style.pointerEvents = on ? "auto" : "none";
     }
 
     function hideChrome(on) {
-      const header = document.querySelector("header.app-header");
-      const nav = document.querySelector("nav.bottom-nav");
-      const foot = document.querySelector("footer.foot");
-
+      const header = qs("header.app-header");
+      const nav = qs("nav.bottom-nav");
+      const foot = qs("footer.foot");
       if (on) {
         if (header) header.style.display = "none";
         if (nav) nav.style.display = "none";
@@ -219,7 +537,6 @@
     function enter() {
       document.body.classList.add(takeoverClass);
       document.body.classList.add(activeClass);
-
       hideTG(true);
       hideChrome(true);
       setOverlayPointer(true);
@@ -228,34 +545,47 @@
     function exit() {
       document.body.classList.remove(takeoverClass);
       document.body.classList.remove(activeClass);
-
       setOverlayPointer(false);
       hideChrome(false);
       hideTG(false);
-
-      // Keep TG minimal for app design
       safe(() => window.BCO_TG?.hideChrome?.());
     }
 
-    function isActive() {
-      return document.body.classList.contains(takeoverClass);
-    }
+    function isActive() { return document.body.classList.contains(takeoverClass); }
 
     return { enter, exit, isActive };
   })();
 
-  // ------------------------------------------------------------
-  // 4) Zombies start (legacy-first, then fallbacks)
-  // ------------------------------------------------------------
-  const ZState = { mode: "arcade", map: "Ashes" };
-
-  function readZModeFromUI() {
-    const r = q("btnZModeRogue2");
-    const isRogue = !!(r && r.classList.contains("active"));
-    return isRogue ? "roguelike" : "arcade";
+  function setZModeUI(isRogue) {
+    q("btnZModeArcade")?.classList.toggle("active", !isRogue);
+    q("btnZModeRogue")?.classList.toggle("active", isRogue);
+    q("btnZModeArcade2")?.classList.toggle("active", !isRogue);
+    q("btnZModeRogue2")?.classList.toggle("active", isRogue);
+    State.patch({ ui: { zMode: isRogue ? "roguelike" : "arcade" } });
   }
 
-  function readZMapFromUI() {
+  function setZMapUI(map) {
+    const m = (String(map) === "Astra") ? "Astra" : "Ashes";
+    const seg = q("segZMap");
+    if (seg) {
+      qa("#segZMap .seg-btn").forEach((b) => {
+        b.classList.toggle("active", b.getAttribute("data-value") === m);
+      });
+    }
+    State.patch({ ui: { zMap: m } });
+  }
+
+  function readZMode() {
+    const st = State.get();
+    // trust state, fallback to UI
+    if (st.ui.zMode) return st.ui.zMode;
+    const r = q("btnZModeRogue2");
+    return (r && r.classList.contains("active")) ? "roguelike" : "arcade";
+  }
+
+  function readZMap() {
+    const st = State.get();
+    if (st.ui.zMap) return st.ui.zMap;
     const seg = q("segZMap");
     if (!seg) return "Ashes";
     const b = seg.querySelector(".seg-btn.active");
@@ -263,41 +593,9 @@
     return (v === "Astra") ? "Astra" : "Ashes";
   }
 
-  function startZombies() {
-    ZState.mode = readZModeFromUI();
-    ZState.map = readZMapFromUI();
-
-    // 0) Enter takeover FIRST (so overlays can receive input)
-    Takeover.enter();
-
-    // 1) Prefer your legacy zombies.init.js entrypoints (UNKNOWN names => try many)
-    const ZINIT = window.BCO_ZOMBIES_INIT || window.BCO_ZOMBIES_INITER || window.BCO_ZOMBIES_BOOT || window.ZOMBIES_INIT || null;
-
-    const ok1 =
-      safe(() => ZINIT?.startGame?.(ZState.mode, { map: ZState.map })) ??
-      safe(() => ZINIT?.start?.(ZState.mode, { map: ZState.map })) ??
-      safe(() => ZINIT?.enter?.(ZState.mode, { map: ZState.map })) ??
-      safe(() => ZINIT?.run?.(ZState.mode, { map: ZState.map })) ??
-      undefined;
-
-    if (ok1 !== undefined) return true;
-
-    // 2) If you have BCO_ZOMBIES_GAME runner that needs canvas, do that
-    const CORE = window.BCO_ZOMBIES_CORE || null;
-    const ZGAME = window.BCO_ZOMBIES_GAME || null;
-
-    if (!CORE || !ZGAME) {
-      warn("Zombies missing CORE or GAME runner", { CORE: !!CORE, ZGAME: !!ZGAME });
-      Takeover.exit();
-      return false;
-    }
-
-    // Ensure canvas exists in overlay mount
+  function ensureZCanvas() {
     const mount = q("zOverlayMount");
-    if (!mount) {
-      Takeover.exit();
-      return false;
-    }
+    if (!mount) return null;
 
     let canvas = mount.querySelector("#bcoZCanvas");
     if (!canvas) {
@@ -311,90 +609,120 @@
       canvas.style.zIndex = "9999";
       canvas.style.background = "transparent";
       canvas.style.display = "block";
-      // IMPORTANT: keep canvas non-interactive; your joysticks/overlays handle input
-      canvas.style.pointerEvents = "none";
+      canvas.style.pointerEvents = "none"; // controls overlay must be clickable above if present
       mount.appendChild(canvas);
     } else {
       canvas.style.display = "block";
     }
 
-    // Size
     const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-    const pxW = Math.floor(window.innerWidth * dpr);
-    const pxH = Math.floor(window.innerHeight * dpr);
-    canvas.width = pxW;
-    canvas.height = pxH;
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+
+    return canvas;
+  }
+
+  function startZombies() {
+    const mode = readZMode();
+    const map = readZMap();
+
+    // First: if NEW runtime exists, use it (does takeover)
+    const runtime =
+      window.BCO_ZOMBIES_RUNTIME ||
+      window.BCO?.zombies?.runtime ||
+      window.BCO?.zombies?.runtime ||
+      null;
+
+    if (runtime && (runtime.startGame || runtime.start)) {
+      safe(() => runtime.setMode?.(mode.toUpperCase()));
+      safe(() => runtime.setMap?.(map));
+      const ok = safe(() => runtime.startGame?.()) ?? safe(() => runtime.start?.());
+      if (ok !== false) return true;
+    }
+
+    // Legacy path: use your core+game runner (zombies.game.js)
+    const CORE = window.BCO_ZOMBIES_CORE || null;
+    const ZGAME = window.BCO_ZOMBIES_GAME || null;
+
+    if (!CORE || !ZGAME) {
+      Toast.show("Zombies core not loaded");
+      warn("Missing CORE/ZGAME", { CORE: !!CORE, ZGAME: !!ZGAME });
+      return false;
+    }
+
+    Takeover.enter();
+
+    const canvas = ensureZCanvas();
+    if (!canvas) {
+      Takeover.exit();
+      return false;
+    }
 
     safe(() => ZGAME.setCanvas?.(canvas));
     safe(() => ZGAME.setInGame?.(true));
 
     const tms = (performance && performance.now) ? performance.now() : Date.now();
+    // core.start(mode, w, h, opts, tms) — css px
+    safe(() => CORE.start?.(mode, Math.floor(window.innerWidth), Math.floor(window.innerHeight), { map }, tms));
 
-    // core.start(mode, w, h, opts, tms) — use CSS px for core contract
-    safe(() => CORE.start?.(ZState.mode, Math.floor(window.innerWidth), Math.floor(window.innerHeight), { map: ZState.map }, tms));
-
-    // ✅ ZOOM contract +0.5 delta
+    // ZOOM contract +0.5 delta
     safe(() => CORE.setZoomDelta?.(+0.5));
 
     safe(() => ZGAME.startLoop?.());
+    Toast.show("Game started");
     return true;
   }
 
   function stopZombies() {
-    const ZINIT = window.BCO_ZOMBIES_INIT || null;
-    const ZGAME = window.BCO_ZOMBIES_GAME || null;
     const CORE = window.BCO_ZOMBIES_CORE || null;
-
-    safe(() => ZINIT?.stopGame?.());
-    safe(() => ZINIT?.stop?.());
-
+    const ZGAME = window.BCO_ZOMBIES_GAME || null;
     safe(() => ZGAME?.setInGame?.(false));
     safe(() => ZGAME?.stopLoop?.());
     safe(() => CORE?.stop?.());
-
     const c = q("bcoZCanvas");
     if (c) c.style.display = "none";
-
     Takeover.exit();
+    Toast.show("Exit game");
   }
 
-  // ------------------------------------------------------------
-  // 5) Bind UI buttons (no redesign)
-  // ------------------------------------------------------------
-  function bindButtons() {
-    // Zombies launch from Home
-    q("btnPlayZombies")?.addEventListener("click", () => {
-      setTab("game");
-      startZombies();
-    }, { passive: true });
+  function bindZombies() {
+    // mode buttons (both places)
+    q("btnZModeArcade")?.addEventListener("click", () => setZModeUI(false), { passive: true });
+    q("btnZModeArcade2")?.addEventListener("click", () => setZModeUI(false), { passive: true });
+    q("btnZModeRogue")?.addEventListener("click", () => setZModeUI(true), { passive: true });
+    q("btnZModeRogue2")?.addEventListener("click", () => setZModeUI(true), { passive: true });
 
-    // Zombies launch from Game tab
-    q("btnZQuickPlay")?.addEventListener("click", startZombies, { passive: true });
-    q("btnZEnterGame")?.addEventListener("click", startZombies, { passive: true });
-
-    // Mode toggles (UI class only)
-    function setModeUI(isRogue) {
-      q("btnZModeArcade")?.classList.toggle("active", !isRogue);
-      q("btnZModeRogue")?.classList.toggle("active", isRogue);
-      q("btnZModeArcade2")?.classList.toggle("active", !isRogue);
-      q("btnZModeRogue2")?.classList.toggle("active", isRogue);
-    }
-    q("btnZModeArcade")?.addEventListener("click", () => setModeUI(false), { passive: true });
-    q("btnZModeArcade2")?.addEventListener("click", () => setModeUI(false), { passive: true });
-    q("btnZModeRogue")?.addEventListener("click", () => setModeUI(true), { passive: true });
-    q("btnZModeRogue2")?.addEventListener("click", () => setModeUI(true), { passive: true });
-
-    // Map select
+    // map seg
     q("segZMap")?.addEventListener("click", (e) => {
       const b = e.target && e.target.closest ? e.target.closest(".seg-btn") : null;
       if (!b) return;
-      for (const x of qa("#segZMap .seg-btn")) x.classList.toggle("active", x === b);
+      setZMapUI(b.getAttribute("data-value"));
     }, { passive: true });
 
-    // Close
-    q("btnClose")?.addEventListener("click", () => safe(() => TG?.close?.()), { passive: true });
+    // start buttons
+    q("btnPlayZombies")?.addEventListener("click", () => { setTab("game"); startZombies(); }, { passive: true });
+    q("btnZQuickPlay")?.addEventListener("click", startZombies, { passive: true });
+    q("btnZEnterGame")?.addEventListener("click", startZombies, { passive: true });
 
-    // Escape/back stop
+    // HQ + bot commands
+    q("btnZOpenHQ")?.addEventListener("click", () => sendToBot({ type: "nav", action: "zombies_hq" }), { passive: true });
+    q("btnOpenZombies")?.addEventListener("click", () => sendToBot({ type: "nav", action: "zombies_open" }), { passive: true });
+    q("btnZPerks")?.addEventListener("click", () => sendToBot({ type: "cmd", action: "zombies_perks" }), { passive: true });
+    q("btnZLoadout")?.addEventListener("click", () => sendToBot({ type: "cmd", action: "zombies_loadout" }), { passive: true });
+    q("btnZEggs")?.addEventListener("click", () => sendToBot({ type: "cmd", action: "zombies_eggs" }), { passive: true });
+    q("btnZRound")?.addEventListener("click", () => sendToBot({ type: "cmd", action: "zombies_round" }), { passive: true });
+    q("btnZTips")?.addEventListener("click", () => sendToBot({ type: "cmd", action: "zombies_tips" }), { passive: true });
+
+    // send result buttons
+    q("btnZGameSend")?.addEventListener("click", () => safe(() => window.BCO_ZOMBIES_GAME?.sendResult?.("manual") || sendToBot({ type: "game", action: "game_result", game: "zombies" })), { passive: true });
+    q("btnZGameSend2")?.addEventListener("click", () => safe(() => window.BCO_ZOMBIES_GAME?.sendResult?.("manual") || sendToBot({ type: "game", action: "game_result", game: "zombies" })), { passive: true });
+
+    // hotkey shop preview (safe passthrough)
+    q("btnZBuyJug")?.addEventListener("click", () => safe(() => window.BCO_ZOMBIES_GAME?.buyPerk?.("jug") || sendToBot({ type: "cmd", action: "zombies_buy", perk: "jug" })), { passive: true });
+    q("btnZBuySpeed")?.addEventListener("click", () => safe(() => window.BCO_ZOMBIES_GAME?.buyPerk?.("speed") || sendToBot({ type: "cmd", action: "zombies_buy", perk: "speed" })), { passive: true });
+    q("btnZBuyAmmo")?.addEventListener("click", () => safe(() => window.BCO_ZOMBIES_GAME?.reload?.() || sendToBot({ type: "cmd", action: "zombies_reload" })), { passive: true });
+
+    // Escape/back exit
     window.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && Takeover.isActive()) stopZombies();
     }, { passive: true });
@@ -404,28 +732,136 @@
     });
   }
 
-  // ------------------------------------------------------------
-  // 6) Init
-  // ------------------------------------------------------------
-  function init() {
-    setHealth("js: app init…");
+  // -------------------------
+  // Home actions / Premium / Close / Open bot menu
+  // -------------------------
+  function bindHome() {
+    q("btnOpenBot")?.addEventListener("click", () => {
+      Toast.show("Open bot menu");
+      sendToBot({ type: "nav", action: "open_bot_menu" });
+    }, { passive: true });
 
-    // IMPORTANT: overlay must NEVER block UI clicks when not in game
+    q("btnSync")?.addEventListener("click", () => {
+      Toast.show("Sync profile → bot");
+      sendToBot({ type: "profile", action: "sync_profile" });
+    }, { passive: true });
+
+    q("btnPremium")?.addEventListener("click", () => {
+      Toast.show("Premium Hub → bot");
+      sendToBot({ type: "nav", action: "premium_hub" });
+    }, { passive: true });
+
+    q("btnBuyMonth")?.addEventListener("click", () => {
+      Toast.show("Buy Month → bot");
+      sendToBot({ type: "pay", action: "buy_month" });
+    }, { passive: true });
+
+    q("btnBuyLife")?.addEventListener("click", () => {
+      Toast.show("Buy Lifetime → bot");
+      sendToBot({ type: "pay", action: "buy_lifetime" });
+    }, { passive: true });
+
+    q("btnShare")?.addEventListener("click", () => {
+      // WebApp share is limited; we just show popup if available
+      const url = safe(() => location.href) || "";
+      if (TG && TG.showPopup) {
+        safe(() => TG.showPopup({ title: "BCO", message: "Скопировать ссылку?", buttons: [{ type: "default", text: "Copy" }, { type: "cancel" }] }, (id) => {
+          if (id === "default") safe(() => navigator.clipboard.writeText(url));
+        }));
+      } else {
+        safe(() => navigator.clipboard.writeText(url));
+        Toast.show("Copied link");
+      }
+    }, { passive: true });
+
+    q("btnClose")?.addEventListener("click", () => {
+      safe(() => TG?.close?.());
+      Toast.show("Close");
+    }, { passive: true });
+  }
+
+  // -------------------------
+  // Coach/VOD buttons (send to bot)
+  // -------------------------
+  function bindCoachVod() {
+    q("btnSendPlan")?.addEventListener("click", () => {
+      const focusBtn = qs("#segFocus .seg-btn.active");
+      const focus = focusBtn ? (focusBtn.getAttribute("data-value") || "aim") : "aim";
+      sendToBot({ type: "cmd", action: "training_plan", focus });
+      Toast.show("Plan → bot");
+    }, { passive: true });
+
+    q("btnOpenTraining")?.addEventListener("click", () => {
+      sendToBot({ type: "nav", action: "open_training" });
+      Toast.show("Open training");
+    }, { passive: true });
+
+    q("btnSendVod")?.addEventListener("click", () => {
+      const v1 = (q("vod1")?.value || "").trim();
+      const v2 = (q("vod2")?.value || "").trim();
+      const v3 = (q("vod3")?.value || "").trim();
+      const note = (q("vodNote")?.value || "").trim();
+      sendToBot({ type: "cmd", action: "vod_submit", v1, v2, v3, note });
+      Toast.show("VOD → bot");
+    }, { passive: true });
+
+    q("btnOpenVod")?.addEventListener("click", () => {
+      sendToBot({ type: "nav", action: "open_vod" });
+      Toast.show("Open VOD");
+    }, { passive: true });
+  }
+
+  // -------------------------
+  // Diagnostics block
+  // -------------------------
+  function fillDiagnostics() {
+    const st = State.get();
+
+    q("dbgTheme") && (q("dbgTheme").textContent = safe(() => TG?.colorScheme) || "—");
+    q("dbgUser") && (q("dbgUser").textContent = safe(() => TG?.initDataUnsafe?.user?.id) || "—");
+    q("dbgChat") && (q("dbgChat").textContent = safe(() => TG?.initDataUnsafe?.chat?.id) || "—");
+    q("dbgInit") && (q("dbgInit").textContent = (safe(() => TG?.initData) ? "ok" : "—"));
+
+    const buildTag = q("buildTag");
+    if (buildTag) buildTag.textContent = "build: " + (window.__BCO_BUILD__ || "—");
+
+    // restore last zombies state UI
+    setZModeUI(st.ui.zMode === "roguelike");
+    setZMapUI(st.ui.zMap || "Ashes");
+
+    refreshChips();
+  }
+
+  // -------------------------
+  // Init
+  // -------------------------
+  function init() {
+    setHealth("js: init…");
+
+    // Make sure overlay NEVER blocks UI when not in game
     const mount = q("zOverlayMount");
     if (mount) mount.style.pointerEvents = "none";
 
-    // Keep TG minimal (your design)
+    // TG init (keep your chrome hidden like you want)
     safe(() => window.BCO_TG?.hideChrome?.());
 
-    // Mount fast tap (this is the iOS fix for unresponsive buttons)
+    // iOS tap fix (this is the key)
     FastTap.mount();
 
+    // Bind everything back
     bindTabs();
-    bindButtons();
+    bindProfileControls();
+    bindChat();
+    bindHome();
+    bindCoachVod();
+    bindZombies();
+
+    fillDiagnostics();
 
     window.__BCO_JS_OK__ = true;
     setHealth("js: OK");
-    log("OK: FastTap + Tabs + Takeover separated");
+    log("OK: UI restored + iOS tap fixed");
+    Toast.show("OK");
   }
 
   if (document.readyState === "loading") {
@@ -434,6 +870,6 @@
     init();
   }
 
-  // Export minimal API (debug)
-  window.BCO_APP = { setTab, startZombies, stopZombies };
+  // Debug API
+  window.BCO_APP = { sendToBot, startZombies, stopZombies, setTab };
 })();
