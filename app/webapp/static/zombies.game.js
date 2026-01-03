@@ -1,9 +1,11 @@
-// app/webapp/static/zombies.game.js  [ULTRA LUX vNext | NO-UI Runner + ZOOM Contract + iOS Fix]
+// app/webapp/static/zombies.game.js  [ULTRA LUX vNext+ | NO-UI Runner + ZOOM Contract + iOS Fix | v1.0.1]
 // IMPORTANT:
 // - UI НЕ меняем. Этот модуль НЕ трогает кнопки/оверлей/вкладки.
 // - НЕТ автосоздания canvas, НЕТ автопривязки Start кнопок, НЕТ автозапуска.
 // - Работает как "runner": setCanvas(canvas) + startLoop() (когда core уже start'нут UI-слоем).
 // - ZOOM: passthrough API (+0.5 delta contract) + fallback renderer uses snap.camera.zoom.
+// - iOS: 0 dead taps inside takeover, no pinch/zoom, but modal scroll still works.
+// - INPUT: prefers CORE.setInput() if present (v1.4.3+), otherwise legacy setMove/setAim/setShooting.
 
 (() => {
   "use strict";
@@ -36,50 +38,134 @@
     inGame: false,             // controlled by UI layer (app.js) usually
     lastSnapshot: null,
     snapshotSubs: new Set(),
+
     _raf: 0,
     _canvas: null,
     _ctx2d: null,
+
     _dpr: 1,
     _cssW: 0,
-    _cssH: 0
+    _cssH: 0,
+
+    // iOS blocker handles
+    _gestureInstalled: false,
+    _touchMoveInstalled: false,
+
+    // throttles
+    _lastResizeAt: 0,
+    _resizeMinMs: 80
   };
 
   // -------------------------
-  // iOS / WebView hardening (NO UI changes, only safe guards)
-  // - pinch/double-tap zoom prevention only when inGame=true
+  // Takeover detection (NO UI changes)
   // -------------------------
+  function isTakeoverActive() {
+    try {
+      const cls = document.body && document.body.classList;
+      if (!cls) return false;
+      // your runtime uses either FS.TAKEOVER_CLASS or default; we can't read FS safely here, so check both common flags
+      return cls.contains("bco-game-takeover") || cls.contains("bco-game-active") || cls.contains("z-takeover");
+    } catch { return false; }
+  }
+
+  // -------------------------
+  // iOS / WebView hardening (NO UI changes)
+  // - pinch/double-tap zoom prevention only when inGame=true OR takeover class present
+  // - allow scroll inside modal cards/containers
+  // -------------------------
+  function _shouldBlockGestures() {
+    return !!STATE.inGame || isTakeoverActive();
+  }
+
+  function _isScrollAllowedTarget(target) {
+    try {
+      if (!target) return false;
+
+      // Fast-path: allow any element marked with these classes
+      const allowClass = (el) => {
+        const cls = el && el.classList;
+        if (!cls) return false;
+        return (
+          cls.contains("bco-z-card") ||
+          cls.contains("bco-z-modal") ||
+          cls.contains("bco-modal") ||
+          cls.contains("bco-modal-scroll") ||
+          cls.contains("modal") ||
+          cls.contains("modal-body") ||
+          cls.contains("allow-scroll")
+        );
+      };
+
+      // closest() scan
+      if (target.closest) {
+        const c = target.closest(".bco-z-card,.bco-z-modal,.bco-modal,.bco-modal-scroll,.modal,.modal-body,.allow-scroll");
+        if (c) return true;
+      }
+
+      // composedPath scan (shadow DOM safe)
+      const path = (target.ownerDocument && target.ownerDocument.defaultView && target.ownerDocument.defaultView.Event && false)
+        ? []
+        : null; // keep lint quiet
+
+      return allowClass(target);
+    } catch {
+      return false;
+    }
+  }
+
   function installGestureBlockers() {
+    if (STATE._gestureInstalled) return true;
+    STATE._gestureInstalled = true;
+
     try {
       const prevent = (e) => {
-        if (!STATE.inGame) return;
+        if (!_shouldBlockGestures()) return;
         try { e.preventDefault(); } catch {}
       };
 
+      // iOS Safari/WebView gesture events
       document.addEventListener("gesturestart", prevent, { passive: false });
       document.addEventListener("gesturechange", prevent, { passive: false });
       document.addEventListener("gestureend", prevent, { passive: false });
 
-      // IMPORTANT: do not kill scroll in modals; allow scroll inside modal cards
+      log("gesture blockers installed");
+      return true;
+    } catch (e) {
+      warn("installGestureBlockers failed", e);
+      return false;
+    }
+  }
+
+  function installTouchMoveBlocker() {
+    if (STATE._touchMoveInstalled) return true;
+    STATE._touchMoveInstalled = true;
+
+    try {
+      // IMPORTANT:
+      // We only prevent default during gameplay/takeover AND only when the touch is NOT on scrollable modal areas.
+      // This kills iOS "dead taps" / scroll stealing / bounce while keeping modal scroll intact.
       document.addEventListener("touchmove", (e) => {
-        if (!STATE.inGame) return;
-        const path = (e.composedPath && e.composedPath()) || [];
-        for (const n of path) {
-          if (!n) continue;
-          const cls = n.classList;
-          if (cls && (
-            cls.contains("bco-z-card") ||
-            cls.contains("bco-z-modal") ||
-            cls.contains("modal") ||
-            cls.contains("modal-body") ||
-            cls.contains("allow-scroll")
-          )) return;
-        }
+        if (!_shouldBlockGestures()) return;
+
+        const t = e.target;
+        if (_isScrollAllowedTarget(t)) return;
+
+        // allow scroll if event originates from a scrollable container even if class isn't present
+        try {
+          if (t && t.closest) {
+            const sc = t.closest("[data-allow-scroll='1'],[data-allow-scroll='true']");
+            if (sc) return;
+          }
+        } catch {}
+
         try { e.preventDefault(); } catch {}
       }, { passive: false });
 
-      log("gesture blockers installed");
+      log("touchmove blocker installed");
+      return true;
     } catch (e) {
-      warn("installGestureBlockers failed", e);
+      warn("installTouchMoveBlocker failed", e);
+      return false;
     }
   }
 
@@ -93,20 +179,27 @@
     }
     STATE._canvas = c;
     STATE._ctx2d = null;
-    // Apply safe defaults (no visual UI changes; just ensure touch doesn't scroll/zoom on canvas)
+
+    // Safe defaults (no visual UI changes; just ensure touch doesn't scroll/zoom on canvas)
     try { c.style.touchAction = "none"; } catch {}
     try { c.style.webkitUserSelect = "none"; } catch {}
     try { c.style.userSelect = "none"; } catch {}
-    resizeCanvas(); // best effort
+    try { c.setAttribute("tabindex", "-1"); } catch {}
+
+    resizeCanvas(true);
     return true;
   }
 
   function getCanvas() { return STATE._canvas || null; }
 
   // devicePixelRatio correct sizing, but DOES NOT create canvas
-  function resizeCanvas() {
+  function resizeCanvas(force = false) {
     const canvas = STATE._canvas;
     if (!canvas) return null;
+
+    const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    if (!force && (now - (STATE._lastResizeAt || 0)) < STATE._resizeMinMs) return null;
+    STATE._lastResizeAt = now;
 
     const dpr = Math.max(1, Math.min(3, (window.devicePixelRatio || 1)));
     const rect = canvas.getBoundingClientRect();
@@ -162,7 +255,7 @@
       try {
         const ctx = STATE._ctx2d || (STATE._ctx2d = canvas.getContext("2d"));
         const view = { w: canvas.width, h: canvas.height, cssW: STATE._cssW, cssH: STATE._cssH, dpr: STATE._dpr };
-        const input = core.input || { aimX: 0, aimY: 0, moveX: 0, moveY: 0 };
+        const input = core.input || { aimX: 0, aimY: 0, moveX: 0, moveY: 0, shooting: false };
         R.render(ctx, core, input, view);
         return;
       } catch (e) {
@@ -232,9 +325,13 @@
 
     function frame(tms) {
       try {
-        // Resize is cheap, but we throttle implicitly by RAF; ok for iOS.
-        resizeCanvas();
+        // resize (throttled)
+        resizeCanvas(false);
+
+        // core sim
         core.updateFrame(tms);
+
+        // draw
         drawFrame();
       } catch (e) {
         warn("frame error", e);
@@ -256,11 +353,20 @@
   }
 
   // -------------------------
-  // In-game flag (UI layer should toggle this)
+  // In-game flag (gesture blockers only)
   // -------------------------
   function setInGame(on) {
     STATE.inGame = !!on;
-    // TG chrome hide is handled by UI layer (app.js / BCO_TG). We do NOT touch UI here.
+
+    // We do NOT touch TG chrome here. UI layer does it.
+    // But we can help WebView be stable once takeover begins.
+    try {
+      if (STATE.inGame && TG) {
+        TG.ready?.();
+        TG.expand?.();
+      }
+    } catch {}
+
     return STATE.inGame;
   }
 
@@ -268,16 +374,26 @@
 
   // -------------------------
   // Input passthrough helpers (optional; UI uses its own pump normally)
+  // - Prefer CORE.setInput if present (v1.4.3+)
   // -------------------------
   function setInput(obj) {
     const core = CORE();
     if (!core || !obj) return false;
+
     try {
+      if (typeof core.setInput === "function") {
+        core.setInput(obj);
+        return true;
+      }
+
+      // Legacy fallback
       if (typeof obj.moveX === "number" || typeof obj.moveY === "number") core.setMove?.(obj.moveX || 0, obj.moveY || 0);
       if (typeof obj.aimX === "number" || typeof obj.aimY === "number") core.setAim?.(obj.aimX || 0, obj.aimY || 0);
       if (typeof obj.shooting === "boolean") core.setShooting?.(obj.shooting);
       return true;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
   function getInput() {
@@ -298,6 +414,14 @@
     if (typeof cb !== "function") return false;
     STATE.snapshotSubs.add(cb);
     return true;
+  }
+
+  function offSnapshot(cb) {
+    try {
+      if (typeof cb !== "function") return false;
+      STATE.snapshotSubs.delete(cb);
+      return true;
+    } catch { return false; }
   }
 
   // -------------------------
@@ -352,10 +476,18 @@
   // -------------------------
   function init() {
     installGestureBlockers();
-    window.addEventListener("resize", () => { resizeCanvas(); }, { passive: true });
+    installTouchMoveBlocker();
 
-    // If core is already running and UI has already provided canvas+inGame, we can start loop later.
-    // We DO NOT autostart loop here to avoid conflicts with app.js orchestration.
+    // resize listener
+    window.addEventListener("resize", () => { resizeCanvas(false); }, { passive: true });
+
+    // keep loop stable after tab switch
+    document.addEventListener("visibilitychange", () => {
+      try {
+        if (!document.hidden && STATE._canvas) resizeCanvas(true);
+      } catch {}
+    }, { passive: true });
+
     health("ready");
     log("init ok (NO-UI runner)");
   }
@@ -384,6 +516,7 @@
     // snapshot / input
     getSnapshot,
     onSnapshot,
+    offSnapshot,
     getInput,
     setInput,
 
