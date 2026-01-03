@@ -1,19 +1,8 @@
-// app/webapp/static/zombies.game.js  [ULTRA LUX vNext | Dual-Stick + iOS Fix + Start Fix]
+// app/webapp/static/zombies.game.js  [ULTRA LUX vNext | Dual-Stick + iOS Fix + Start Fix + ZOOM]
 // IMPORTANT: UI не меняем — только логика, клики, запуск.
-// FIXES:
-// - Scrolling in menu/tab screens works (no global kill).
-// - Scroll inside modals works.
-// - Game always starts (canvas guaranteed + start buttons wired).
-// - Dual-stick: LEFT=move, RIGHT=aim + hold-to-shoot.
-// - FIRE legacy button: auto-hide when right stick exists.
-// - iOS dead taps: pointer events + proper capture.
-// - Prevent pinch/zoom ONLY while in game takeover.
-// - Fullscreen takeover best-effort via Telegram WebApp API.
-//
-// HOTFIX (vNext):
-// - НЕ цепляем чужой canvas (убран "canvas" общий селектор)
-// - Создаваемый fullscreen canvas по умолчанию НЕ перекрывает UI (display:none + pointerEvents:none)
-// - Canvas активируется только при start() и прячется при stop()
+// ADD (vNext-ZOOM):
+// - Renderer fallback applies snap.camera.zoom (contract in CORE)
+// - Public zoom API passthrough: getZoom / zoomIn(+0.5) / zoomOut(-0.5) / setZoomLevel / setZoomDelta
 
 (() => {
   "use strict";
@@ -151,8 +140,6 @@
 
   // -------------------------
   // iOS / WebView hardening
-  // IMPORTANT: DO NOT KILL SCROLL globally.
-  // We apply strict "no scroll / no pinch" ONLY during game takeover.
   // -------------------------
   function setHardening(on) {
     try {
@@ -180,7 +167,6 @@
           el.style.pointerEvents = "auto";
         }
 
-        // If you have TG helper from index.html
         try { window.BCO_TG && window.BCO_TG.hideChrome && window.BCO_TG.hideChrome(); } catch {}
       } else {
         body.classList.remove("bco-game-active");
@@ -220,7 +206,6 @@
       document.addEventListener("gesturechange", prevent, { passive: false });
       document.addEventListener("gestureend", prevent, { passive: false });
 
-      // allow scroll in modals ALWAYS; block only during game and only outside modals
       document.addEventListener("touchmove", (e) => {
         if (!STATE.inGame) return; // menu scroll works
         const path = (e.composedPath && e.composedPath()) || [];
@@ -266,7 +251,6 @@
     const dpr = Math.max(1, Math.min(3, (window.devicePixelRatio || 1)));
     const rect = canvas.getBoundingClientRect();
 
-    // stretch if not sized
     if (!rect.width || !rect.height) {
       canvas.style.width = "100vw";
       canvas.style.height = "100vh";
@@ -279,7 +263,6 @@
     if (canvas.width !== w) canvas.width = w;
     if (canvas.height !== h) canvas.height = h;
 
-    // notify CORE about logical size in CSS px
     try {
       const c = CORE();
       if (c && c.resize) c.resize(Math.floor(r2.width), Math.floor(r2.height));
@@ -471,7 +454,7 @@
       try { R.draw(canvas, snap); return; } catch (e) { /* fallback */ }
     }
 
-    // minimal fallback
+    // minimal fallback + ✅ ZOOM
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
@@ -483,24 +466,28 @@
     const camX = snap.camera?.x || 0;
     const camY = snap.camera?.y || 0;
 
-    const toX = (x) => (w / 2) + (x - camX) * dpr;
-    const toY = (y) => (h / 2) + (y - camY) * dpr;
+    // ✅ zoom from snapshot (contract from CORE)
+    const zoom = Math.max(0.25, Math.min(4, Number(snap.camera?.zoom) || 1));
+
+    // world->screen in pixels
+    const toX = (x) => (w / 2) + (x - camX) * dpr * zoom;
+    const toY = (y) => (h / 2) + (y - camY) * dpr * zoom;
 
     ctx.beginPath();
-    ctx.arc(toX(snap.player.x), toY(snap.player.y), 14 * dpr, 0, Math.PI * 2);
+    ctx.arc(toX(snap.player.x), toY(snap.player.y), 14 * dpr * zoom, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(220,220,255,0.95)";
     ctx.fill();
 
     for (const z of (snap.zombies || [])) {
       ctx.beginPath();
-      ctx.arc(toX(z.x), toY(z.y), (z.r || 16) * dpr, 0, Math.PI * 2);
+      ctx.arc(toX(z.x), toY(z.y), (z.r || 16) * dpr * zoom, 0, Math.PI * 2);
       ctx.fillStyle = z.elite ? "rgba(255,210,120,0.95)" : "rgba(140,255,140,0.85)";
       ctx.fill();
     }
 
     for (const b of (snap.bullets || [])) {
       ctx.beginPath();
-      ctx.arc(toX(b.x), toY(b.y), 3 * dpr, 0, Math.PI * 2);
+      ctx.arc(toX(b.x), toY(b.y), 3 * dpr * zoom, 0, Math.PI * 2);
       ctx.fillStyle = b.crit ? "rgba(255,210,120,0.95)" : "rgba(240,240,255,0.9)";
       ctx.fill();
     }
@@ -565,6 +552,13 @@
     return STATE.weaponKey;
   }
 
+  // ✅ ZOOM passthrough API (contract: +0.5 delta)
+  function getZoom() { try { return CORE()?.getZoom?.() ?? 1; } catch { return 1; } }
+  function setZoomLevel(z) { try { return CORE()?.setZoomLevel?.(z) ?? getZoom(); } catch { return getZoom(); } }
+  function setZoomDelta(d) { try { return CORE()?.setZoomDelta?.(d) ?? getZoom(); } catch { return getZoom(); } }
+  function zoomIn() { return setZoomDelta(+0.5); }
+  function zoomOut() { return setZoomDelta(-0.5); }
+
   function start(mode = "arcade", opts = {}) {
     const c = CORE();
     if (!c || !c.start) {
@@ -572,33 +566,32 @@
       return false;
     }
 
-    // Ensure canvas exists BEFORE hardening/takeover
     canvas = ensureCanvas();
     if (!canvas) {
       health("No canvas");
       return false;
     }
 
-    // ACTIVATE overlay canvas only now (menu must stay interactive)
     setCanvasActive(true);
 
-    // apply opts -> local state
     if (opts && typeof opts === "object") {
       if (opts.map) STATE.map = String(opts.map);
       if (opts.character) STATE.character = String(opts.character);
       if (opts.skin) STATE.skin = String(opts.skin);
       if (opts.weaponKey) STATE.weaponKey = String(opts.weaponKey);
+
+      // ✅ allow passing zoom
+      if (opts.zoom != null) {
+        try { c.setZoomLevel?.(opts.zoom); } catch {}
+      }
     }
     STATE.mode = String(mode || STATE.mode || "arcade");
 
-    // enter game mode (hardening ON)
     STATE.inGame = true;
     setHardening(true);
 
-    // takeover
     requestTakeover();
 
-    // ensure canvas sized
     const r = resizeCanvas() || { cssW: window.innerWidth, cssH: window.innerHeight };
 
     try {
@@ -625,13 +618,8 @@
 
     STATE.inGame = false;
 
-    // Stop loop first
     stopLoop();
-
-    // Leave takeover / restore scroll
     setHardening(false);
-
-    // Hide overlay canvas so UI becomes clickable/scrollable again
     setCanvasActive(false);
 
     health("stopped");
@@ -683,7 +671,8 @@
         coins: snap.hud?.coins || 0,
         duration: snap.hud?.timeMs || 0,
         relics: snap.hud?.relics || 0,
-        wonderUnlocked: !!snap.hud?.wonderUnlocked
+        wonderUnlocked: !!snap.hud?.wonderUnlocked,
+        zoom: Number(snap.camera?.zoom) || 1
       };
 
       if (TG && TG.sendData) {
@@ -716,25 +705,19 @@
   function init() {
     installGestureBlockers();
 
-    // Prepare canvas lazily (do not force takeover)
     canvas = ensureCanvas();
-
-    // Ensure menu is interactive at boot (canvas hidden + no pointer capture)
     setCanvasActive(false);
 
-    // sticks (if present)
     const moveStick = makeStick(stickL, "move");
     const aimStick  = makeStick(stickR, "aim");
     if (aimStick) setupDualStickShooting(aimStick);
     setupFireBehavior();
 
-    // start buttons
     wireStartButton(btnStart);
     wireStartButton(btnZEnterGame);
     wireStartButton(btnPlayZombies);
     wireStartButton(btnZQuickPlay);
 
-    // tap canvas to start (only when not running)
     if (canvas) {
       canvas.addEventListener("pointerdown", (e) => {
         const c = CORE();
@@ -758,7 +741,6 @@
 
     try { if (CORE()?.running) startLoop(); } catch {}
 
-    // start in menu mode -> hardening OFF so scroll works
     STATE.inGame = false;
     setHardening(false);
 
@@ -799,6 +781,13 @@
     getInput,
     setInput,
     resizeCanvas,
-    startLoop
+    startLoop,
+
+    // ✅ zoom API
+    getZoom,
+    setZoomLevel,
+    setZoomDelta,
+    zoomIn,
+    zoomOut
   };
 })();
