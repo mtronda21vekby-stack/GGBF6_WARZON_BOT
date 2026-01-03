@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 import time
@@ -11,8 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl
 
-from fastapi import APIRouter, Header, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response, JSONResponse
 from pydantic import BaseModel
 
 log = logging.getLogger("webapp")
@@ -28,10 +29,13 @@ _BUILD_CACHE_VALUE: str | None = None
 _BUILD_CACHE_AT: float = 0.0
 _BUILD_CACHE_TTL_SEC = 2.0
 
+# Пара лимитов/защит (НЕ ломают, только защищают)
+_WEBAPP_MAX_BYTES = int(os.getenv("WEBAPP_MAX_BYTES", "16000") or "16000")
+_WEBAPP_LOG_CHARS = int(os.getenv("WEBAPP_LOG_CHARS", "1200") or "1200")
 
-# =========================
+# ==========================================
 # SECURITY: Telegram initData verify
-# =========================
+# ==========================================
 def _bot_token() -> str:
     return (
         (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
@@ -70,23 +74,19 @@ def _verify_init_data(init_data: str) -> tuple[bool, dict]:
 
     ok = hmac.compare_digest(calc_hash, their_hash)
 
-    # пробуем достать user id / chat id (в initDataUnsafe это есть, но тут мы парсим строку)
+    # пробуем достать user id / chat id
     user_id = None
     chat_id = None
     try:
         if "user" in pairs:
-            import json as _json
-
-            u = _json.loads(pairs["user"])
+            u = json.loads(pairs["user"])
             user_id = u.get("id")
     except Exception:
         pass
 
     try:
         if "chat" in pairs:
-            import json as _json
-
-            c = _json.loads(pairs["chat"])
+            c = json.loads(pairs["chat"])
             chat_id = c.get("id")
     except Exception:
         pass
@@ -94,9 +94,39 @@ def _verify_init_data(init_data: str) -> tuple[bool, dict]:
     return ok, {"user_id": user_id, "chat_id": chat_id, "raw": pairs}
 
 
-# =========================
+# ==========================================
+# Small utils (safe log / etag)
+# ==========================================
+def _truncate(s: Any, n: int) -> str:
+    try:
+        x = str(s if s is not None else "")
+    except Exception:
+        x = ""
+    if n <= 0:
+        return ""
+    return x if len(x) <= n else (x[: n - 1] + "…")
+
+
+def _etag_for_bytes(b: bytes) -> str:
+    # слабый ETag достаточно для iOS WebView кеша
+    try:
+        return hashlib.sha1(b).hexdigest()[:16]
+    except Exception:
+        return str(int(time.time()))
+
+
+def _etag_for_file(p: Path) -> str:
+    try:
+        st = p.stat()
+        payload = f"{p.name}:{int(st.st_mtime)}:{int(st.st_size)}".encode("utf-8", errors="ignore")
+        return hashlib.sha1(payload).hexdigest()[:16]
+    except Exception:
+        return str(int(time.time()))
+
+
+# ==========================================
 # Cache / static helpers
-# =========================
+# ==========================================
 def _is_safe_rel_path(p: str) -> bool:
     if not p:
         return True
@@ -110,6 +140,38 @@ def _is_safe_rel_path(p: str) -> bool:
     if any(x in ("..",) for x in parts):
         return False
     return True
+
+
+def _cache_headers(kind: str, *, etag: str | None = None) -> dict:
+    """
+    kind:
+      - "html": отключаем кэш (Telegram iOS кэширует жёстко)
+      - "asset": короткий кэш, но с revalidate
+      - "json": revalidate
+    """
+    headers = {}
+    if kind == "html":
+        headers.update(
+            {
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            }
+        )
+    elif kind == "asset":
+        headers.update({"Cache-Control": "public, max-age=0, must-revalidate"})
+    else:
+        headers.update({"Cache-Control": "public, max-age=0, must-revalidate"})
+
+    if etag:
+        headers["ETag"] = etag
+    return headers
+
+
+def _file_response(path: Path, *, kind: str) -> FileResponse:
+    # FileResponse сам стримит файл, добавляем заголовки (кэш + ETag)
+    et = _etag_for_file(path)
+    return FileResponse(path=str(path), headers=_cache_headers(kind, etag=et))
 
 
 def _scan_static_mtime() -> int:
@@ -153,137 +215,139 @@ def _build_id() -> str:
     return v
 
 
-def _cache_headers(kind: str) -> dict:
+def _fallback_index_html(reason: str) -> HTMLResponse:
     """
-    kind:
-      - "html": отключаем кэш (Telegram iOS кэширует жёстко)
-      - "asset": короткий кэш, но с revalidate
-      - "nocache_asset": жёстко no-store для js/css/json (анти-залипание iOS)
-    """
-    b = _build_id()
-    base = {
-        "X-BCO-Build": b,
-        "Vary": "Accept-Encoding",
-    }
-
-    if kind == "html":
-        base.update(
-            {
-                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-                "Pragma": "no-cache",
-                "Expires": "0",
-                "Surrogate-Control": "no-store",
-            }
-        )
-        return base
-
-    if kind == "nocache_asset":
-        base.update(
-            {
-                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-                "Pragma": "no-cache",
-                "Expires": "0",
-                "Surrogate-Control": "no-store",
-            }
-        )
-        return base
-
-    base.update({"Cache-Control": "public, max-age=0, must-revalidate"})
-    return base
-
-
-def _guess_asset_kind(path: Path) -> str:
-    ext = (path.suffix or "").lower()
-    if ext in (".js", ".mjs", ".css", ".json", ".map", ".txt"):
-        return "nocache_asset"
-    return "asset"
-
-
-def _etag_for_file(path: Path) -> str:
-    """
-    ETag для стабильного 304.
-    Делается так, чтобы смена build тоже меняла etag.
+    Если index.html реально отсутствует в деплое — не даём белый экран.
+    Даём понятную страницу + подсказки.
+    (Это не меняет поведение при наличии index.html)
     """
     b = _build_id()
-    try:
-        st = path.stat()
-        raw = f"{b}:{path.name}:{int(st.st_mtime)}:{int(st.st_size)}".encode("utf-8", errors="ignore")
-    except Exception:
-        raw = f"{b}:{path.name}:{time.time_ns()}".encode("utf-8", errors="ignore")
-    return '"' + hashlib.sha256(raw).hexdigest()[:32] + '"'
+    body = f"""
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>Mini App not configured</title>
+  <style>
+    html,body{{height:100%;margin:0;background:#0b0b10;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;}}
+    .wrap{{max-width:860px;margin:0 auto;padding:24px;}}
+    h1{{margin:0 0 10px 0;font-size:20px;}}
+    .muted{{opacity:.75;line-height:1.5}}
+    .box{{margin-top:14px;padding:14px;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(255,255,255,.06)}}
+    code{{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}}
+    ul{{margin:10px 0 0 20px}}
+    .pill{{display:inline-block;margin-top:10px;padding:8px 10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);font-weight:700}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Mini App is not configured</h1>
+    <div class="muted">
+      Причина: <b>{reason}</b><br/>
+      Build: <code>{b}</code>
+    </div>
+
+    <div class="box">
+      Expected:
+      <ul>
+        <li><code>app/webapp/webapp_router.py</code></li>
+        <li><code>app/webapp/static/index.html</code></li>
+      </ul>
+      <div class="pill">Проверь деплой: файл index.html должен быть в репе и попасть на Render</div>
+    </div>
+
+    <div class="box muted">
+      Быстрый тест: открой в Safari (вне Telegram) <code>/webapp</code> и <code>/webapp/version.json</code> — если тут же ошибка, значит проблема в деплое/файлах, а не в кнопках.
+    </div>
+  </div>
+</body>
+</html>
+""".strip()
+
+    et = _etag_for_bytes(body.encode("utf-8", errors="ignore"))
+    return HTMLResponse(content=body, headers=_cache_headers("html", etag=et))
 
 
-def _file_response(path: Path, *, kind: str, if_none_match: str | None = None) -> Response:
-    headers = _cache_headers(kind)
-    etag = _etag_for_file(path)
-    headers["ETag"] = etag
-
-    inm = (if_none_match or "").strip()
-    if inm and inm == etag:
-        # 304 — быстрее и надёжнее на iOS
-        return Response(status_code=304, headers=headers)
-
-    return FileResponse(path=str(path), headers=headers)
-
-
-def _render_index_html() -> HTMLResponse:
+def _render_index_html(request: Request | None = None) -> HTMLResponse:
     if not INDEX_FILE.exists():
-        log.error("index.html not found at %s", INDEX_FILE)
-        raise HTTPException(status_code=500, detail="webapp index missing")
+        # ВАЖНО: раньше было 500. Теперь вместо белого экрана — понятный fallback.
+        try:
+            log.error("index.html not found at %s", INDEX_FILE)
+        except Exception:
+            pass
+        return _fallback_index_html("index.html missing in deploy")
 
     try:
         html = INDEX_FILE.read_text(encoding="utf-8", errors="ignore")
     except Exception as e:
-        log.exception("index read failed: %s", e)
-        raise HTTPException(status_code=500, detail="webapp index read failed")
+        try:
+            log.exception("index read failed: %s", e)
+        except Exception:
+            pass
+        return _fallback_index_html("index read failed")
 
     b = _build_id()
     html = html.replace("__BUILD__", b).replace("%BUILD%", b)
 
-    headers = _cache_headers("html")
-    headers["ETag"] = _etag_for_file(INDEX_FILE)
+    # ETag помогает Telegram iOS понять, что это другой контент
+    et = _etag_for_bytes(html.encode("utf-8", errors="ignore"))
 
-    return HTMLResponse(content=html, headers=headers)
+    # If-None-Match -> 304 (ускоряет, но html всё равно no-store)
+    if request is not None:
+        inm = (request.headers.get("if-none-match") or "").strip()
+        if inm and inm == et:
+            return HTMLResponse(status_code=304, content="", headers=_cache_headers("html", etag=et))
+
+    return HTMLResponse(content=html, headers=_cache_headers("html", etag=et))
 
 
-# =========================
-# DIAGNOSTIC (must-have)
-# =========================
-@router.get("/webapp/version.json")
-def webapp_version():
-    b = _build_id()
-    return Response(
-        content=(
-            "{"
-            f"\"build\":\"{b}\","
-            f"\"ts\":{int(time.time())},"
-            f"\"static\":\"{str(STATIC_DIR).replace('\\\\', '/')}\""
-            "}"
-        ),
-        media_type="application/json; charset=utf-8",
-        headers=_cache_headers("nocache_asset"),
+# ==========================================
+# ROUTES (static)
+# ==========================================
+@router.get("/webapp")
+def webapp_root(request: Request):
+    return _render_index_html(request)
+
+
+@router.get("/webapp/health")
+def webapp_health():
+    # быстрый sanity-check без статик-файлов
+    return JSONResponse(
+        {
+            "ok": True,
+            "build": _build_id(),
+            "static_dir_exists": bool(STATIC_DIR.exists()),
+            "index_exists": bool(INDEX_FILE.exists()),
+        },
+        headers=_cache_headers("json"),
     )
 
 
-@router.get("/webapp")
-def webapp_root():
-    # ОСТАВЛЕНО КАК БЫЛО: ничего не ломаем.
-    return _render_index_html()
+@router.get("/webapp/version.json")
+def webapp_version():
+    # удобно дебажить “у меня старый деплой в TG”
+    return JSONResponse(
+        {
+            "bco_webapp": True,
+            "build": _build_id(),
+            "ts": int(time.time()),
+        },
+        headers=_cache_headers("json"),
+    )
 
 
 @router.get("/webapp/{req_path:path}")
-def webapp_files(
-    req_path: str,
-    if_none_match: str | None = Header(default=None, alias="If-None-Match"),
-):
+def webapp_files(req_path: str, request: Request):
     req_path = (req_path or "").strip()
 
     if not _is_safe_rel_path(req_path):
         raise HTTPException(status_code=400, detail="bad path")
 
+    # SPA fallback: если запрос без расширения — отдаём index.html
     has_ext = "." in Path(req_path).name
     if not has_ext:
-        return _render_index_html()
+        return _render_index_html(request)
 
     target = (STATIC_DIR / req_path).resolve()
 
@@ -293,15 +357,19 @@ def webapp_files(
         raise HTTPException(status_code=400, detail="bad path")
 
     if target.exists() and target.is_file():
-        kind = _guess_asset_kind(target)
-        return _file_response(target, kind=kind, if_none_match=if_none_match)
+        # If-None-Match -> 304
+        et = _etag_for_file(target)
+        inm = (request.headers.get("if-none-match") or "").strip()
+        if inm and inm == et:
+            return Response(status_code=304, headers=_cache_headers("asset", etag=et))
+        return _file_response(target, kind="asset")
 
     return Response(status_code=404, content="Not Found")
 
 
-# =========================
+# ==========================================
 # API: "бот отвечает в мини-аппе"
-# =========================
+# ==========================================
 class AskBody(BaseModel):
     # ✅ поддержка и body.initData (если кто-то шлёт так), и header X-Telegram-Init-Data (как у тебя в app.js)
     initData: str = ""
@@ -377,6 +445,17 @@ async def webapp_api_ask(
     # Ответ через brain.reply (как бот)
     reply_text = None
 
+    # безопасный лог (чтобы не словить гигантский payload)
+    try:
+        log.info(
+            "webapp_api_ask build=%s v=%s text=%s",
+            _build_id(),
+            _truncate(x_bco_version or "", 64),
+            _truncate(text, _WEBAPP_LOG_CHARS),
+        )
+    except Exception:
+        pass
+
     try:
         brain = APP_BRAIN
         settings = APP_SETTINGS
@@ -418,14 +497,69 @@ async def webapp_api_ask(
             "И да — без паники. Сейчас добьём 😈"
         )
 
-    b = _build_id()
     return {
         "ok": True,
         "reply": str(reply_text),
         "meta": {
             **(meta or {}),
             "bco_version": x_bco_version or "",
-            "webapp_build": b,
+            "webapp_build": _build_id(),
         },
-        "build": b,
+        "build": _build_id(),
     }
+
+
+# ==========================================
+# 3D/ИГРА — запас на будущее (НЕ ломает текущее)
+# ==========================================
+class GameEventBody(BaseModel):
+    initData: str = ""
+    event: str = ""
+    payload: dict = {}
+
+
+@router.post("/webapp/api/game/event")
+async def webapp_game_event(
+    body: GameEventBody,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    """
+    Ничего не ломает. Можно слать из 2D/3D движка:
+      { event: "game_result" | "telemetry" | "error", payload: {...} }
+    Сервер:
+      - валидирует initData (если есть)
+      - безопасно логирует
+      - (если есть store) может сохранить
+    """
+    init_data = (x_telegram_init_data or body.initData or "").strip()
+    ok, meta = _verify_init_data(init_data)
+    if not ok:
+        meta = meta or {}
+        meta["untrusted"] = True
+
+    ev = (body.event or "").strip()[:64]
+    pl = body.payload if isinstance(body.payload, dict) else {}
+
+    # защита от гигантских payload
+    try:
+        raw = json.dumps(pl, ensure_ascii=False)
+        if len(raw.encode("utf-8", errors="ignore")) > _WEBAPP_MAX_BYTES:
+            pl = {"truncated": True, "keys": list(pl.keys())[:40]}
+    except Exception:
+        pass
+
+    try:
+        log.info("webapp_game_event ev=%s meta=%s payload=%s", ev, _truncate(meta, 300), _truncate(pl, _WEBAPP_LOG_CHARS))
+    except Exception:
+        pass
+
+    # если есть store — сохраним (не обязательно)
+    if APP_STORE is not None and hasattr(APP_STORE, "add"):
+        try:
+            # user_id/chat_id могут быть None — это ок
+            key = f"webapp:{ev or 'event'}"
+            APP_STORE.add(int(meta.get("chat_id") or meta.get("user_id") or 0), key, {"event": ev, "payload": pl, "meta": meta})
+        except Exception:
+            pass
+
+    return {"ok": True, "build": _build_id(), "meta": meta}
