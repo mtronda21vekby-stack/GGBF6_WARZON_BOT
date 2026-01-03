@@ -6,13 +6,19 @@
   // CONFIG
   // =========================
   const CONFIG = {
-    VERSION: "mini-bridge-2.0.1",
+    VERSION: "mini-bridge-2.0.2", // ✅ bump
     STORAGE_KEY: "bco_state_v1",
     CHAT_KEY: "bco_chat_v1",
     CHAT_LIMIT: 80,
     AIM_DURATION_MS: 20000,
     MAX_PAYLOAD: 15000,
-    TAP_THROTTLE_MS: 80
+    TAP_THROTTLE_MS: 80,
+
+    // ✅ Mini App chat -> server (webapp/api/ask)
+    ASK_ENDPOINT: "/webapp/api/ask",
+    ASK_TIMEOUT_MS: 12000,
+    ASK_FALLBACK_TO_BOT: true,      // если API упал — отправим в бота, но не ломаем UX
+    ASK_SEND_COPY_TO_BOT: false     // если хочешь “дублировать” в бота даже при успешном ask — включи true
   };
 
   const $ = (q) => document.querySelector(q);
@@ -47,7 +53,8 @@
 
     chat: {
       history: [],
-      lastSendAt: 0
+      lastSendAt: 0,
+      typingId: 0
     },
 
     aim: {
@@ -329,6 +336,22 @@
       const isBot = m.role === "assistant";
       const cls = isBot ? "bot" : "me";
       const who = isBot ? "BCO" : "Ты";
+
+      if (m.typing) {
+        return `
+          <div class="chat-row bot">
+            <div>
+              <div class="bubble">
+                <span class="typing">
+                  <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                </span>
+              </div>
+              <div class="chat-meta">BCO • ${fmtTime(m.ts || now())}</div>
+            </div>
+          </div>
+        `;
+      }
+
       return `
         <div class="chat-row ${cls}">
           <div>
@@ -350,6 +373,87 @@
     chatRender();
   }
 
+  function chatTypingStart() {
+    const id = ++State.chat.typingId;
+    State.chat.history.push({ role: "assistant", text: "", ts: now(), typing: true, id });
+    if (State.chat.history.length > 180) State.chat.history = State.chat.history.slice(-180);
+    chatRender();
+    return id;
+  }
+
+  function chatTypingStop(id, finalText) {
+    const t = String(finalText || "").trim();
+    // replace typing bubble
+    for (let i = State.chat.history.length - 1; i >= 0; i--) {
+      const m = State.chat.history[i];
+      if (m && m.typing && m.id === id) {
+        State.chat.history[i] = { role: "assistant", text: t || "…", ts: now() };
+        break;
+      }
+    }
+    chatRender();
+  }
+
+  function chatHistoryForAsk() {
+    // server router expects list[dict]; will accept any dict, but best is role/content
+    const h = State.chat.history
+      .filter((m) => m && !m.typing)
+      .slice(-30)
+      .map((m) => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: String(m.text || "")
+      }));
+    return h;
+  }
+
+  async function fetchWithTimeout(url, opts, timeoutMs) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), Math.max(1000, timeoutMs || 12000));
+    try {
+      const res = await fetch(url, Object.assign({}, opts || {}, { signal: ctl.signal }));
+      return res;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async function webappAsk(text) {
+    const initData = (safe(() => tg?.initData) || "").trim();
+    const profile = buildProfilePayload();
+    const history = chatHistoryForAsk();
+
+    const body = {
+      initData,
+      text: String(text || ""),
+      profile,
+      history
+    };
+
+    const headers = {
+      "Content-Type": "application/json",
+      "X-BCO-Version": CONFIG.VERSION
+    };
+    if (initData) headers["X-Telegram-Init-Data"] = initData;
+
+    const res = await fetchWithTimeout(CONFIG.ASK_ENDPOINT, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body)
+    }, CONFIG.ASK_TIMEOUT_MS);
+
+    if (!res.ok) {
+      const txt = await safe(async () => await res.text());
+      throw new Error(`ask_http_${res.status}: ${String(txt || "").slice(0, 120)}`);
+    }
+
+    const data = await res.json();
+    if (!data || !data.ok) {
+      throw new Error(`ask_bad_response: ${safe(() => data?.error) || "unknown"}`);
+    }
+
+    return String(data.reply || "").trim();
+  }
+
   async function chatSend() {
     const input = $("#chatInput");
     const text = (input?.value || "").trim();
@@ -363,9 +467,35 @@
     if (input) input.value = "";
     await Storage.saveChat();
 
-    sendToBot({ type: "chat", text, profile: true });
-    chatAdd("assistant", "✅ Отправил в бота. Ответ придёт в Telegram-чате (как раньше).");
+    // ✅ Prefer Mini App sync via /webapp/api/ask
+    const typingId = chatTypingStart();
     await Storage.saveChat();
+
+    try {
+      const reply = await webappAsk(text);
+      chatTypingStop(typingId, reply || "…");
+      await Storage.saveChat();
+
+      // optional copy to bot
+      if (CONFIG.ASK_SEND_COPY_TO_BOT) {
+        sendToBot({ type: "chat", text, profile: true, via: "webapp" });
+      }
+      return;
+    } catch (e) {
+      // remove typing bubble -> replace with error info (but still keep UX)
+      const msg = (e && e.message) ? e.message : String(e || "ask_error");
+      chatTypingStop(typingId, `⚠️ Mini App ask error: ${msg}`);
+      await Storage.saveChat();
+
+      if (CONFIG.ASK_FALLBACK_TO_BOT) {
+        // fallback old behavior
+        const ok = sendToBot({ type: "chat", text, profile: true, via: "fallback" });
+        if (ok) {
+          chatAdd("assistant", "✅ Фоллбек: отправил в бота. Если Mini App-ответы нужны — это должно идти через /webapp/api/ask (мы уже сделали), но сервер/деплой мог лагнуть.");
+          await Storage.saveChat();
+        }
+      }
+    }
   }
 
   async function chatClear() {
@@ -376,7 +506,10 @@
   }
 
   async function chatExportCopy() {
-    const txt = State.chat.history.map((m) => `${m.role === "assistant" ? "BCO" : "YOU"}: ${m.text}`).join("\n");
+    const txt = State.chat.history
+      .filter((m) => m && !m.typing)
+      .map((m) => `${m.role === "assistant" ? "BCO" : "YOU"}: ${m.text}`)
+      .join("\n");
     const out = txt || "—";
     const ok = await safe(() => navigator.clipboard?.writeText(out));
     toast(ok ? "Скопировано 📋" : "Не удалось (iOS ограничение)");
@@ -625,6 +758,8 @@
   // - single delegated handler
   // - captures pointerdown early
   // - ignores inputs/textarea selections
+  // ✅ IMPORTANT: do NOT preventDefault on pointerdown globally,
+  //              иначе скролл может "умирать" если свайп начался на кнопке.
   // =========================
   function isInteractiveText(el) {
     if (!el) return false;
@@ -859,17 +994,16 @@
   // =========================
   function wireHardRouter() {
     // 1) pointerdown capture: iOS WebView “dead taps” killer
+    // ✅ fix: NO preventDefault here (keeps scrolling reliable even if swipe starts on a button)
     document.addEventListener("pointerdown", (e) => {
       const t = e.target;
       if (isInteractiveText(t)) return;
+
       if (hardRouteClick(t)) {
-        // do not block scrolling on areas that should scroll:
-        const inScrollable = !!t?.closest?.(".chat-log, .bco-z-card");
-        if (!inScrollable) {
-          try { e.preventDefault(); } catch (_) {}
-        }
+        // do not block scroll; do not preventDefault here
+        // (click fallback will still prevent default if needed)
       }
-    }, { capture: true, passive: false });
+    }, { capture: true, passive: true });
 
     // 2) click fallback (desktop / non-pointer)
     document.addEventListener("click", (e) => {
@@ -955,6 +1089,7 @@
       window.BCO_APP.exitGameTakeover = exitGameTakeover;
       window.BCO_APP.sendToBot = sendToBot;
       window.BCO_APP.getProfile = () => ({ ...State.profile });
+      window.BCO_APP.webappAsk = webappAsk; // ✅ expose for engine if needed
     });
 
     setHealth("js: OK (app) • build=" + State.buildId);
