@@ -1,8 +1,9 @@
-// app/webapp/static/zombies.game.js  [ULTRA LUX vNext | Dual-Stick + iOS Fix + Start Fix + ZOOM]
-// IMPORTANT: UI не меняем — только логика, клики, запуск.
-// ADD (vNext-ZOOM):
-// - Renderer fallback applies snap.camera.zoom (contract in CORE)
-// - Public zoom API passthrough: getZoom / zoomIn(+0.5) / zoomOut(-0.5) / setZoomLevel / setZoomDelta
+// app/webapp/static/zombies.game.js  [ULTRA LUX vNext | NO-UI Runner + ZOOM Contract + iOS Fix]
+// IMPORTANT:
+// - UI НЕ меняем. Этот модуль НЕ трогает кнопки/оверлей/вкладки.
+// - НЕТ автосоздания canvas, НЕТ автопривязки Start кнопок, НЕТ автозапуска.
+// - Работает как "runner": setCanvas(canvas) + startLoop() (когда core уже start'нут UI-слоем).
+// - ZOOM: passthrough API (+0.5 delta contract) + fallback renderer uses snap.camera.zoom.
 
 (() => {
   "use strict";
@@ -16,205 +17,64 @@
   // Safe DOM helpers
   // -------------------------
   const $ = (sel) => document.querySelector(sel);
-
-  function pickEl(selectors) {
-    for (const s of selectors) {
-      const el = $(s);
-      if (el) return el;
-    }
-    return null;
-  }
-
-  // -------------------------
-  // Mounts / Overlay
-  // -------------------------
-  const overlayMount = pickEl(["#zOverlayMount", "[data-z-overlay-mount]"]);
-
-  function ensureCanvas() {
-    // Try existing *game* canvas only (DO NOT grab any random canvas on page)
-    let c = pickEl([
-      "#zombiesCanvas",
-      "#zCanvas",
-      "canvas#zombies",
-      "canvas#game"
-    ]);
-
-    // If none — create inside #zOverlayMount (REQUIRED for your current index.html)
-    if (!c) {
-      if (!overlayMount) {
-        warn("No canvas and no #zOverlayMount. Cannot create game surface.");
-        return null;
-      }
-      c = document.createElement("canvas");
-      c.id = "zombiesCanvas";
-
-      // Inline styles ONLY for guaranteed fullscreen surface (logic-level safety)
-      c.style.position = "fixed";
-      c.style.left = "0";
-      c.style.top = "0";
-      c.style.width = "100vw";
-      c.style.height = "100vh";
-      c.style.zIndex = "9999";
-
-      // IMPORTANT: inactive by default (menu scroll/click must work)
-      c.style.display = "none";
-      c.style.pointerEvents = "none";
-      c.style.touchAction = "none";
-      c.style.background = "transparent";
-
-      overlayMount.appendChild(c);
-      log("Canvas created in #zOverlayMount (inactive)");
-    }
-
-    return c;
-  }
-
-  // Canvas ref (lazy-safe)
-  let canvas = null;
-
-  function setCanvasActive(on) {
-    if (!canvas) return;
-    if (on) {
-      canvas.style.display = "block";
-      canvas.style.pointerEvents = "auto";
-      canvas.style.touchAction = "none";
-    } else {
-      canvas.style.pointerEvents = "none";
-      canvas.style.display = "none";
-      canvas.style.touchAction = "";
-    }
-  }
-
-  // Left/right joystick containers (optional; may be provided by other modules/HTML)
-  const stickL = pickEl([
-    "#joyL", "#stickLeft", ".joy.left", ".joystick.left", ".joy-left", ".stick-left",
-    "[data-joy='left']"
-  ]);
-
-  const stickR = pickEl([
-    "#joyR", "#stickRight", ".joy.right", ".joystick.right", ".joy-right", ".stick-right",
-    "[data-joy='right']"
-  ]);
-
-  // Legacy FIRE button (optional)
-  const btnFire = pickEl([
-    "#btnFire", "#fire", ".btn-fire", ".fire",
-    "button[data-action='fire']",
-    ".z-fire"
-  ]);
-
-  // Start fullscreen (old id optional)
-  const btnStart = pickEl([
-    "#btnStartFullscreen",
-    "button[data-action='start_fullscreen']",
-    ".btn-start-fullscreen",
-    "#startFullscreen",
-    ".start-fullscreen"
-  ]);
-
-  // YOUR REAL buttons from index.html (must work)
-  const btnZEnterGame = pickEl(["#btnZEnterGame"]);
-  const btnPlayZombies = pickEl(["#btnPlayZombies"]);
-  const btnZQuickPlay = pickEl(["#btnZQuickPlay"]);
-
-  const jsHealth = pickEl(["#jsHealth", ".jsHealth", "[data-js-health]"]);
+  const jsHealth = $("#jsHealth") || $(".jsHealth") || $("[data-js-health]");
   function health(msg) { try { if (jsHealth) jsHealth.textContent = String(msg || ""); } catch {} }
+
+  // -------------------------
+  // CORE / RENDER
+  // -------------------------
+  function CORE() { return window.BCO_ZOMBIES_CORE || null; }
+
+  function getRenderer() {
+    return window.BCO_ZOMBIES_RENDER || window.BCO_ZOMBIES_RENDERER || window.BCO_ZOMBIES_DRAW || null;
+  }
 
   // -------------------------
   // STATE
   // -------------------------
   const STATE = {
-    inGame: false,
-    mode: "arcade",
-    map: "Ashes",
-    character: "male",
-    skin: "default",
-    weaponKey: "SMG",
+    inGame: false,             // controlled by UI layer (app.js) usually
     lastSnapshot: null,
     snapshotSubs: new Set(),
     _raf: 0,
-    _aimStick: null
+    _canvas: null,
+    _ctx2d: null,
+    _dpr: 1,
+    _cssW: 0,
+    _cssH: 0
   };
 
-  function CORE() { return window.BCO_ZOMBIES_CORE || null; }
-
   // -------------------------
-  // iOS / WebView hardening
+  // iOS / WebView hardening (NO UI changes, only safe guards)
+  // - pinch/double-tap zoom prevention only when inGame=true
   // -------------------------
-  function setHardening(on) {
-    try {
-      const root = document.documentElement;
-      const body = document.body;
-      if (!root || !body) return;
-
-      if (on) {
-        body.classList.add("bco-game-active");
-
-        body.style.userSelect = "none";
-        body.style.webkitUserSelect = "none";
-        body.style.webkitTouchCallout = "none";
-
-        root.style.overscrollBehavior = "none";
-        body.style.overscrollBehavior = "none";
-
-        root.style.touchAction = "none";
-        body.style.touchAction = "none";
-
-        if (canvas) { canvas.style.touchAction = "none"; canvas.style.pointerEvents = "auto"; }
-        for (const el of [stickL, stickR, btnFire, btnStart, btnZEnterGame, btnPlayZombies, btnZQuickPlay]) {
-          if (!el) continue;
-          el.style.touchAction = "none";
-          el.style.pointerEvents = "auto";
-        }
-
-        try { window.BCO_TG && window.BCO_TG.hideChrome && window.BCO_TG.hideChrome(); } catch {}
-      } else {
-        body.classList.remove("bco-game-active");
-
-        body.style.userSelect = "";
-        body.style.webkitUserSelect = "";
-        body.style.webkitTouchCallout = "";
-
-        root.style.overscrollBehavior = "";
-        body.style.overscrollBehavior = "";
-
-        root.style.touchAction = "";
-        body.style.touchAction = "";
-
-        if (canvas) { canvas.style.touchAction = ""; canvas.style.pointerEvents = ""; }
-        for (const el of [stickL, stickR, btnFire, btnStart, btnZEnterGame, btnPlayZombies, btnZQuickPlay]) {
-          if (!el) continue;
-          el.style.touchAction = "";
-          el.style.pointerEvents = "";
-        }
-
-        try { window.BCO_TG && window.BCO_TG.showChrome && window.BCO_TG.showChrome(); } catch {}
-      }
-    } catch (e) {
-      warn("setHardening failed", e);
-    }
-  }
-
-  // prevent pinch zoom ONLY in game
   function installGestureBlockers() {
     try {
       const prevent = (e) => {
         if (!STATE.inGame) return;
         try { e.preventDefault(); } catch {}
       };
+
       document.addEventListener("gesturestart", prevent, { passive: false });
       document.addEventListener("gesturechange", prevent, { passive: false });
       document.addEventListener("gestureend", prevent, { passive: false });
 
+      // IMPORTANT: do not kill scroll in modals; allow scroll inside modal cards
       document.addEventListener("touchmove", (e) => {
-        if (!STATE.inGame) return; // menu scroll works
+        if (!STATE.inGame) return;
         const path = (e.composedPath && e.composedPath()) || [];
         for (const n of path) {
           if (!n) continue;
           const cls = n.classList;
-          if (cls && (cls.contains("modal") || cls.contains("modal-body") || cls.contains("allow-scroll"))) return;
+          if (cls && (
+            cls.contains("bco-z-card") ||
+            cls.contains("bco-z-modal") ||
+            cls.contains("modal") ||
+            cls.contains("modal-body") ||
+            cls.contains("allow-scroll")
+          )) return;
         }
-        e.preventDefault();
+        try { e.preventDefault(); } catch {}
       }, { passive: false });
 
       log("gesture blockers installed");
@@ -224,206 +84,66 @@
   }
 
   // -------------------------
-  // Telegram fullscreen take-over (best effort)
+  // Canvas lifecycle
   // -------------------------
-  function requestTakeover() {
-    try {
-      if (!TG) return;
-      try { TG.ready && TG.ready(); } catch {}
-      try { TG.expand && TG.expand(); } catch {}
-      try { TG.MainButton && TG.MainButton.hide && TG.MainButton.hide(); } catch {}
-      try { TG.BackButton && TG.BackButton.hide && TG.BackButton.hide(); } catch {}
-      try { TG.requestFullscreen && TG.requestFullscreen(); } catch {}
-      try { TG.setHeaderColor && TG.setHeaderColor("#000000"); } catch {}
-      try { TG.setBackgroundColor && TG.setBackgroundColor("#000000"); } catch {}
-      log("Telegram takeover requested");
-    } catch (e) {
-      warn("Telegram takeover error", e);
+  function setCanvas(c) {
+    if (!c || typeof c.getContext !== "function") {
+      warn("setCanvas: invalid canvas");
+      return false;
     }
+    STATE._canvas = c;
+    STATE._ctx2d = null;
+    // Apply safe defaults (no visual UI changes; just ensure touch doesn't scroll/zoom on canvas)
+    try { c.style.touchAction = "none"; } catch {}
+    try { c.style.webkitUserSelect = "none"; } catch {}
+    try { c.style.userSelect = "none"; } catch {}
+    resizeCanvas(); // best effort
+    return true;
   }
 
-  // -------------------------
-  // Canvas sizing (devicePixelRatio correct)
-  // -------------------------
+  function getCanvas() { return STATE._canvas || null; }
+
+  // devicePixelRatio correct sizing, but DOES NOT create canvas
   function resizeCanvas() {
+    const canvas = STATE._canvas;
     if (!canvas) return null;
 
     const dpr = Math.max(1, Math.min(3, (window.devicePixelRatio || 1)));
     const rect = canvas.getBoundingClientRect();
 
-    if (!rect.width || !rect.height) {
-      canvas.style.width = "100vw";
-      canvas.style.height = "100vh";
-    }
+    const cssW = Math.max(1, rect.width || window.innerWidth || 1);
+    const cssH = Math.max(1, rect.height || window.innerHeight || 1);
 
-    const r2 = canvas.getBoundingClientRect();
-    const w = Math.max(1, Math.floor(r2.width * dpr));
-    const h = Math.max(1, Math.floor(r2.height * dpr));
+    const pxW = Math.max(1, Math.floor(cssW * dpr));
+    const pxH = Math.max(1, Math.floor(cssH * dpr));
 
-    if (canvas.width !== w) canvas.width = w;
-    if (canvas.height !== h) canvas.height = h;
+    if (canvas.width !== pxW) canvas.width = pxW;
+    if (canvas.height !== pxH) canvas.height = pxH;
 
+    STATE._dpr = dpr;
+    STATE._cssW = cssW;
+    STATE._cssH = cssH;
+
+    // Inform core in CSS pixels (common contract)
     try {
       const c = CORE();
-      if (c && c.resize) c.resize(Math.floor(r2.width), Math.floor(r2.height));
+      if (c && typeof c.resize === "function") c.resize(Math.floor(cssW), Math.floor(cssH));
     } catch {}
 
-    return { cssW: r2.width, cssH: r2.height, pxW: w, pxH: h, dpr };
-  }
-
-  // -------------------------
-  // Dual-stick joystick (pointer-driven)
-  // -------------------------
-  function makeStick(el, kind /* "move" | "aim" */) {
-    if (!el) return null;
-
-    const knob = el.querySelector(".knob") || el.querySelector(".inner") || el.firstElementChild || null;
-
-    let active = false;
-    let pid = null;
-    let cx = 0, cy = 0;
-    let dx = 0, dy = 0;
-    let radius = 1;
-
-    function recalc() {
-      const r = el.getBoundingClientRect();
-      cx = r.left + r.width / 2;
-      cy = r.top + r.height / 2;
-      radius = Math.max(24, Math.min(r.width, r.height) * 0.38);
-    }
-
-    function setKnob(nx, ny) {
-      dx = nx; dy = ny;
-      if (!knob) return;
-      const kx = nx * radius;
-      const ky = ny * radius;
-      knob.style.transform = `translate(${kx}px, ${ky}px)`;
-    }
-
-    function resetKnob() {
-      dx = 0; dy = 0;
-      if (knob) knob.style.transform = "translate(0px, 0px)";
-    }
-
-    function pushToCore(nx, ny) {
-      const c = CORE();
-      if (!c) return;
-      if (kind === "move") c.setMove && c.setMove(nx, ny);
-      else c.setAim && c.setAim(nx, ny);
-    }
-
-    function onDown(e) {
-      try { e.preventDefault(); } catch {}
-      recalc();
-      active = true;
-      pid = e.pointerId;
-      try { el.setPointerCapture && el.setPointerCapture(pid); } catch {}
-      onMove(e);
-    }
-
-    function onMove(e) {
-      if (!active) return;
-      if (pid !== null && e.pointerId !== pid) return;
-
-      const vx = (e.clientX - cx);
-      const vy = (e.clientY - cy);
-      const L = Math.hypot(vx, vy) || 0;
-
-      const nx = L > 0 ? (vx / Math.max(L, radius)) : 0;
-      const ny = L > 0 ? (vy / Math.max(L, radius)) : 0;
-
-      const clx = Math.max(-1, Math.min(1, nx));
-      const cly = Math.max(-1, Math.min(1, ny));
-
-      setKnob(clx, cly);
-      pushToCore(clx, cly);
-    }
-
-    function onUp(e) {
-      if (!active) return;
-      if (pid !== null && e.pointerId !== pid) return;
-
-      active = false;
-      pid = null;
-      try { el.releasePointerCapture && el.releasePointerCapture(e.pointerId); } catch {}
-      resetKnob();
-      pushToCore(0, 0);
-    }
-
-    el.addEventListener("pointerdown", onDown, { passive: false });
-    window.addEventListener("pointermove", onMove, { passive: false });
-    window.addEventListener("pointerup", onUp, { passive: false });
-    window.addEventListener("pointercancel", onUp, { passive: false });
-
-    setTimeout(recalc, 0);
-    window.addEventListener("resize", recalc);
-
-    return {
-      get active() { return active; },
-      get dx() { return dx; },
-      get dy() { return dy; },
-      recalc
-    };
-  }
-
-  // -------------------------
-  // FIRE legacy behavior
-  // -------------------------
-  function setupFireBehavior() {
-    if (stickR && btnFire) {
-      btnFire.style.display = "none";
-      btnFire.style.pointerEvents = "none";
-      log("FIRE hidden (dual-stick detected)");
-      return;
-    }
-
-    if (!btnFire) return;
-
-    const down = (e) => {
-      try { e.preventDefault(); } catch {}
-      const c = CORE();
-      if (c && c.setShooting) c.setShooting(true);
-    };
-    const up = (e) => {
-      try { e.preventDefault(); } catch {}
-      const c = CORE();
-      if (c && c.setShooting) c.setShooting(false);
-    };
-
-    btnFire.addEventListener("pointerdown", down, { passive: false });
-    btnFire.addEventListener("pointerup", up, { passive: false });
-    btnFire.addEventListener("pointercancel", up, { passive: false });
-    btnFire.addEventListener("pointerleave", up, { passive: false });
-  }
-
-  // -------------------------
-  // Auto-shoot on RIGHT stick hold
-  // -------------------------
-  function setupDualStickShooting(aimStick) {
-    if (!aimStick) return;
-    STATE._aimStick = aimStick;
-
-    function tick() {
-      const c = CORE();
-      if (c && c.setShooting) {
-        const should = !!aimStick.active && (Math.hypot(aimStick.dx, aimStick.dy) > 0.08);
-        c.setShooting(should);
-      }
-      requestAnimationFrame(tick);
-    }
-    requestAnimationFrame(tick);
+    return { cssW, cssH, pxW, pxH, dpr };
   }
 
   // -------------------------
   // Render hook (supports BOTH styles)
-  // - New: BCO_ZOMBIES_RENDER.render(ctx, CORE, input, view)
-  // - Old: BCO_ZOMBIES_RENDER.draw(canvas, snap)
+  // - New: R.render(ctx, CORE, input, view)
+  // - Old: R.draw(canvas, snap)
+  // - Fallback: minimal draw() with snap.camera.zoom
   // -------------------------
   function drawFrame() {
-    const c = CORE();
-    if (!c || !c.getFrameData) return;
+    const core = CORE();
+    if (!core || typeof core.getFrameData !== "function") return;
 
-    const snap = c.getFrameData();
+    const snap = core.getFrameData();
     STATE.lastSnapshot = snap;
 
     if (STATE.snapshotSubs.size) {
@@ -432,35 +152,34 @@
       }
     }
 
+    const canvas = STATE._canvas;
     if (!canvas) return;
 
-    const R = window.BCO_ZOMBIES_RENDER || window.BCO_ZOMBIES_RENDERER || window.BCO_ZOMBIES_DRAW;
+    const R = getRenderer();
 
-    // Preferred: render(ctx, CORE, input, view)
+    // Preferred renderer
     if (R && typeof R.render === "function") {
       try {
-        const ctx = canvas.getContext("2d");
-        const view = { w: canvas.width, h: canvas.height };
-        const input = c.input || { aimX: 0, aimY: 0 };
-        R.render(ctx, c, input, view);
+        const ctx = STATE._ctx2d || (STATE._ctx2d = canvas.getContext("2d"));
+        const view = { w: canvas.width, h: canvas.height, cssW: STATE._cssW, cssH: STATE._cssH, dpr: STATE._dpr };
+        const input = core.input || { aimX: 0, aimY: 0, moveX: 0, moveY: 0 };
+        R.render(ctx, core, input, view);
         return;
       } catch (e) {
         // fall through
       }
     }
 
-    // Legacy: draw(canvas, snap)
+    // Legacy renderer
     if (R && typeof R.draw === "function") {
       try { R.draw(canvas, snap); return; } catch (e) { /* fallback */ }
     }
 
-    // minimal fallback + ✅ ZOOM
-    const ctx = canvas.getContext("2d");
+    // Minimal fallback + ✅ ZOOM from snapshot
+    const ctx = STATE._ctx2d || (STATE._ctx2d = canvas.getContext("2d"));
     if (!ctx) return;
 
-    const dpr = Math.max(1, Math.min(3, (window.devicePixelRatio || 1)));
     const w = canvas.width, h = canvas.height;
-
     ctx.clearRect(0, 0, w, h);
 
     const camX = snap.camera?.x || 0;
@@ -468,39 +187,44 @@
 
     // ✅ zoom from snapshot (contract from CORE)
     const zoom = Math.max(0.25, Math.min(4, Number(snap.camera?.zoom) || 1));
+    const dpr = STATE._dpr || 1;
 
-    // world->screen in pixels
     const toX = (x) => (w / 2) + (x - camX) * dpr * zoom;
     const toY = (y) => (h / 2) + (y - camY) * dpr * zoom;
 
-    ctx.beginPath();
-    ctx.arc(toX(snap.player.x), toY(snap.player.y), 14 * dpr * zoom, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(220,220,255,0.95)";
-    ctx.fill();
+    // Player
+    if (snap.player) {
+      ctx.beginPath();
+      ctx.arc(toX(snap.player.x || 0), toY(snap.player.y || 0), 14 * dpr * zoom, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(220,220,255,0.95)";
+      ctx.fill();
+    }
 
+    // Zombies
     for (const z of (snap.zombies || [])) {
       ctx.beginPath();
-      ctx.arc(toX(z.x), toY(z.y), (z.r || 16) * dpr * zoom, 0, Math.PI * 2);
+      ctx.arc(toX(z.x || 0), toY(z.y || 0), (z.r || 16) * dpr * zoom, 0, Math.PI * 2);
       ctx.fillStyle = z.elite ? "rgba(255,210,120,0.95)" : "rgba(140,255,140,0.85)";
       ctx.fill();
     }
 
+    // Bullets
     for (const b of (snap.bullets || [])) {
       ctx.beginPath();
-      ctx.arc(toX(b.x), toY(b.y), 3 * dpr * zoom, 0, Math.PI * 2);
+      ctx.arc(toX(b.x || 0), toY(b.y || 0), 3 * dpr * zoom, 0, Math.PI * 2);
       ctx.fillStyle = b.crit ? "rgba(255,210,120,0.95)" : "rgba(240,240,255,0.9)";
       ctx.fill();
     }
   }
 
   // -------------------------
-  // Loop (guaranteed start)
+  // Loop (NO AUTOSTART)
   // -------------------------
   function startLoop() {
     if (STATE._raf) return true;
 
-    const c = CORE();
-    if (!c || !c.updateFrame || !c.getFrameData) {
+    const core = CORE();
+    if (!core || typeof core.updateFrame !== "function" || typeof core.getFrameData !== "function") {
       health("Core not loaded");
       warn("BCO_ZOMBIES_CORE missing/incomplete");
       return false;
@@ -508,8 +232,9 @@
 
     function frame(tms) {
       try {
+        // Resize is cheap, but we throttle implicitly by RAF; ok for iOS.
         resizeCanvas();
-        c.updateFrame(tms);
+        core.updateFrame(tms);
         drawFrame();
       } catch (e) {
         warn("frame error", e);
@@ -520,7 +245,6 @@
 
     STATE._raf = requestAnimationFrame(frame);
     health("loop ok");
-    log("loop started");
     return true;
   }
 
@@ -532,129 +256,69 @@
   }
 
   // -------------------------
-  // GAME lifecycle (contract for zombies.init.js)
+  // In-game flag (UI layer should toggle this)
   // -------------------------
-  function open() { return true; }
-  function close() { return true; }
-
-  function setMode(mode) { STATE.mode = String(mode || "arcade"); return STATE.mode; }
-  function setMap(map) { STATE.map = String(map || "Ashes"); return STATE.map; }
-
-  function setCharacter(character, skin) {
-    STATE.character = String(character || "male");
-    STATE.skin = String(skin || "default");
-    return { character: STATE.character, skin: STATE.skin };
+  function setInGame(on) {
+    STATE.inGame = !!on;
+    // TG chrome hide is handled by UI layer (app.js / BCO_TG). We do NOT touch UI here.
+    return STATE.inGame;
   }
 
-  function setWeapon(key) {
-    STATE.weaponKey = String(key || "SMG");
-    try { CORE()?.setWeapon?.(STATE.weaponKey); } catch {}
-    return STATE.weaponKey;
-  }
+  function isInGame() { return !!STATE.inGame; }
 
-  // ✅ ZOOM passthrough API (contract: +0.5 delta)
-  function getZoom() { try { return CORE()?.getZoom?.() ?? 1; } catch { return 1; } }
-  function setZoomLevel(z) { try { return CORE()?.setZoomLevel?.(z) ?? getZoom(); } catch { return getZoom(); } }
-  function setZoomDelta(d) { try { return CORE()?.setZoomDelta?.(d) ?? getZoom(); } catch { return getZoom(); } }
-  function zoomIn() { return setZoomDelta(+0.5); }
-  function zoomOut() { return setZoomDelta(-0.5); }
-
-  function start(mode = "arcade", opts = {}) {
-    const c = CORE();
-    if (!c || !c.start) {
-      health("Core not ready");
-      return false;
-    }
-
-    canvas = ensureCanvas();
-    if (!canvas) {
-      health("No canvas");
-      return false;
-    }
-
-    setCanvasActive(true);
-
-    if (opts && typeof opts === "object") {
-      if (opts.map) STATE.map = String(opts.map);
-      if (opts.character) STATE.character = String(opts.character);
-      if (opts.skin) STATE.skin = String(opts.skin);
-      if (opts.weaponKey) STATE.weaponKey = String(opts.weaponKey);
-
-      // ✅ allow passing zoom
-      if (opts.zoom != null) {
-        try { c.setZoomLevel?.(opts.zoom); } catch {}
-      }
-    }
-    STATE.mode = String(mode || STATE.mode || "arcade");
-
-    STATE.inGame = true;
-    setHardening(true);
-
-    requestTakeover();
-
-    const r = resizeCanvas() || { cssW: window.innerWidth, cssH: window.innerHeight };
-
+  // -------------------------
+  // Input passthrough helpers (optional; UI uses its own pump normally)
+  // -------------------------
+  function setInput(obj) {
+    const core = CORE();
+    if (!core || !obj) return false;
     try {
-      c.start(STATE.mode, Math.floor(r.cssW), Math.floor(r.cssH), {
-        map: STATE.map,
-        character: STATE.character,
-        skin: STATE.skin,
-        weaponKey: STATE.weaponKey
-      });
-
-      startLoop();
-      health("running");
+      if (typeof obj.moveX === "number" || typeof obj.moveY === "number") core.setMove?.(obj.moveX || 0, obj.moveY || 0);
+      if (typeof obj.aimX === "number" || typeof obj.aimY === "number") core.setAim?.(obj.aimX || 0, obj.aimY || 0);
+      if (typeof obj.shooting === "boolean") core.setShooting?.(obj.shooting);
       return true;
-    } catch (e) {
-      warn("CORE.start failed", e);
-      health("start failed");
-      return false;
-    }
+    } catch { return false; }
   }
 
-  function stop(reason = "manual") {
-    const c = CORE();
-    try { c?.stop?.(reason); } catch {}
-
-    STATE.inGame = false;
-
-    stopLoop();
-    setHardening(false);
-    setCanvasActive(false);
-
-    health("stopped");
-    return true;
+  function getInput() {
+    const core = CORE();
+    if (!core) return null;
+    try { return { ...(core.input || {}) }; } catch { return null; }
   }
 
-  // Shop passthrough (contract)
-  function buyPerk(id) { try { return !!CORE()?.buyPerk?.(id); } catch { return false; } }
-  function reload() { try { return !!CORE()?.reload?.(); } catch { return false; } }
-  function usePlate() { try { return !!CORE()?.usePlate?.(); } catch { return false; } }
+  // -------------------------
+  // Snapshot access
+  // -------------------------
+  function getSnapshot() {
+    const core = CORE();
+    return STATE.lastSnapshot || (core?.getFrameData?.() ?? null);
+  }
 
-  function getSnapshot() { return STATE.lastSnapshot || (CORE()?.getFrameData?.() ?? null); }
   function onSnapshot(cb) {
     if (typeof cb !== "function") return false;
     STATE.snapshotSubs.add(cb);
     return true;
   }
 
-  function getInput() {
-    const c = CORE();
-    if (!c) return null;
-    return { ...c.input };
-  }
+  // -------------------------
+  // Shop passthrough
+  // -------------------------
+  function buyPerk(id) { try { return !!CORE()?.buyPerk?.(id); } catch { return false; } }
+  function reload() { try { return !!CORE()?.reload?.(); } catch { return false; } }
+  function usePlate() { try { return !!CORE()?.usePlate?.(); } catch { return false; } }
 
-  function setInput(obj) {
-    const c = CORE();
-    if (!c || !obj) return false;
-    try {
-      if (typeof obj.moveX === "number" || typeof obj.moveY === "number") c.setMove?.(obj.moveX || 0, obj.moveY || 0);
-      if (typeof obj.aimX === "number" || typeof obj.aimY === "number") c.setAim?.(obj.aimX || 0, obj.aimY || 0);
-      if (typeof obj.shooting === "boolean") c.setShooting?.(obj.shooting);
-      return true;
-    } catch { return false; }
-  }
+  // -------------------------
+  // ✅ ZOOM passthrough API (contract: +0.5 delta)
+  // -------------------------
+  function getZoom() { try { return CORE()?.getZoom?.() ?? 1; } catch { return 1; } }
+  function setZoomLevel(z) { try { return CORE()?.setZoomLevel?.(z) ?? getZoom(); } catch { return getZoom(); } }
+  function setZoomDelta(d) { try { return CORE()?.setZoomDelta?.(d) ?? getZoom(); } catch { return getZoom(); } }
+  function zoomIn() { return setZoomDelta(+0.5); }
+  function zoomOut() { return setZoomDelta(-0.5); }
 
+  // -------------------------
+  // Result send helper (optional; UI usually sends richer payload)
+  // -------------------------
   function sendResult(reason = "manual") {
     try {
       const snap = getSnapshot();
@@ -664,8 +328,8 @@
         action: "game_result",
         game: "zombies",
         reason,
-        mode: snap.meta?.mode || STATE.mode,
-        map: snap.meta?.map || STATE.map,
+        mode: snap.meta?.mode || "unknown",
+        map: snap.meta?.map || "unknown",
         wave: snap.hud?.wave || 1,
         kills: snap.hud?.kills || 0,
         coins: snap.hud?.coins || 0,
@@ -684,76 +348,16 @@
   }
 
   // -------------------------
-  // Wire start buttons (YOUR UI)
-  // -------------------------
-  function wireStartButton(el) {
-    if (!el) return;
-    el.addEventListener("pointerdown", (e) => {
-      try { e.preventDefault(); } catch {}
-      start(STATE.mode || "arcade", {
-        map: STATE.map,
-        character: STATE.character,
-        skin: STATE.skin,
-        weaponKey: STATE.weaponKey
-      });
-    }, { passive: false });
-  }
-
-  // -------------------------
-  // Init
+  // Init (NO UI binding)
   // -------------------------
   function init() {
     installGestureBlockers();
+    window.addEventListener("resize", () => { resizeCanvas(); }, { passive: true });
 
-    canvas = ensureCanvas();
-    setCanvasActive(false);
-
-    const moveStick = makeStick(stickL, "move");
-    const aimStick  = makeStick(stickR, "aim");
-    if (aimStick) setupDualStickShooting(aimStick);
-    setupFireBehavior();
-
-    wireStartButton(btnStart);
-    wireStartButton(btnZEnterGame);
-    wireStartButton(btnPlayZombies);
-    wireStartButton(btnZQuickPlay);
-
-    if (canvas) {
-      canvas.addEventListener("pointerdown", (e) => {
-        const c = CORE();
-        if (!c || c.running) return;
-        try { e.preventDefault(); } catch {}
-        start(STATE.mode || "arcade", {
-          map: STATE.map,
-          character: STATE.character,
-          skin: STATE.skin,
-          weaponKey: STATE.weaponKey
-        });
-      }, { passive: false });
-    }
-
-    window.addEventListener("resize", () => { resizeCanvas(); });
-
-    if (TG) {
-      try { TG.ready && TG.ready(); } catch {}
-      try { TG.expand && TG.expand(); } catch {}
-    }
-
-    try { if (CORE()?.running) startLoop(); } catch {}
-
-    STATE.inGame = false;
-    setHardening(false);
-
+    // If core is already running and UI has already provided canvas+inGame, we can start loop later.
+    // We DO NOT autostart loop here to avoid conflicts with app.js orchestration.
     health("ready");
-    log("init ok", {
-      hasMount: !!overlayMount,
-      hasCanvas: !!canvas,
-      hasL: !!stickL,
-      hasR: !!stickR,
-      hasFire: !!btnFire,
-      hasStartOld: !!btnStart,
-      hasStartUI: !!btnZEnterGame || !!btnPlayZombies || !!btnZQuickPlay
-    });
+    log("init ok (NO-UI runner)");
   }
 
   if (document.readyState === "loading") {
@@ -762,28 +366,36 @@
     init();
   }
 
-  // Export CONTRACT API (this is what zombies.init.js expects)
+  // Export CONTRACT API (safe, no UI control)
   window.BCO_ZOMBIES_GAME = {
-    open,
-    close,
-    start,
-    stop,
-    setMode,
-    setMap,
-    setCharacter,
-    setWeapon,
-    buyPerk,
-    reload,
-    usePlate,
-    sendResult,
+    // canvas
+    setCanvas,
+    getCanvas,
+    resizeCanvas,
+
+    // loop
+    startLoop,
+    stopLoop,
+
+    // in-game flag (used by gesture blockers only)
+    setInGame,
+    isInGame,
+
+    // snapshot / input
     getSnapshot,
     onSnapshot,
     getInput,
     setInput,
-    resizeCanvas,
-    startLoop,
 
-    // ✅ zoom API
+    // shop passthrough
+    buyPerk,
+    reload,
+    usePlate,
+
+    // result
+    sendResult,
+
+    // zoom API (contract +0.5 delta)
     getZoom,
     setZoomLevel,
     setZoomDelta,
