@@ -11,6 +11,10 @@
   //   - LEFT joystick = movement
   //   - RIGHT aim joystick = FIRE button drag (direction) + hold = shooting
   //   - You can move + aim + shoot одновременно
+  //
+  // ✅ ZOOM:
+  //   - Applies CORE.state.zoom to camera transform (world->screen)
+  //   - Public zoom API passthrough: getZoom/zoomIn(+0.5)/zoomOut(-0.5)/setZoomDelta
   // =========================================================
 
   const tg = window.Telegram?.WebApp || null;
@@ -84,7 +88,6 @@
   // Input (Dual-stick)
   // =========================================================
   const input = {
-    // left movement stick
     joyActive: false,
     joyId: null,
     joyBaseX: 0,
@@ -92,7 +95,6 @@
     moveX: 0,
     moveY: 0,
 
-    // right aim stick (on FIRE)
     aimActive: false,
     aimId: null,
     aimBaseX: 0,
@@ -100,7 +102,6 @@
     aimX: 1,
     aimY: 0,
 
-    // shooting
     firing: false
   };
 
@@ -385,7 +386,6 @@
 
     ctx = canvas.getContext("2d", { alpha: true });
 
-    // Prevent scroll / pinch
     overlay.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
     overlay.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
     overlay.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false });
@@ -431,6 +431,8 @@
 
     canvas.width = Math.floor(W * dpr);
     canvas.height = Math.floor(H * dpr);
+
+    // IMPORTANT: We render in CSS px units (setTransform(dpr..))
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const C = CORE();
@@ -438,7 +440,7 @@
   }
 
   // =========================================================
-  // Controls: pointer first, touch fallback
+  // Controls
   // =========================================================
   function wireControls() {
     if (!canvas || !joy || !fireBtn) return;
@@ -486,7 +488,6 @@
       input.aimActive = true;
       input.aimId = id;
 
-      // anchor at FIRE center (right stick)
       const r = fireRect();
       input.aimBaseX = r.left + r.width / 2;
       input.aimBaseY = r.top + r.height / 2;
@@ -512,10 +513,8 @@
       const dead = UI.fire.dead;
       const m = mag < dead ? 0 : (mag - dead) / (1 - dead);
 
-      // stick visual
       setFireVisual(n.x * m, n.y * m);
 
-      // aim vector (direction)
       if (n.L > 2) {
         input.aimX = n.x;
         input.aimY = n.y;
@@ -535,7 +534,6 @@
       if (C) C.setShooting(false);
     };
 
-    // pointer
     if (window.PointerEvent) {
       joy.addEventListener("pointerdown", (e) => {
         e.preventDefault();
@@ -617,7 +615,7 @@
   }
 
   // =========================================================
-  // Render
+  // Render helpers
   // =========================================================
   function drawFallbackPlayer(x, y, dirX, dirY) {
     ctx.save();
@@ -629,7 +627,6 @@
     ctx.arc(0, 0, 18, 0, Math.PI * 2);
     ctx.fill();
 
-    // face dir
     const n = norm(dirX, dirY);
     ctx.globalAlpha = 0.28;
     ctx.fillStyle = "rgba(34,211,238,.9)";
@@ -687,9 +684,10 @@
     }
   }
 
-  function drawAimReticle(camX, camY, px, py, ax, ay) {
-    const sx = (px - camX) + W / 2;
-    const sy = (py - camY) + H / 2;
+  function drawAimReticle(px, py, ax, ay) {
+    // reticle in SCREEN space (constant UX)
+    const sx = (W / 2);
+    const sy = (H / 2);
 
     const r1 = 34;
     const r2 = 64;
@@ -714,6 +712,9 @@
     ctx.restore();
   }
 
+  // =========================================================
+  // Render (✅ ZOOM applied)
+  // =========================================================
   function render() {
     const C = CORE();
     if (!ctx || !C) return;
@@ -723,7 +724,6 @@
 
     ctx.clearRect(0, 0, W, H);
 
-    // subtle bg
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,.18)";
     ctx.fillRect(0, 0, W, H);
@@ -732,20 +732,28 @@
     const camX = S.camX;
     const camY = S.camY;
 
-    // grid + arena
+    // ✅ zoom from CORE (contract)
+    const zoom = Math.max(0.25, Math.min(4, Number(S.zoom) || 1));
+
+    // World transform: center -> scale -> translate world
     ctx.save();
     ctx.translate(W / 2, H / 2);
+    ctx.scale(zoom, zoom);
     ctx.translate(-camX, -camY);
 
-    // grid
+    // grid + arena
     ctx.globalAlpha = 0.20;
     ctx.strokeStyle = "rgba(255,255,255,.10)";
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1 / zoom; // keep thickness stable-ish
+
     const step = 80;
-    const minX = camX - W / 2 - 200;
-    const maxX = camX + W / 2 + 200;
-    const minY = camY - H / 2 - 200;
-    const maxY = camY + H / 2 + 200;
+    const viewHalfW = (W / 2) / zoom;
+    const viewHalfH = (H / 2) / zoom;
+
+    const minX = camX - viewHalfW - 200;
+    const maxX = camX + viewHalfW + 200;
+    const minY = camY - viewHalfH - 200;
+    const maxY = camY + viewHalfH + 200;
 
     for (let x = Math.floor(minX / step) * step; x < maxX; x += step) {
       ctx.beginPath();
@@ -761,7 +769,7 @@
     }
 
     ctx.globalAlpha = 0.65;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3 / zoom;
     ctx.strokeStyle = "rgba(255,255,255,.12)";
     ctx.beginPath();
     ctx.arc(0, 0, cfg.arenaRadius, 0, Math.PI * 2);
@@ -786,11 +794,11 @@
 
     ctx.restore();
 
-    drawAimReticle(camX, camY, S.player.x, S.player.y, C.input.aimX, C.input.aimY);
+    drawAimReticle(S.player.x, S.player.y, C.input.aimX, C.input.aimY);
   }
 
   // =========================================================
-  // HUD + shop labels
+  // HUD + shop labels (✅ no crash: removed C._weapon())
   // =========================================================
   function perkCost(id) {
     const C = CORE();
@@ -842,6 +850,18 @@
     }
   }
 
+  function getWeaponName(C) {
+    try {
+      const w = C?.state?.weapon;
+      if (w?.name) return String(w.name);
+      if (typeof C?._weaponEffective === "function") {
+        const ww = C._weaponEffective();
+        if (ww?.name) return String(ww.name);
+      }
+    } catch {}
+    return "SMG";
+  }
+
   function updateHud() {
     const C = CORE();
     if (!C) return;
@@ -849,14 +869,14 @@
     const sub = document.getElementById("bco-z-sub");
     const hud = document.getElementById("bco-z-hud");
 
-    const st = C._effectiveStats();
-    const hp = clamp(C.state.player.hp, 0, st.hpMax);
-    const w = C._weapon();
+    const st = (typeof C._effectiveStats === "function") ? C._effectiveStats() : { hpMax: 100 };
+    const hp = clamp(C.state.player.hp, 0, st.hpMax || 100);
+    const wName = getWeaponName(C);
 
-    if (sub) sub.textContent = `${C.meta.mode.toUpperCase()} • Wave ${C.state.wave}`;
+    if (sub) sub.textContent = `${String(C.meta.mode || "").toUpperCase()} • Wave ${C.state.wave}`;
     if (hud) {
       hud.textContent =
-        `❤️ ${Math.round(hp)}/${Math.round(st.hpMax)} • ☠️ ${C.state.kills} • 💰 ${C.state.coins} • 🔫 ${w.name}`;
+        `❤️ ${Math.round(hp)}/${Math.round(st.hpMax || 100)} • ☠️ ${C.state.kills} • 💰 ${C.state.coins} • 🔫 ${wName}`;
     }
 
     if (shopBar) shopBar.style.opacity = (C.meta.mode === "roguelike") ? "1" : "0";
@@ -882,7 +902,6 @@
 
     C.updateFrame(tms);
 
-    // auto-dead
     if (!C.running && C.state.player.hp <= 0) {
       haptic("notif", "error");
       API.sendResult("dead");
@@ -945,7 +964,6 @@
       weaponKey: C.meta.weaponKey
     });
 
-    // sync aim + shooting
     C.setAim(input.aimX, input.aimY);
     C.setMove(input.moveX, input.moveY);
     C.setShooting(!!input.firing);
@@ -995,6 +1013,8 @@
       duration_ms: Math.round(C.state.timeMs),
       score: score(C),
 
+      zoom: Number(C.state.zoom) || 1,
+
       character: C.meta.character,
       skin: C.meta.skin,
       loadout: { weapon: C.meta.weaponKey },
@@ -1005,7 +1025,7 @@
   }
 
   // =========================================================
-  // Shop / perks (module-first, fallback to CORE)
+  // Shop / perks
   // =========================================================
   function buyPerk(id) {
     const C = CORE();
@@ -1013,11 +1033,6 @@
 
     if (C.meta.mode !== "roguelike") { haptic("notif", "warning"); return false; }
     if (C.state?.perks?.[id]) { haptic("impact", "light"); return false; }
-
-    // world hook first
-    if (typeof C._buyPerk === "function") {
-      try { C._buyPerk(C, id); } catch {}
-    }
 
     const P = PERKS();
     if (P?.buy) {
@@ -1037,6 +1052,15 @@
     updateHud();
     return ok;
   }
+
+  // =========================================================
+  // ✅ ZOOM API passthrough (contract: +0.5 delta)
+  // =========================================================
+  function getZoom() { try { return CORE()?.getZoom?.() ?? (Number(CORE()?.state?.zoom) || 1); } catch { return 1; } }
+  function setZoomLevel(z) { try { return CORE()?.setZoomLevel?.(z) ?? getZoom(); } catch { return getZoom(); } }
+  function setZoomDelta(d) { try { return CORE()?.setZoomDelta?.(d) ?? getZoom(); } catch { return getZoom(); } }
+  function zoomIn() { return setZoomDelta(+0.5); }
+  function zoomOut() { return setZoomDelta(-0.5); }
 
   // =========================================================
   // Public API
@@ -1087,14 +1111,18 @@
     },
 
     buyPerk(id) { return buyPerk(id); },
-
     sendResult(reason) { return !!sendResult(reason || "manual"); },
 
-    // hooks for world.js to wrap (pass-through to CORE)
+    // ✅ zoom API
+    getZoom,
+    setZoomLevel,
+    setZoomDelta,
+    zoomIn,
+    zoomOut,
+
     get core() { return CORE(); }
   };
 
-  // Telegram Back button close overlay
   try {
     tg?.BackButton?.onClick?.(() => {
       if (openFlag) API.close();
