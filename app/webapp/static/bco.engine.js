@@ -2,221 +2,169 @@
 (() => {
   "use strict";
 
-  // Single Engine (elite):
-  // - Uses BCO_ZOMBIES_CORE (your v1.4.2 3D-ready core)
-  // - Uses renderer plugin if present: window.BCO_ZOMBIES_RENDER / window.BCO_ZOMBIES_RENDERER
-  // - Fullscreen canvas on #zOverlayMount (NO UI redesign)
-  // - Contract: zoom bump = +0.5 to current (CFG.ZOOM_BUMP default 0.5)
+  // BCO_ENGINE: single stable facade for Zombies engine.
+  // Goal: no matter what internal engine exists (BCO_ZOMBIES or BCO_ZOMBIES_CORE),
+  // UI talks to ONE object: window.BCO_GAME.
 
-  window.BCO = window.BCO || {};
-  const CFG = window.BCO.CONFIG || window.BCO_CONFIG || {};
-  const ZOOM_BUMP = Number(CFG.ZOOM_BUMP || 0.5);
+  const W = window;
 
-  function qs(id) { return document.getElementById(id); }
-  function safe(fn) { try { return fn(); } catch (_) { return undefined; } }
-  function log(...a) { console.log("[BCO_ENGINE]", ...a); }
+  function pickEngine() {
+    return W.BCO_ZOMBIES || W.BCO_ZOMBIES_CORE || null;
+  }
 
-  const Engine = (() => {
-    const st = {
-      core: null,
-      canvas: null,
-      ctx: null,
-      raf: 0,
-      running: false,
-      w: 0,
-      h: 0,
-      lastTS: 0
+  function safe(fn) {
+    try { return fn(); } catch { return undefined; }
+  }
+
+  function ensureInputBridge() {
+    if (!W.BCO_ZOMBIES_INPUT || typeof W.BCO_ZOMBIES_INPUT !== "object") {
+      W.BCO_ZOMBIES_INPUT = {
+        move: { x: 0, y: 0 },
+        aim: { x: 0, y: 0 },
+        firing: false,
+        updatedAt: 0
+      };
+    }
+    return W.BCO_ZOMBIES_INPUT;
+  }
+
+  function makeEventBus() {
+    const map = new Map();
+    return {
+      on(evt, fn) {
+        if (!evt || typeof fn !== "function") return () => {};
+        if (!map.has(evt)) map.set(evt, new Set());
+        map.get(evt).add(fn);
+        return () => map.get(evt)?.delete(fn);
+      },
+      emit(evt, payload) {
+        const set = map.get(evt);
+        if (!set) return;
+        for (const fn of Array.from(set)) {
+          try { fn(payload); } catch {}
+        }
+      }
     };
+  }
 
-    function detectCore() {
-      st.core = window.BCO_ZOMBIES_CORE || null;
-      return !!st.core;
-    }
+  const bus = makeEventBus();
 
-    function detectRenderer() {
-      return window.BCO_ZOMBIES_RENDER || window.BCO_ZOMBIES_RENDERER || null;
-    }
+  // We expose ONE stable API: window.BCO_GAME
+  const BCO_GAME = {
+    // read-only: which engine is active right now
+    get engine() { return pickEngine(); },
 
-    function ensureCanvas() {
-      const mount = qs("zOverlayMount");
-      if (!mount) return null;
+    // events
+    on(evt, fn) { return bus.on(evt, fn); },
 
-      let c = mount.querySelector("#bcoZCanvas");
-      if (!c) {
-        c = document.createElement("canvas");
-        c.id = "bcoZCanvas";
-        c.style.position = "fixed";
-        c.style.left = "0";
-        c.style.top = "0";
-        c.style.width = "100vw";
-        c.style.height = "100vh";
-        c.style.zIndex = "9999";
-        c.style.display = "none";
-        c.style.background = "transparent";
-        c.style.pointerEvents = "none"; // input handled by your overlay/joysticks modules
-        mount.appendChild(c);
+    // attach canvas (best-effort across engines)
+    setCanvas(canvas) {
+      const e = pickEngine();
+      if (!e || !canvas) return false;
+
+      let ok = false;
+      ok = !!safe(() => e.setCanvas?.(canvas)) || ok;
+      ok = !!safe(() => e.canvas?.(canvas)) || ok;
+      ok = !!safe(() => e.attach?.(canvas)) || ok;
+
+      // some cores expect resize after canvas attach
+      ok = !!safe(() => e.resize?.(canvas.clientWidth || 1, canvas.clientHeight || 1)) || ok;
+      ok = !!safe(() => W.BCO_ZOMBIES_CORE?.resize?.(canvas.width || 1, canvas.height || 1)) || ok;
+
+      return ok;
+    },
+
+    // open/start/stop (best-effort)
+    open(opts = {}) {
+      const e = pickEngine();
+      if (!e) return false;
+      let ok = false;
+      ok = !!safe(() => e.open?.(opts)) || ok;
+      ok = !!safe(() => e.start?.(opts)) || ok;
+      return ok;
+    },
+
+    start(opts = {}) {
+      const e = pickEngine();
+      if (!e) return false;
+      let ok = false;
+
+      ok = !!safe(() => e.start?.(opts)) || ok;
+
+      // compatibility: some core uses start(mode,w,h,meta)
+      if (!ok && W.BCO_ZOMBIES_CORE?.start) {
+        const mode = String(opts.mode || "arcade");
+        const w = Number(opts.w || opts.width || 1) || 1;
+        const h = Number(opts.h || opts.height || 1) || 1;
+        ok = !!safe(() => W.BCO_ZOMBIES_CORE.start(mode, w, h, opts.meta || opts));
       }
 
-      st.canvas = c;
-      st.ctx = c.getContext("2d", { alpha: true, desynchronized: true });
-      return c;
-    }
+      return ok;
+    },
 
-    function resize() {
-      if (!st.canvas || !st.core) return;
+    stop(reason = "manual") {
+      const e = pickEngine();
+      let ok = false;
+      ok = !!safe(() => e?.stop?.(reason)) || ok;
+      ok = !!safe(() => e?.stop?.()) || ok;
+      ok = !!safe(() => W.BCO_ZOMBIES_CORE?.stop?.()) || ok;
+      return ok;
+    },
 
-      const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-      const w = Math.floor(window.innerWidth * dpr);
-      const h = Math.floor(window.innerHeight * dpr);
-      if (w === st.w && h === st.h) return;
-
-      st.w = w; st.h = h;
-      st.canvas.width = w;
-      st.canvas.height = h;
-
-      safe(() => st.core.resize?.(w, h));
-    }
-
-    function renderFallback(frame) {
-      const ctx = st.ctx;
-      const c = st.canvas;
-      if (!ctx || !c) return;
-
-      ctx.clearRect(0, 0, c.width, c.height);
-      ctx.save();
-      ctx.globalAlpha = 0.9;
-
-      ctx.fillStyle = "rgba(0,0,0,0.35)";
-      ctx.fillRect(18, 18, 440, 160);
-
-      ctx.fillStyle = "rgba(255,255,255,0.92)";
-      ctx.font = "24px system-ui,-apple-system,Inter,Arial";
-      ctx.fillText("ZOMBIES (renderer missing)", 28, 52);
-
-      if (frame && frame.hud) {
-        ctx.font = "18px system-ui,-apple-system,Inter,Arial";
-        ctx.fillText(`wave ${frame.hud.wave} kills ${frame.hud.kills}`, 28, 82);
-        ctx.fillText(`coins ${frame.hud.coins} lvl ${frame.hud.level}`, 28, 108);
-        ctx.fillText(`relics ${frame.hud.relics}/${frame.hud.relicNeed}`, 28, 134);
-        ctx.fillText(`zoom ${frame.camera?.zoom ?? "?"}`, 28, 160);
+    // input: single path for move/aim/firing
+    input(data = {}) {
+      const input = ensureInputBridge();
+      if (data.move) {
+        input.move.x = +data.move.x || 0;
+        input.move.y = +data.move.y || 0;
       }
-
-      ctx.restore();
-    }
-
-    function render(frame) {
-      const R = detectRenderer();
-      if (R && typeof R.renderFrame === "function") {
-        return safe(() => R.renderFrame(frame, st.ctx, st.canvas));
+      if (data.aim) {
+        input.aim.x = +data.aim.x || 0;
+        input.aim.y = +data.aim.y || 0;
       }
-      if (R && typeof R.render === "function") {
-        return safe(() => R.render(frame, st.ctx, st.canvas));
+      if (typeof data.firing === "boolean") input.firing = data.firing;
+      input.updatedAt = Date.now();
+
+      const e = pickEngine();
+      if (e) {
+        safe(() => e.setMove?.(input.move.x, input.move.y));
+        safe(() => e.setAim?.(input.aim.x, input.aim.y));
+        safe(() => e.setFire?.(!!input.firing));
+        safe(() => e.input?.(input));
       }
-      renderFallback(frame);
-      return null;
-    }
-
-    function loop(ts) {
-      if (!st.running) return;
-
-      resize();
-
-      const t = (typeof ts === "number") ? ts : ((performance && performance.now) ? performance.now() : Date.now());
-      st.lastTS = t;
-
-      safe(() => st.core.updateFrame?.(t));
-      const frame = safe(() => st.core.getFrameData?.()) || null;
-
-      render(frame);
-
-      st.raf = requestAnimationFrame(loop);
-    }
-
-    // Public: start({mode,map})
-    function start({ mode, map } = {}) {
-      if (!detectCore()) return false;
-      ensureCanvas();
-      resize();
-
-      const m = String(mode || "arcade").toLowerCase().includes("rogue") ? "roguelike" : "arcade";
-      const mp = (String(map || "Ashes") === "Astra") ? "Astra" : "Ashes";
-
-      const tms = (performance && performance.now) ? performance.now() : Date.now();
-
-      // IMPORTANT: core.start signature: start(mode, w, h, opts, tms)
-      safe(() => st.core.start(m, st.w, st.h, { map: mp }, tms));
-
-      // Contract: zoom bump +0.5 to CURRENT (not absolute)
-      if (typeof st.core.setZoomDelta === "function") {
-        safe(() => st.core.setZoomDelta(ZOOM_BUMP));
+      const core = W.BCO_ZOMBIES_CORE;
+      if (core) {
+        safe(() => core.setMove?.(input.move.x, input.move.y));
+        safe(() => core.setAim?.(input.aim.x, input.aim.y));
+        safe(() => core.setShooting?.(!!input.firing));
       }
-
-      st.canvas.style.display = "block";
-      st.running = true;
-
-      // stable resize hooks
-      window.addEventListener("resize", resize, { passive: true });
-      window.addEventListener("orientationchange", () => setTimeout(resize, 50), { passive: true });
-
-      st.raf = requestAnimationFrame(loop);
-
-      log("started", { mode: m, map: mp, zoomBump: ZOOM_BUMP });
       return true;
     }
+  };
 
-    function stop() {
-      st.running = false;
+  // Hook engine events if they exist
+  function hookEngineEvents() {
+    const e = pickEngine();
+    if (!e || e.__BCO_EVENTS_HOOKED__) return;
+    e.__BCO_EVENTS_HOOKED__ = true;
 
-      if (st.raf) cancelAnimationFrame(st.raf);
-      st.raf = 0;
+    // If engine has its own event emitter
+    safe(() => e.on?.("hud", (hud) => bus.emit("hud", hud)));
+    safe(() => e.on?.("result", (res) => bus.emit("result", res)));
 
-      safe(() => st.core?.stop?.());
+    // If engine updates via callbacks
+    if (typeof e.setOnHud === "function") safe(() => e.setOnHud((hud) => bus.emit("hud", hud)));
+    if (typeof e.setOnResult === "function") safe(() => e.setOnResult((r) => bus.emit("result", r)));
+  }
 
-      if (st.canvas) st.canvas.style.display = "none";
-
-      window.removeEventListener("resize", resize);
-
-      log("stopped");
-      return true;
-    }
-
-    function getFrame() {
-      return safe(() => st.core?.getFrameData?.()) || null;
-    }
-
-    function getZoom() {
-      if (!st.core) st.core = window.BCO_ZOMBIES_CORE || null;
-      if (!st.core) return null;
-      if (typeof st.core.getZoom === "function") return safe(() => st.core.getZoom());
-      return st.core.state?.zoom ?? null;
-    }
-
-    function setZoomDelta(d) {
-      if (!st.core) st.core = window.BCO_ZOMBIES_CORE || null;
-      if (!st.core) return null;
-      if (typeof st.core.setZoomDelta === "function") return safe(() => st.core.setZoomDelta(d));
-      // fallback
-      const cur = Number(st.core.state?.zoom || 1.0);
-      st.core.state.zoom = cur + Number(d || 0);
-      return st.core.state.zoom;
-    }
-
-    // Optional input bridge (if your input layer uses it later)
-    function setInput({ moveX, moveY, aimX, aimY, shooting } = {}) {
-      if (!st.core) st.core = window.BCO_ZOMBIES_CORE || null;
-      if (!st.core) return false;
-
-      if (moveX != null || moveY != null) safe(() => st.core.setMove?.(moveX || 0, moveY || 0));
-      if (aimX != null || aimY != null) safe(() => st.core.setAim?.(aimX || 0, aimY || 0));
-      if (shooting != null) safe(() => st.core.setShooting?.(!!shooting));
-      return true;
-    }
-
-    return { start, stop, getFrame, getZoom, setZoomDelta, setInput };
+  // watch for engine appearing later (script load order)
+  let tries = 0;
+  (function waitEngine() {
+    hookEngineEvents();
+    tries++;
+    if (pickEngine() || tries > 80) return; // ~4-5 sec
+    setTimeout(waitEngine, 60);
   })();
 
-  // Single source of truth:
-  window.BCO.engine = Engine;
-  // Compatibility alias:
-  window.BCO_ENGINE = Engine;
+  W.BCO_GAME = BCO_GAME;
 })();
