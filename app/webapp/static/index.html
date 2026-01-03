@@ -511,6 +511,7 @@
 
   <!-- BOOT LOADER (LEGACY zombies.* ONLY) -->
   <!-- ВАЖНО: мы отключаем NEW stack (bco.*), потому что он ломает клики/обвязку Mini App -->
+  <!-- ДОБАВЛЕНО: bco.bridge.js (легкий, без UI, только мост/формат sendData) -->
   <script>
     (function () {
       var build = window.__BCO_BUILD__ || String(Date.now());
@@ -557,14 +558,19 @@
 
       setHealth("js: boot (LEGACY zombies.*)…");
 
-      chainOptional([
-        "/webapp/zombies.assets.js",
-        "/webapp/zombies.perks.js",
-        "/webapp/zombies.maps.js",
-        "/webapp/zombies.collisions.js",
-        "/webapp/zombies.bosses.js",
-        "/webapp/zombies.world.js"
-      ])
+      // 0) Мост MiniApp<->Bot/Server (не обязателен, но чинит формат payload)
+      loadOptional("/webapp/bco.bridge.js")
+        .then(function (ok) {
+          if (!ok) console.warn("[BOOT] optional not loaded: /webapp/bco.bridge.js");
+          return chainOptional([
+            "/webapp/zombies.assets.js",
+            "/webapp/zombies.perks.js",
+            "/webapp/zombies.maps.js",
+            "/webapp/zombies.collisions.js",
+            "/webapp/zombies.bosses.js",
+            "/webapp/zombies.world.js"
+          ]);
+        })
         .then(function () { return load("/webapp/zombies.core.js"); })
         .then(function () { return load("/webapp/zombies.render.js"); })
         .then(function () { return load("/webapp/zombies.game.js"); })
