@@ -13,6 +13,7 @@
 // - Fixed-timestep simulation + stable snapshot API for 3D renderer
 // v1.4 FIX: economy always progresses (direct coins on kill + pickups), safer boss death path, stronger pickup magnet,
 //          safer mode detect, explicit install API for optional modules, snapshot has all HUD fields always.
+// v1.4.1 ZOOM: state.zoom + setZoomDelta(+0.5 contract) + zoom in snapshot (camera.zoom)
 (() => {
   "use strict";
 
@@ -83,6 +84,14 @@
 
     // map edges if maps module provides w/h
     mapClampPadding: 80,
+
+    // ✅ ZOOM (renderer should apply camera.zoom)
+    zoom: {
+      min: 0.5,
+      max: 2.5,
+      step: 0.5,
+      default: 1.0
+    },
 
     player: {
       speed: 320,
@@ -273,6 +282,9 @@
       w: 0, h: 0,
       camX: 0, camY: 0,
 
+      // ✅ ZOOM (renderer uses camera.zoom; default 1.0)
+      zoom: CFG.zoom.default,
+
       timeMs: 0,
       wave: 1,
       kills: 0,
@@ -336,6 +348,26 @@
       return true;
     },
 
+    // ✅ ZOOM API (contract: delta +0.5 to current)
+    getZoom() {
+      return Number(this.state.zoom) || CFG.zoom.default;
+    },
+
+    setZoomLevel(level) {
+      const z = Number(level);
+      if (!Number.isFinite(z)) return this.getZoom();
+      this.state.zoom = clamp(z, CFG.zoom.min, CFG.zoom.max);
+      return this.getZoom();
+    },
+
+    setZoomDelta(delta) {
+      const d = Number(delta);
+      if (!Number.isFinite(d) || !d) return this.getZoom();
+      const next = (Number(this.state.zoom) || CFG.zoom.default) + d;
+      this.state.zoom = clamp(next, CFG.zoom.min, CFG.zoom.max);
+      return this.getZoom();
+    },
+
     start(mode, w, h, opts = {}, tms = _now()) {
       const m = String(mode || "").toLowerCase();
       this.meta.mode = (m.includes("rogue")) ? "roguelike" : "arcade";
@@ -346,6 +378,9 @@
       if (opts.character) this.meta.character = String(opts.character);
       if (opts.skin) this.meta.skin = String(opts.skin);
       if (opts.weaponKey && CFG.weapons[opts.weaponKey]) this.meta.weaponKey = opts.weaponKey;
+
+      // ✅ allow passing zoom on start (optional)
+      if (opts.zoom != null) this.setZoomLevel(opts.zoom);
 
       this._resetRun();
 
@@ -680,7 +715,8 @@
           perks: { ...S.perks },
           weapon
         },
-        camera: { x: S.camX, y: S.camY },
+        // ✅ camera.zoom included (renderer should apply)
+        camera: { x: S.camX, y: S.camY, zoom: Number(S.zoom) || CFG.zoom.default },
         player,
         bullets,
         zombies,
@@ -1507,5 +1543,5 @@
   };
 
   window.BCO_ZOMBIES_CORE = CORE;
-  console.log("[Z_CORE] loaded (ULTRA LUX COD-ZOMBIES-2D v1.4 | 3D-READY CORE)");
+  console.log("[Z_CORE] loaded (ULTRA LUX COD-ZOMBIES-2D v1.4.1 | 3D-READY CORE + ZOOM)");
 })();
