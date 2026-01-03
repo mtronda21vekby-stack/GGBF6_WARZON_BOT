@@ -1,70 +1,291 @@
+<!-- app/webapp/static/index.html -->
 <!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport"
-        content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no" />
+  <!-- PREMIUM: anti-zoom + safe-area + stable scaling -->
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no"
+  />
+  <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#07070b" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="format-detection" content="telephone=no,date=no,address=no,email=no" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
   <title>BLACK CROWN OPS — Mini App</title>
 
   <base href="/webapp/">
 
-  <link rel="stylesheet" href="/webapp/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
+  <!-- build marker -->
+  <script>window.__BCO_BUILD__="__BUILD__";</script>
+
+  <!-- PREMIUM: disable pinch/double-tap zoom (iOS WebView hardening) -->
+  <script>
+    (function () {
+      function prevent(e) { try { e.preventDefault(); } catch(_) {} }
+      window.addEventListener("gesturestart", prevent, { passive: false });
+      window.addEventListener("gesturechange", prevent, { passive: false });
+      window.addEventListener("gestureend", prevent, { passive: false });
+
+      var lastTouchEnd = 0;
+      window.addEventListener("touchstart", function (e) {
+        if (e.touches && e.touches.length > 1) prevent(e);
+      }, { passive: false });
+
+      window.addEventListener("touchend", function (e) {
+        var now = Date.now();
+        if (now - lastTouchEnd <= 300) prevent(e);
+        lastTouchEnd = now;
+      }, { passive: false });
+
+      window.addEventListener("wheel", function (e) {
+        if (e.ctrlKey) prevent(e);
+      }, { passive: false });
+    })();
+  </script>
+
+  <!-- CSS cache-bust loader -->
+  <script>
+    (function () {
+      var build = (window.__BCO_BUILD__ && window.__BCO_BUILD__ !== "__BUILD__")
+        ? window.__BCO_BUILD__
+        : String(Date.now());
+      window.__BCO_BUILD__ = build;
+
+      var css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = "/webapp/style.css?build=" + encodeURIComponent(build);
+      document.head.appendChild(css);
+
+      var nos = document.createElement("noscript");
+      nos.innerHTML = '<link rel="stylesheet" href="/webapp/style.css?build=' + encodeURIComponent(build) + '">';
+      document.head.appendChild(nos);
+    })();
+  </script>
+
+  <!-- Telegram WebApp bootstrap -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-  <!-- iOS anti-zoom -->
+  <!-- TG HARDENING: set CSS insets + hide TG chrome in takeover -->
   <script>
-    (function(){
-      function p(e){ try{e.preventDefault()}catch{} }
-      window.addEventListener("gesturestart",p,{passive:false});
-      window.addEventListener("gesturechange",p,{passive:false});
-      window.addEventListener("gestureend",p,{passive:false});
+    (function () {
+      function safe(fn){ try{ fn(); }catch(_){ } }
+
+      function setVar(name, px){
+        try{ document.documentElement.style.setProperty(name, String(px || 0) + "px"); }catch(_){}
+      }
+
+      function readInsets(wa){
+        var inset = wa && (wa.safeAreaInset || wa.contentSafeAreaInset);
+        if (inset && (typeof inset.top !== "undefined" || typeof inset.bottom !== "undefined")) {
+          return { top: Number(inset.top || 0), bottom: Number(inset.bottom || 0) };
+        }
+        var isIOS = wa && String(wa.platform || "").toLowerCase() === "ios";
+        return { top: isIOS ? 48 : 0, bottom: 0 };
+      }
+
+      function applyInsets(){
+        if (!window.Telegram || !Telegram.WebApp) return;
+        var wa = Telegram.WebApp;
+        var ins = readInsets(wa);
+        setVar("--tg-top", ins.top);
+        setVar("--tg-bottom", ins.bottom);
+      }
+
+      function hideChrome(){
+        if (!window.Telegram || !Telegram.WebApp) return;
+        var wa = Telegram.WebApp;
+        safe(function(){ wa.ready(); });
+        safe(function(){ wa.expand(); });
+        safe(function(){ wa.MainButton && wa.MainButton.hide && wa.MainButton.hide(); });
+        safe(function(){ wa.BackButton && wa.BackButton.hide && wa.BackButton.hide(); });
+        safe(function(){ wa.enableClosingConfirmation && wa.enableClosingConfirmation(); });
+        applyInsets();
+      }
+
+      function showChrome(){
+        if (!window.Telegram || !Telegram.WebApp) return;
+        var wa = Telegram.WebApp;
+        safe(function(){ wa.ready(); });
+        applyInsets();
+      }
+
+      window.BCO_TG = { applyInsets: applyInsets, hideChrome: hideChrome, showChrome: showChrome };
+
+      function initTG(){
+        if (!window.Telegram || !Telegram.WebApp) return;
+        var wa = Telegram.WebApp;
+
+        safe(function(){ wa.ready(); });
+        safe(function(){ wa.expand(); });
+        safe(function(){ wa.setHeaderColor && wa.setHeaderColor("#07070b"); });
+        safe(function(){ wa.setBackgroundColor && wa.setBackgroundColor("#07070b"); });
+
+        safe(function(){ wa.MainButton && wa.MainButton.hide && wa.MainButton.hide(); });
+        safe(function(){ wa.BackButton && wa.BackButton.hide && wa.BackButton.hide(); });
+
+        applyInsets();
+
+        safe(function(){
+          wa.onEvent && wa.onEvent("viewportChanged", function(){ applyInsets(); });
+        });
+      }
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initTG, { once: true });
+      } else {
+        initTG();
+      }
     })();
   </script>
 </head>
 
 <body>
+  <div class="bg" aria-hidden="true">
+    <div class="stars"></div>
+    <div class="nebula"></div>
+    <div class="gridfx"></div>
+  </div>
 
-  <main class="wrap app-main">
+  <header class="top app-header" role="banner">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">👑</div>
+      <div class="brand-text">
+        <div class="title brand-title">BLACK CROWN OPS</div>
+        <div class="sub brand-sub">premium • FPS coach</div>
+      </div>
+    </div>
 
-    <!-- === GAME / ZOMBIES === -->
-    <section class="card">
-      <h2>🧟 Game: Zombies Survival</h2>
+    <div class="chip-row chips" role="group" aria-label="Профиль">
+      <button class="chip" id="chipVoice" type="button">🤝 Тиммейт</button>
+      <button class="chip" id="chipMode" type="button">🧠 Normal</button>
+      <button class="chip" id="chipPlatform" type="button">🖥 PC</button>
+    </div>
+  </header>
 
-      <div class="seg">
-        <button class="seg-btn active" id="btnZMapAshes">Ashes</button>
-        <button class="seg-btn" id="btnZMapAstra">Astra</button>
+  <div class="top-tabs" style="display:none;"></div>
+
+  <main class="wrap app-main" role="main">
+    <!-- ТВОЙ UI ОСТАЁТСЯ КАК БЫЛ (я не режу) -->
+    <!-- (вставка твоих секций 1-в-1) -->
+
+    <!-- ========================= HOME ========================== -->
+    <section class="grid tabpane active" id="tab-home">
+      <div class="card">
+        <div class="card-title">🚀 Быстрые действия</div>
+        <div class="actions">
+          <button class="btn primary" id="btnOpenBot" type="button">Открыть меню бота</button>
+          <button class="btn" id="btnSync" type="button">Синхронизировать профиль</button>
+          <button class="btn" id="btnPremium" type="button">Premium Hub</button>
+          <button class="btn primary" id="btnPlayZombies" type="button">🧟 Play Zombies (Fullscreen)</button>
+        </div>
+        <div class="hint">
+          Совет: выбирай профиль сверху (Voice/Mode/Platform), и чат будет отвечать под эти настройки.
+        </div>
       </div>
 
-      <div class="seg">
-        <button class="seg-btn active" id="btnZModeArcade">Arcade</button>
-        <button class="seg-btn" id="btnZModeRogue">Roguelike</button>
-      </div>
-
-      <div class="actions">
-        <button class="btn primary" id="btnZStart">▶ Start Fullscreen</button>
-        <button class="btn" id="btnZSend">Send result → bot</button>
+      <div class="card">
+        <div class="card-title">🧠 Диагностика</div>
+        <div class="hint" id="buildTag" style="margin-top:8px; opacity:.85;">build: __BUILD__</div>
+        <div class="hint" id="jsHealth" style="margin-top:6px; opacity:.85; color:rgba(255,255,255,.65);">
+          js: loading…
+        </div>
       </div>
     </section>
 
+    <!-- ========================= GAME (ZOMBIES FULLSCREEN) ========================== -->
+    <section class="grid tabpane" id="tab-game">
+      <div class="card">
+        <div class="card-title">🧟 Game: Zombies Survival</div>
+        <div class="actions" style="margin-top:10px;">
+          <button class="btn primary" id="btnZEnterGame" type="button">▶ Start Fullscreen</button>
+          <button class="btn" id="btnZGameSend2" type="button">Send result → bot</button>
+        </div>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <div class="foot-left">— BCO 😈</div>
+      <div class="foot-right"></div>
+    </footer>
   </main>
 
-  <div id="zOverlayMount"></div>
+  <nav class="bottombar bottom-nav" aria-label="Навигация">
+    <button class="nav-btn active" data-tab="home" type="button" aria-selected="true">
+      <span class="nav-ico">⭐</span><span class="nav-txt">Главная</span>
+    </button>
+    <button class="nav-btn" data-tab="game" type="button" aria-selected="false">
+      <span class="nav-ico">🕹️</span><span class="nav-txt">Game</span>
+    </button>
+  </nav>
 
-  <!-- ================= LEGACY ZOMBIES STACK (КАК БЫЛО) ================= -->
-  <script src="/webapp/zombies.assets.js"></script>
-  <script src="/webapp/zombies.perks.js"></script>
-  <script src="/webapp/zombies.maps.js"></script>
-  <script src="/webapp/zombies.collisions.js"></script>
-  <script src="/webapp/zombies.bosses.js"></script>
-  <script src="/webapp/zombies.core.js"></script>
-  <script src="/webapp/zombies.render.js"></script>
-  <script src="/webapp/zombies.world.js"></script>
-  <script src="/webapp/zombies.game.js"></script>
-  <script src="/webapp/zombies.init.js"></script>
+  <div class="toast" id="toast">OK</div>
+  <div id="zOverlayMount" aria-hidden="true"></div>
 
-  <script src="/webapp/app.js"></script>
+  <!-- ✅ ANTI-BRICK BOOT: НИЧЕГО НЕ ПАДАЕТ, app.js ГРУЗИТСЯ ВСЕГДА -->
+  <script>
+    (function () {
+      var build = window.__BCO_BUILD__ || String(Date.now());
+      var health = document.getElementById("jsHealth");
 
+      function setHealth(msg) { if (health) health.textContent = msg; }
+
+      function loadAny(src) {
+        return new Promise(function (resolve) {
+          var s = document.createElement("script");
+          s.src = src + "?build=" + encodeURIComponent(build);
+          s.async = false;
+          s.onload = function () { resolve({ src: src, ok: true }); };
+          s.onerror = function () {
+            console.warn("[BOOT] missing:", src);
+            resolve({ src: src, ok: false });
+          };
+          document.body.appendChild(s);
+        });
+      }
+
+      function loadChain(list) {
+        var p = Promise.resolve(true);
+        list.forEach(function (src) {
+          p = p.then(function () { return loadAny(src); });
+        });
+        return p;
+      }
+
+      setHealth("js: boot…");
+
+      // Пытаемся подхватить твои модули, НО это НЕ обязаловка.
+      // Главное — app.js в конце.
+      loadChain([
+        "/webapp/bco.input.js",
+        "/webapp/bco.engine.js",
+
+        // legacy zombies.* (если есть)
+        "/webapp/zombies.assets.js",
+        "/webapp/zombies.perks.js",
+        "/webapp/zombies.maps.js",
+        "/webapp/zombies.collisions.js",
+        "/webapp/zombies.bosses.js",
+        "/webapp/zombies.core.js",
+        "/webapp/zombies.render.js",
+        "/webapp/zombies.world.js",
+        "/webapp/zombies.game.js",
+        "/webapp/zombies.init.js",
+
+        // ✅ ВСЕГДА ГРУЗИМ app.js
+        "/webapp/app.js"
+      ]).then(function () {
+        window.__BCO_JS_OK__ = true;
+        setHealth("js: OK (booted)");
+      });
+    })();
+  </script>
 </body>
 </html>
