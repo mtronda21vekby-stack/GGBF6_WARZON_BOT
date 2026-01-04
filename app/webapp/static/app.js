@@ -6,19 +6,13 @@
   // CONFIG
   // =========================
   const CONFIG = {
-    VERSION: "mini-bridge-2.0.2", // ✅ bump
+    VERSION: "mini-bridge-2.0.3",
     STORAGE_KEY: "bco_state_v1",
     CHAT_KEY: "bco_chat_v1",
     CHAT_LIMIT: 80,
     AIM_DURATION_MS: 20000,
     MAX_PAYLOAD: 15000,
-    TAP_THROTTLE_MS: 80,
-
-    // ✅ Mini App chat -> server (webapp/api/ask)
-    ASK_ENDPOINT: "/webapp/api/ask",
-    ASK_TIMEOUT_MS: 12000,
-    ASK_FALLBACK_TO_BOT: true,      // если API упал — отправим в бота, но не ломаем UX
-    ASK_SEND_COPY_TO_BOT: false     // если хочешь “дублировать” в бота даже при успешном ask — включи true
+    TAP_THROTTLE_MS: 80
   };
 
   const $ = (q) => document.querySelector(q);
@@ -53,8 +47,7 @@
 
     chat: {
       history: [],
-      lastSendAt: 0,
-      typingId: 0
+      lastSendAt: 0
     },
 
     aim: {
@@ -229,15 +222,32 @@
   }
 
   // =========================
-  // TABS
+  // TABS (SYNC)
   // =========================
+  function setActiveTabs(tab) {
+    // panes
+    $$(".tabpane").forEach((pane) => pane.classList.toggle("active", pane.id === `tab-${tab}`));
+
+    // bottom nav
+    $$(".nav-btn").forEach((btn) => {
+      const on = btn.dataset.tab === tab;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+
+    // top tabs (if ever used)
+    $$(".tab").forEach((btn) => {
+      const on = btn.dataset.tab === tab;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+  }
+
   function selectTab(tab) {
     if (!tab) tab = "home";
     State.currentTab = tab;
 
-    $$(".tabpane").forEach((pane) => pane.classList.toggle("active", pane.id === `tab-${tab}`));
-    $$(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
-
+    setActiveTabs(tab);
     safe(() => window.scrollTo({ top: 0, behavior: "smooth" }));
     updateTGButtons();
   }
@@ -336,22 +346,6 @@
       const isBot = m.role === "assistant";
       const cls = isBot ? "bot" : "me";
       const who = isBot ? "BCO" : "Ты";
-
-      if (m.typing) {
-        return `
-          <div class="chat-row bot">
-            <div>
-              <div class="bubble">
-                <span class="typing">
-                  <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-                </span>
-              </div>
-              <div class="chat-meta">BCO • ${fmtTime(m.ts || now())}</div>
-            </div>
-          </div>
-        `;
-      }
-
       return `
         <div class="chat-row ${cls}">
           <div>
@@ -373,87 +367,6 @@
     chatRender();
   }
 
-  function chatTypingStart() {
-    const id = ++State.chat.typingId;
-    State.chat.history.push({ role: "assistant", text: "", ts: now(), typing: true, id });
-    if (State.chat.history.length > 180) State.chat.history = State.chat.history.slice(-180);
-    chatRender();
-    return id;
-  }
-
-  function chatTypingStop(id, finalText) {
-    const t = String(finalText || "").trim();
-    // replace typing bubble
-    for (let i = State.chat.history.length - 1; i >= 0; i--) {
-      const m = State.chat.history[i];
-      if (m && m.typing && m.id === id) {
-        State.chat.history[i] = { role: "assistant", text: t || "…", ts: now() };
-        break;
-      }
-    }
-    chatRender();
-  }
-
-  function chatHistoryForAsk() {
-    // server router expects list[dict]; will accept any dict, but best is role/content
-    const h = State.chat.history
-      .filter((m) => m && !m.typing)
-      .slice(-30)
-      .map((m) => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: String(m.text || "")
-      }));
-    return h;
-  }
-
-  async function fetchWithTimeout(url, opts, timeoutMs) {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), Math.max(1000, timeoutMs || 12000));
-    try {
-      const res = await fetch(url, Object.assign({}, opts || {}, { signal: ctl.signal }));
-      return res;
-    } finally {
-      clearTimeout(t);
-    }
-  }
-
-  async function webappAsk(text) {
-    const initData = (safe(() => tg?.initData) || "").trim();
-    const profile = buildProfilePayload();
-    const history = chatHistoryForAsk();
-
-    const body = {
-      initData,
-      text: String(text || ""),
-      profile,
-      history
-    };
-
-    const headers = {
-      "Content-Type": "application/json",
-      "X-BCO-Version": CONFIG.VERSION
-    };
-    if (initData) headers["X-Telegram-Init-Data"] = initData;
-
-    const res = await fetchWithTimeout(CONFIG.ASK_ENDPOINT, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body)
-    }, CONFIG.ASK_TIMEOUT_MS);
-
-    if (!res.ok) {
-      const txt = await safe(async () => await res.text());
-      throw new Error(`ask_http_${res.status}: ${String(txt || "").slice(0, 120)}`);
-    }
-
-    const data = await res.json();
-    if (!data || !data.ok) {
-      throw new Error(`ask_bad_response: ${safe(() => data?.error) || "unknown"}`);
-    }
-
-    return String(data.reply || "").trim();
-  }
-
   async function chatSend() {
     const input = $("#chatInput");
     const text = (input?.value || "").trim();
@@ -467,35 +380,9 @@
     if (input) input.value = "";
     await Storage.saveChat();
 
-    // ✅ Prefer Mini App sync via /webapp/api/ask
-    const typingId = chatTypingStart();
+    sendToBot({ type: "chat", text, profile: true });
+    chatAdd("assistant", "✅ Отправил в бота. Ответ придёт в Telegram-чате (как раньше).");
     await Storage.saveChat();
-
-    try {
-      const reply = await webappAsk(text);
-      chatTypingStop(typingId, reply || "…");
-      await Storage.saveChat();
-
-      // optional copy to bot
-      if (CONFIG.ASK_SEND_COPY_TO_BOT) {
-        sendToBot({ type: "chat", text, profile: true, via: "webapp" });
-      }
-      return;
-    } catch (e) {
-      // remove typing bubble -> replace with error info (but still keep UX)
-      const msg = (e && e.message) ? e.message : String(e || "ask_error");
-      chatTypingStop(typingId, `⚠️ Mini App ask error: ${msg}`);
-      await Storage.saveChat();
-
-      if (CONFIG.ASK_FALLBACK_TO_BOT) {
-        // fallback old behavior
-        const ok = sendToBot({ type: "chat", text, profile: true, via: "fallback" });
-        if (ok) {
-          chatAdd("assistant", "✅ Фоллбек: отправил в бота. Если Mini App-ответы нужны — это должно идти через /webapp/api/ask (мы уже сделали), но сервер/деплой мог лагнуть.");
-          await Storage.saveChat();
-        }
-      }
-    }
   }
 
   async function chatClear() {
@@ -506,10 +393,7 @@
   }
 
   async function chatExportCopy() {
-    const txt = State.chat.history
-      .filter((m) => m && !m.typing)
-      .map((m) => `${m.role === "assistant" ? "BCO" : "YOU"}: ${m.text}`)
-      .join("\n");
+    const txt = State.chat.history.map((m) => `${m.role === "assistant" ? "BCO" : "YOU"}: ${m.text}`).join("\n");
     const out = txt || "—";
     const ok = await safe(() => navigator.clipboard?.writeText(out));
     toast(ok ? "Скопировано 📋" : "Не удалось (iOS ограничение)");
@@ -665,7 +549,6 @@
     const mode = State.profile.zombies_mode || "arcade";
 
     if (!engine?.zombies?.enter) {
-      // fallback на старые глобалы если вдруг фасад не загрузился
       const z = window.BCO_ZOMBIES || window.BCO_ZOMBIES_CORE || null;
       if (!z) {
         toast("Zombies engine не найден (zombies.* не загрузились)");
@@ -683,11 +566,7 @@
 
     enterGameTakeover();
     safe(() => engine.zombies.setMode?.(mode));
-    safe(() => engine.zombies.enter?.({
-      map,
-      mode,
-      onExit: exitGameTakeover
-    }));
+    safe(() => engine.zombies.enter?.({ map, mode, onExit: exitGameTakeover }));
     toast("Zombies: старт");
     return true;
   }
@@ -702,14 +581,12 @@
     safe(() => tg.expand());
     safe(() => window.BCO_TG?.applyInsets?.());
 
-    // Back button: только вне home и вне игры
     safe(() => {
       if (State.inGame) return tg.BackButton.hide();
       if (State.currentTab !== "home") tg.BackButton.show();
       else tg.BackButton.hide();
     });
 
-    // Main button: в игре скрываем
     safe(() => {
       if (State.inGame) return tg.MainButton.hide();
       let text = "💎 Premium";
@@ -754,12 +631,7 @@
   }
 
   // =========================
-  // HARD ROUTER (FIXES “BUTTONS DEAD” on iOS WebView)
-  // - single delegated handler
-  // - captures pointerdown early
-  // - ignores inputs/textarea selections
-  // ✅ IMPORTANT: do NOT preventDefault on pointerdown globally,
-  //              иначе скролл может "умирать" если свайп начался на кнопке.
+  // HARD ROUTER (iOS “dead taps” killer)
   // =========================
   function isInteractiveText(el) {
     if (!el) return false;
@@ -768,10 +640,9 @@
   }
 
   function hardRouteClick(target) {
-    const el = target?.closest?.("button, .nav-btn, .seg-btn, .chip, .chat-send, .aim-target");
+    const el = target?.closest?.("button, .nav-btn, .tab, .seg-btn, .chip, .chat-send, .aim-target");
     if (!el) return false;
 
-    // throttle to avoid double-fire on iOS
     const t = now();
     if (t - State.lastTapAt < CONFIG.TAP_THROTTLE_MS) return true;
     State.lastTapAt = t;
@@ -780,8 +651,8 @@
     const tab = el.dataset?.tab || "";
     const segVal = el.dataset?.value || "";
 
-    // Bottom nav
-    if (el.classList.contains("nav-btn") && tab) {
+    // bottom nav / optional top tabs
+    if ((el.classList.contains("nav-btn") || el.classList.contains("tab")) && tab) {
       selectTab(tab);
       return true;
     }
@@ -812,9 +683,8 @@
       return true;
     }
 
-    // Segments (generic)
+    // Segments
     if (el.classList.contains("seg-btn") && segVal) {
-      // find which segment root
       const root = el.closest(".seg");
       const rootId = root?.id || "";
 
@@ -832,18 +702,16 @@
       return true;
     }
 
-    // Aim clicks
-    if (id === "aimTarget") {
-      aimHit();
-      return true;
-    }
+    // Aim
+    if (id === "aimTarget") { aimHit(); return true; }
 
-    // Buttons by id
+    // Buttons
     switch (id) {
       // Header actions
       case "btnShare":
         sendToBot({ type: "nav", target: "share", profile: true });
         return true;
+
       case "btnClose":
         safe(() => tg?.close?.());
         toast("Закрываю…");
@@ -853,16 +721,20 @@
       case "btnOpenBot":
         sendToBot({ type: "nav", target: "menu", profile: true });
         return true;
+
       case "btnSync":
         Storage.save();
         sendToBot({ type: "set_profile", profile: true });
         return true;
+
       case "btnPremium":
         sendToBot({ type: "nav", target: "premium", profile: true });
         return true;
+
       case "btnPlayZombies":
       case "btnZQuickPlay":
       case "btnZEnterGame":
+        // ВАЖНО: если жмёшь “Play/Start” — это уже запуск.
         zombiesEnter();
         return true;
 
@@ -870,6 +742,7 @@
       case "btnBuyMonth":
         sendToBot({ type: "nav", target: "premium_month", profile: true });
         return true;
+
       case "btnBuyLife":
         sendToBot({ type: "nav", target: "premium_lifetime", profile: true });
         return true;
@@ -878,9 +751,11 @@
       case "btnChatSend":
         chatSend();
         return true;
+
       case "btnChatClear":
         chatClear();
         return true;
+
       case "btnChatExport":
         chatExportCopy();
         return true;
@@ -889,8 +764,11 @@
       case "btnSendPlan":
         sendToBot({ type: "training_plan", focus: State.profile.focus, profile: true });
         return true;
+
       case "btnOpenTraining":
-        sendToBot({ type: "nav", target: "training", profile: true });
+        // РАНЬШЕ: отправляло в бота. ТЕПЕРЬ: открывает вкладку.
+        selectTab("coach");
+        toast("Открыл вкладку: Тренировка 🎯");
         return true;
 
       // VOD
@@ -902,8 +780,11 @@
         sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
         return true;
       }
+
       case "btnOpenVod":
-        sendToBot({ type: "nav", target: "vod", profile: true });
+        // РАНЬШЕ: отправляло в бота. ТЕПЕРЬ: открывает вкладку.
+        selectTab("vod");
+        toast("Открыл вкладку: VOD 🎬");
         return true;
 
       // Settings
@@ -912,17 +793,22 @@
         sendToBot({ type: "set_profile", profile: true });
         toast("Профиль сохранён ✅");
         return true;
+
       case "btnOpenSettings":
-        sendToBot({ type: "nav", target: "settings", profile: true });
+        // РАНЬШЕ: отправляло в бота. ТЕПЕРЬ: открывает вкладку.
+        selectTab("settings");
+        toast("Открыл вкладку: Настройки ⚙️");
         return true;
 
       // Aim
       case "btnAimStart":
         aimStart();
         return true;
+
       case "btnAimStop":
         aimStop(false);
         return true;
+
       case "btnAimSend":
         aimSendResult();
         return true;
@@ -932,18 +818,21 @@
       case "btnZModeArcade2":
         zombiesSetMode("arcade");
         return true;
+
       case "btnZModeRogue":
       case "btnZModeRogue2":
         zombiesSetMode("roguelike");
         return true;
 
-      // Zombies quick “shop” hotkeys (they just command bot; real shop is in-game)
+      // Zombies quick “shop” hotkeys (bot)
       case "btnZBuyJug":
         sendToBot({ type: "zombies_hotkey", buy: "jug", profile: true });
         return true;
+
       case "btnZBuySpeed":
         sendToBot({ type: "zombies_hotkey", buy: "speed", profile: true });
         return true;
+
       case "btnZBuyAmmo":
         sendToBot({ type: "zombies_hotkey", buy: "ammo", profile: true });
         return true;
@@ -953,23 +842,28 @@
       case "btnOpenZombies":
         sendToBot({ type: "nav", target: "zombies", profile: true });
         return true;
+
       case "btnZPerks":
         sendToBot({ type: "zombies", action: "perks", profile: true });
         return true;
+
       case "btnZLoadout":
         sendToBot({ type: "zombies", action: "loadout", profile: true });
         return true;
+
       case "btnZEggs":
         sendToBot({ type: "zombies", action: "easter_eggs", profile: true });
         return true;
+
       case "btnZRound":
         sendToBot({ type: "zombies", action: "round_strategy", profile: true });
         return true;
+
       case "btnZTips":
         sendToBot({ type: "zombies", action: "quick_tips", profile: true });
         return true;
 
-      // Send dummy game result from launcher (optional)
+      // Dummy result
       case "btnZGameSend":
       case "btnZGameSend2":
         sendToBot({
@@ -990,22 +884,20 @@
   }
 
   // =========================
-  // WIRE EVENTS (RELIABLE)
+  // WIRE EVENTS
   // =========================
   function wireHardRouter() {
-    // 1) pointerdown capture: iOS WebView “dead taps” killer
-    // ✅ fix: NO preventDefault here (keeps scrolling reliable even if swipe starts on a button)
     document.addEventListener("pointerdown", (e) => {
       const t = e.target;
       if (isInteractiveText(t)) return;
-
       if (hardRouteClick(t)) {
-        // do not block scroll; do not preventDefault here
-        // (click fallback will still prevent default if needed)
+        const inScrollable = !!t?.closest?.(".chat-log, .bco-z-card");
+        if (!inScrollable) {
+          try { e.preventDefault(); } catch (_) {}
+        }
       }
-    }, { capture: true, passive: true });
+    }, { capture: true, passive: false });
 
-    // 2) click fallback (desktop / non-pointer)
     document.addEventListener("click", (e) => {
       const t = e.target;
       if (isInteractiveText(t)) return;
@@ -1014,7 +906,6 @@
       }
     }, { capture: true });
 
-    // Aim miss: click arena but not target => miss
     const arena = $("#aimArena");
     if (arena) {
       arena.addEventListener("pointerdown", (e) => {
@@ -1058,44 +949,40 @@
   async function init() {
     setHealth("js: init…");
 
-    // Telegram base
     if (tg) {
       safe(() => tg.ready());
       safe(() => tg.expand());
       safe(() => window.BCO_TG?.applyInsets?.());
     }
 
-    // Load storage
     await Storage.load();
     await Storage.loadChat();
 
-    // Apply UI state
     syncSegmentsFromState();
     syncZModeButtons();
     updateChips();
     chatRender();
     aimUpdateUI();
 
-    // Wire events
+    setActiveTabs(State.currentTab);
+
     wireHardRouter();
     wireTGButtonsOnce();
     updateTGButtons();
     fillDebug();
 
-    // If external engine wants to notify exit
     safe(() => {
       window.BCO_APP = window.BCO_APP || {};
       window.BCO_APP.enterGameTakeover = enterGameTakeover;
       window.BCO_APP.exitGameTakeover = exitGameTakeover;
       window.BCO_APP.sendToBot = sendToBot;
       window.BCO_APP.getProfile = () => ({ ...State.profile });
-      window.BCO_APP.webappAsk = webappAsk; // ✅ expose for engine if needed
+      window.BCO_APP.selectTab = (t) => selectTab(String(t || "home"));
     });
 
     setHealth("js: OK (app) • build=" + State.buildId);
   }
 
-  // Start
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init, { once: true });
   } else {
