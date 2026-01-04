@@ -6,7 +6,7 @@
   // CONFIG
   // =========================
   const CONFIG = {
-    VERSION: "mini-bridge-2.0.3", // bump (safe)
+    VERSION: "mini-bridge-2.0.4", // bump
     STORAGE_KEY: "bco_state_v1",
     CHAT_KEY: "bco_chat_v1",
     CHAT_LIMIT: 80,
@@ -17,8 +17,12 @@
     // iOS anti-zoom hardening
     IOS_PREVENT_DOUBLE_TAP_ZOOM_MS: 360,
 
-    // UX: open Mini App straight to Game tab (NO auto-start)
-    DEFAULT_TAB: "game",
+    // Chat in Mini App (server API)
+    API_ASK_URL: "/webapp/api/ask",
+    API_TIMEOUT_MS: 14000,
+
+    // UX: open Mini App straight to Game tab? (set "home" if you want)
+    DEFAULT_TAB: "home",
 
     // When tapping “Play Zombies” on Home: jump to Game tab then start
     GAME_ENTER_DELAY_MS: 60
@@ -57,7 +61,8 @@
 
     chat: {
       history: [],
-      lastSendAt: 0
+      lastSendAt: 0,
+      inflight: false
     },
 
     aim: {
@@ -195,7 +200,7 @@
       platform: p.platform,
       input: p.input,
       difficulty: p.mode,
-      mode: p.mode,                 // совместимость: некоторые хендлеры ждут mode
+      mode: p.mode, // совместимость
       voice: p.voice,
       role: p.role,
       bf6_class: p.bf6_class,
@@ -231,6 +236,52 @@
     else toast("sendData недоступен (открой в Telegram)");
 
     return ok;
+  }
+
+  // =========================
+  // API: ask (Mini App chat)
+  // =========================
+  function fetchWithTimeout(url, opts, timeoutMs) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), Math.max(3000, timeoutMs || 12000));
+    const o = Object.assign({}, opts || {});
+    o.signal = controller.signal;
+    return fetch(url, o).finally(() => clearTimeout(t));
+  }
+
+  async function askMiniApp(text) {
+    const initData = (safe(() => tg?.initData) || "").trim();
+    const payload = {
+      type: "ask",
+      text: String(text || ""),
+      profile: buildProfilePayload(),
+      initData: initData || null,
+      build: State.buildId || null
+    };
+
+    const res = await fetchWithTimeout(CONFIG.API_ASK_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    }, CONFIG.API_TIMEOUT_MS);
+
+    if (!res.ok) {
+      const msg = `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+
+    let data = null;
+    try { data = await res.json(); } catch (_) {}
+
+    // Flexible response parsing
+    const reply =
+      (data && (data.reply || data.answer || data.text || data.message)) ||
+      (typeof data === "string" ? data : "");
+
+    if (!reply) throw new Error("empty_reply");
+    return String(reply);
   }
 
   // =========================
@@ -318,7 +369,7 @@
   }
 
   // =========================
-  // CHAT
+  // CHAT (IN MINI APP)
   // =========================
   function escapeHtml(s) {
     const div = document.createElement("div");
@@ -335,7 +386,7 @@
       box.innerHTML = `
         <div class="chat-row bot">
           <div>
-            <div class="bubble">🤝 Пиши сюда — это чат в Mini App. А если надо меню/команды — кнопки отправляют в бота.</div>
+            <div class="bubble">🤝 Пиши сюда — это чат внутри Mini App. Я отвечу прямо здесь. 😈</div>
             <div class="chat-meta">BCO • ${fmtTime(now())}</div>
           </div>
         </div>
@@ -362,9 +413,18 @@
 
   function chatAdd(role, text) {
     const t = String(text || "").trim();
-    if (!t) return;
+    if (!t) return -1;
     State.chat.history.push({ role, text: t, ts: now() });
     if (State.chat.history.length > 180) State.chat.history = State.chat.history.slice(-180);
+    chatRender();
+    return State.chat.history.length - 1;
+  }
+
+  function chatUpdateAt(index, text) {
+    const i = Number(index);
+    if (!Number.isFinite(i) || i < 0 || i >= State.chat.history.length) return;
+    State.chat.history[i].text = String(text || "").trim();
+    State.chat.history[i].ts = now();
     chatRender();
   }
 
@@ -375,15 +435,37 @@
 
     const ts = now();
     if (ts - State.chat.lastSendAt < 350) return toast("Чуть пауза…");
+    if (State.chat.inflight) return toast("Сек… отвечаю 😈");
     State.chat.lastSendAt = ts;
 
-    chatAdd("user", text);
     if (input) input.value = "";
+
+    chatAdd("user", text);
     await Storage.saveChat();
 
-    sendToBot({ type: "chat", text, profile: true });
-    chatAdd("assistant", "✅ Отправил в бота. Ответ придёт в Telegram-чате (как раньше).");
+    // typing bubble
+    State.chat.inflight = true;
+    const typingIdx = chatAdd("assistant", "…");
     await Storage.saveChat();
+
+    try {
+      // MAIN: reply inside Mini App
+      const reply = await askMiniApp(text);
+      chatUpdateAt(typingIdx, reply);
+      await Storage.saveChat();
+      toast("Ответил ✅");
+    } catch (e) {
+      // Fallback: keep system alive
+      const err = String(e && e.message ? e.message : e || "error");
+      chatUpdateAt(typingIdx, "⚠️ Не смог достучаться до Mini API. Отправляю вопрос в бота как fallback.");
+      await Storage.saveChat();
+
+      sendToBot({ type: "chat", text, profile: true });
+      chatAdd("assistant", `✅ Улетело в бота. (fallback) • ${clampStr(err, 40)}`);
+      await Storage.saveChat();
+    } finally {
+      State.chat.inflight = false;
+    }
   }
 
   async function chatClear() {
@@ -530,7 +612,6 @@
     document.documentElement.classList.add("bco-game");
     document.body.classList.add("bco-game");
 
-    // strongest TG chrome hide we have (doesn't break if missing)
     safe(() => window.BCO_TG?.hideChrome?.());
     safe(() => tg?.MainButton?.hide?.());
     safe(() => tg?.BackButton?.hide?.());
@@ -547,7 +628,6 @@
     updateTGButtons();
   }
 
-  // Jump to Game tab then enter fullscreen (link app -> game)
   function goToGameThenEnter() {
     if (State.inGame) return;
     selectTab("game");
@@ -561,7 +641,6 @@
     const mode = State.profile.zombies_mode || "arcade";
 
     if (!engine?.zombies?.enter) {
-      // fallback на старые глобалы если вдруг фасад не загрузился
       const z = window.BCO_ZOMBIES || window.BCO_ZOMBIES_CORE || null;
       if (!z) {
         toast("Zombies engine не найден (zombies.* не загрузились)");
@@ -598,14 +677,12 @@
     safe(() => tg.expand());
     safe(() => window.BCO_TG?.applyInsets?.());
 
-    // Back button: только вне home и вне игры
     safe(() => {
       if (State.inGame) return tg.BackButton.hide();
       if (State.currentTab !== "home") tg.BackButton.show();
       else tg.BackButton.hide();
     });
 
-    // Main button: в игре скрываем
     safe(() => {
       if (State.inGame) return tg.MainButton.hide();
       let text = "💎 Premium";
@@ -650,8 +727,8 @@
   }
 
   // =========================
-  // HARD ROUTER (FIXES “BUTTONS DEAD” on iOS WebView)
-  // + GAME ISOLATED: when inGame, app taps are ignored (except overlay mount)
+  // HARD ROUTER (iOS dead taps killer)
+  // + GAME ISOLATION (when inGame)
   // =========================
   function isInteractiveText(el) {
     if (!el) return false;
@@ -668,13 +745,13 @@
   }
 
   function hardRouteClick(target) {
+    // IMPORTANT: always climb to actual button
     const el = target?.closest?.("button, .nav-btn, .seg-btn, .chip, .chat-send, .aim-target");
     if (!el) return false;
 
-    // Game isolation: swallow app clicks while inGame (but allow overlay)
+    // Game isolation: swallow app taps while inGame (but allow overlay)
     if (State.inGame && !isInOverlay(target)) return true;
 
-    // throttle to avoid double-fire on iOS
     const t = now();
     if (t - State.lastTapAt < CONFIG.TAP_THROTTLE_MS) return true;
     State.lastTapAt = t;
@@ -715,7 +792,7 @@
       return true;
     }
 
-    // Segments (generic)
+    // Segments
     if (el.classList.contains("seg-btn") && segVal) {
       const root = el.closest(".seg");
       const rootId = root?.id || "";
@@ -734,13 +811,12 @@
       return true;
     }
 
-    // Aim clicks
+    // Aim target
     if (id === "aimTarget") {
       aimHit();
       return true;
     }
 
-    // Buttons by id
     switch (id) {
       // Header actions
       case "btnShare":
@@ -763,13 +839,11 @@
         sendToBot({ type: "nav", target: "premium", profile: true });
         return true;
 
-      // IMPORTANT: Home play buttons -> jump to Game tab then enter
+      // Play buttons
       case "btnPlayZombies":
       case "btnZQuickPlay":
         goToGameThenEnter();
         return true;
-
-      // Game launcher start
       case "btnZEnterGame":
         zombiesEnter();
         return true;
@@ -797,9 +871,8 @@
       case "btnSendPlan":
         sendToBot({ type: "training_plan", focus: State.profile.focus, profile: true });
         return true;
-
-      // LINK: open training inside app
       case "btnOpenTraining":
+        // IMPORTANT: this button should open tab inside app (not bot)
         selectTab("coach");
         toast("Тренировка открыта 🎯");
         return true;
@@ -813,8 +886,6 @@
         sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
         return true;
       }
-
-      // LINK: open VOD inside app
       case "btnOpenVod":
         selectTab("vod");
         toast("VOD открыт 🎬");
@@ -826,8 +897,6 @@
         sendToBot({ type: "set_profile", profile: true });
         toast("Профиль сохранён ✅");
         return true;
-
-      // LINK: open Settings inside app
       case "btnOpenSettings":
         selectTab("settings");
         toast("Настройки открыты ⚙️");
@@ -844,7 +913,7 @@
         aimSendResult();
         return true;
 
-      // Zombies mode buttons
+      // Zombies mode buttons (ids)
       case "btnZModeArcade":
       case "btnZModeArcade2":
         zombiesSetMode("arcade");
@@ -854,7 +923,7 @@
         zombiesSetMode("roguelike");
         return true;
 
-      // Zombies quick “shop” hotkeys (bot)
+      // Zombies “shop” hotkeys (bot)
       case "btnZBuyJug":
         sendToBot({ type: "zombies_hotkey", buy: "jug", profile: true });
         return true;
@@ -886,7 +955,6 @@
         sendToBot({ type: "zombies", action: "quick_tips", profile: true });
         return true;
 
-      // Send dummy game result from launcher (optional)
       case "btnZGameSend":
       case "btnZGameSend2":
         sendToBot({
@@ -907,7 +975,7 @@
   }
 
   // =========================
-  // iOS ANTI-ZOOM (game + overall)
+  // iOS ANTI-ZOOM
   // =========================
   function wireAntiZoomIOS() {
     document.addEventListener("gesturestart", (e) => {
@@ -933,15 +1001,14 @@
   }
 
   // =========================
-  // WIRE EVENTS (RELIABLE)
+  // WIRE EVENTS
   // =========================
   function wireHardRouter() {
-    // 1) pointerdown capture: iOS WebView “dead taps” killer
+    // pointerdown capture: iOS WebView “dead taps” killer
     document.addEventListener("pointerdown", (e) => {
       const t = e.target;
       if (isInteractiveText(t)) return;
       if (hardRouteClick(t)) {
-        // do not block scrolling on areas that should scroll:
         const inScrollable = !!t?.closest?.(".chat-log, .bco-z-card");
         if (!inScrollable) {
           try { e.preventDefault(); } catch (_) {}
@@ -949,11 +1016,22 @@
       }
     }, { capture: true, passive: false });
 
-    // 2) click fallback (desktop / non-pointer)
+    // click fallback
     document.addEventListener("click", (e) => {
       const t = e.target;
       if (isInteractiveText(t)) return;
       if (hardRouteClick(t)) {
+        try { e.preventDefault(); } catch (_) {}
+      }
+    }, { capture: true });
+
+    // enter/space accessibility (desktop)
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const a = document.activeElement;
+      if (!a) return;
+      if (a.tagName && String(a.tagName).toLowerCase() === "textarea") return;
+      if (hardRouteClick(a)) {
         try { e.preventDefault(); } catch (_) {}
       }
     }, { capture: true });
@@ -1002,35 +1080,29 @@
   async function init() {
     setHealth("js: init…");
 
-    // Telegram base
     if (tg) {
       safe(() => tg.ready());
       safe(() => tg.expand());
       safe(() => window.BCO_TG?.applyInsets?.());
     }
 
-    // Load storage
     await Storage.load();
     await Storage.loadChat();
 
-    // Apply UI state
     syncSegmentsFromState();
     syncZModeButtons();
     updateChips();
     chatRender();
     aimUpdateUI();
 
-    // Start straight on Game tab (NO auto-start)
     selectTab(CONFIG.DEFAULT_TAB);
 
-    // Wire events
     wireAntiZoomIOS();
     wireHardRouter();
     wireTGButtonsOnce();
     updateTGButtons();
     fillDebug();
 
-    // If external engine wants to notify exit
     safe(() => {
       window.BCO_APP = window.BCO_APP || {};
       window.BCO_APP.enterGameTakeover = enterGameTakeover;
@@ -1039,12 +1111,12 @@
       window.BCO_APP.getProfile = () => ({ ...State.profile });
       window.BCO_APP.goToGameThenEnter = goToGameThenEnter;
       window.BCO_APP.zombiesEnter = zombiesEnter;
+      window.BCO_APP.askMiniApp = askMiniApp;
     });
 
     setHealth("js: OK (app) • build=" + State.buildId);
   }
 
-  // Start
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init, { once: true });
   } else {
