@@ -6,13 +6,24 @@
   // CONFIG
   // =========================
   const CONFIG = {
-    VERSION: "mini-bridge-2.0.3",
+    VERSION: "mini-bridge-2.1.0",
     STORAGE_KEY: "bco_state_v1",
     CHAT_KEY: "bco_chat_v1",
+    UI_KEY: "bco_ui_v1",
+
     CHAT_LIMIT: 80,
     AIM_DURATION_MS: 20000,
     MAX_PAYLOAD: 15000,
-    TAP_THROTTLE_MS: 80
+    TAP_THROTTLE_MS: 80,
+
+    // iOS anti-zoom hardening
+    IOS_PREVENT_DOUBLE_TAP_ZOOM_MS: 360,
+
+    // UX: by default, on open we go to Game tab (your ask: "сразу к игре")
+    DEFAULT_TAB: "game",
+
+    // When user taps "Play Zombies" on Home, we first switch to Game tab, then enter fullscreen.
+    GAME_ENTER_DELAY_MS: 60
   };
 
   const $ = (q) => document.querySelector(q);
@@ -27,10 +38,11 @@
   // =========================
   const State = {
     tg,
-    currentTab: "home",
+    currentTab: CONFIG.DEFAULT_TAB,
     inGame: false,
     buildId: window.__BCO_BUILD__ || "dev",
     lastTapAt: 0,
+    lastTouchEndAt: 0,
 
     profile: {
       game: "Warzone",
@@ -110,6 +122,7 @@
       }
       return true;
     },
+
     defaults() {
       return {
         game: "Warzone",
@@ -151,6 +164,7 @@
       const validFocus = ["aim", "movement", "position"];
       if (!validFocus.includes(p.focus)) p.focus = "aim";
     },
+
     async load() {
       const raw = await this.get(CONFIG.STORAGE_KEY);
       let obj = null;
@@ -162,6 +176,7 @@
       this.sanitize();
       return await this.set(CONFIG.STORAGE_KEY, JSON.stringify(State.profile));
     },
+
     async loadChat() {
       const raw = await this.get(CONFIG.CHAT_KEY);
       let obj = null;
@@ -172,6 +187,21 @@
     async saveChat() {
       const payload = JSON.stringify({ history: State.chat.history.slice(-CONFIG.CHAT_LIMIT), ts: now() });
       return await this.set(CONFIG.CHAT_KEY, payload);
+    },
+
+    async loadUI() {
+      const raw = await this.get(CONFIG.UI_KEY);
+      let obj = null;
+      try { obj = JSON.parse(raw || ""); } catch (_) {}
+      const lastTab = obj?.tab;
+      if (typeof lastTab === "string" && lastTab) {
+        // user asked: always to game. we still allow restore if it was game or settings-like,
+        // but force game if unknown.
+        State.currentTab = lastTab;
+      }
+    },
+    async saveUI() {
+      return await this.set(CONFIG.UI_KEY, JSON.stringify({ tab: State.currentTab, ts: now() }));
     }
   };
 
@@ -185,7 +215,7 @@
       platform: p.platform,
       input: p.input,
       difficulty: p.mode,
-      mode: p.mode,                 // совместимость: некоторые хендлеры ждут mode
+      mode: p.mode,                 // совместимость
       voice: p.voice,
       role: p.role,
       bf6_class: p.bf6_class,
@@ -197,7 +227,9 @@
   function safeJSONStringify(obj) {
     try {
       const s = JSON.stringify(obj);
-      if (s.length > CONFIG.MAX_PAYLOAD) return JSON.stringify({ truncated: true, keys: Object.keys(obj || {}).slice(0, 60) });
+      if (s.length > CONFIG.MAX_PAYLOAD) {
+        return JSON.stringify({ truncated: true, keys: Object.keys(obj || {}).slice(0, 60) });
+      }
       return s;
     } catch {
       return "{}";
@@ -222,33 +254,31 @@
   }
 
   // =========================
-  // TABS (SYNC)
+  // TABS (SYNC + ACCESSIBILITY)
   // =========================
-  function setActiveTabs(tab) {
-    // panes
+  function applyTabUI(tab) {
     $$(".tabpane").forEach((pane) => pane.classList.toggle("active", pane.id === `tab-${tab}`));
 
-    // bottom nav
     $$(".nav-btn").forEach((btn) => {
-      const on = btn.dataset.tab === tab;
-      btn.classList.toggle("active", on);
-      btn.setAttribute("aria-selected", on ? "true" : "false");
-    });
-
-    // top tabs (if ever used)
-    $$(".tab").forEach((btn) => {
       const on = btn.dataset.tab === tab;
       btn.classList.toggle("active", on);
       btn.setAttribute("aria-selected", on ? "true" : "false");
     });
   }
 
-  function selectTab(tab) {
+  function selectTab(tab, opts) {
     if (!tab) tab = "home";
-    State.currentTab = tab;
+    if (State.inGame) {
+      // В ИГРЕ: приложение "не связано" с UI — не даём переключать вкладки случайными тапами
+      // (выход из игры должен идти через overlay/engine)
+      return;
+    }
 
-    setActiveTabs(tab);
-    safe(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+    State.currentTab = tab;
+    applyTabUI(tab);
+    Storage.saveUI();
+
+    if (!opts?.silentScroll) safe(() => window.scrollTo({ top: 0, behavior: "smooth" }));
     updateTGButtons();
   }
 
@@ -506,7 +536,7 @@
   }
 
   // =========================
-  // ZOMBIES ENTRY (through facade)
+  // ZOMBIES ENTRY (APP -> GAME, BUT GAME IS ISOLATED)
   // =========================
   function zombiesSetMode(mode) {
     State.profile.zombies_mode = (mode === "roguelike") ? "roguelike" : "arcade";
@@ -526,18 +556,35 @@
   function enterGameTakeover() {
     if (State.inGame) return;
     State.inGame = true;
+
+    // app <-> game must be NOT connected: freeze app UI
     document.documentElement.classList.add("bco-game");
     document.body.classList.add("bco-game");
+
+    // hide chrome
     safe(() => window.BCO_TG?.hideChrome?.());
     safe(() => tg?.MainButton?.hide?.());
     safe(() => tg?.BackButton?.hide?.());
+    safe(() => tg?.setHeaderColor?.("#000000"));
+    safe(() => tg?.setBackgroundColor?.("#000000"));
+
+    // freeze app navigation accessibility
+    safe(() => $(".bottom-nav")?.setAttribute("aria-hidden", "true"));
+    safe(() => $(".app-header")?.setAttribute("aria-hidden", "true"));
+    safe(() => $(".app-main")?.setAttribute("aria-hidden", "true"));
   }
 
   function exitGameTakeover() {
     if (!State.inGame) return;
     State.inGame = false;
+
     document.documentElement.classList.remove("bco-game");
     document.body.classList.remove("bco-game");
+
+    safe(() => $(".bottom-nav")?.removeAttribute("aria-hidden"));
+    safe(() => $(".app-header")?.removeAttribute("aria-hidden"));
+    safe(() => $(".app-main")?.removeAttribute("aria-hidden"));
+
     safe(() => window.BCO_TG?.showChrome?.());
     updateTGButtons();
   }
@@ -547,6 +594,18 @@
 
     const map = State.profile.zombies_map || "Ashes";
     const mode = State.profile.zombies_mode || "arcade";
+
+    // Always be on Game tab before entering (buttons are "linked"),
+    // but once in takeover the app is "not linked" (isolated).
+    if (!State.inGame) {
+      // allow tab change
+      const prevInGame = State.inGame;
+      State.inGame = false;
+      applyTabUI("game");
+      State.currentTab = "game";
+      Storage.saveUI();
+      State.inGame = prevInGame;
+    }
 
     if (!engine?.zombies?.enter) {
       const z = window.BCO_ZOMBIES || window.BCO_ZOMBIES_CORE || null;
@@ -569,6 +628,19 @@
     safe(() => engine.zombies.enter?.({ map, mode, onExit: exitGameTakeover }));
     toast("Zombies: старт");
     return true;
+  }
+
+  function goToGameThenEnter() {
+    if (State.inGame) return;
+    // 1) link buttons -> game tab
+    State.currentTab = "game";
+    applyTabUI("game");
+    Storage.saveUI();
+    updateTGButtons();
+    safe(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+
+    // 2) then enter game takeover
+    setTimeout(() => zombiesEnter(), CONFIG.GAME_ENTER_DELAY_MS);
   }
 
   // =========================
@@ -631,7 +703,8 @@
   }
 
   // =========================
-  // HARD ROUTER (iOS “dead taps” killer)
+  // HARD ROUTER (FIXES “BUTTONS DEAD” on iOS WebView)
+  // + "LINK APP BUTTONS" (tab jump) + "GAME ISOLATED"
   // =========================
   function isInteractiveText(el) {
     if (!el) return false;
@@ -639,10 +712,28 @@
     return tag === "input" || tag === "textarea" || el.isContentEditable;
   }
 
+  function isInsideGameOverlay(target) {
+    // During takeover, allow only game overlay interactions.
+    // If your zombies engine mounts into #zOverlayMount, taps there must pass.
+    try {
+      const mount = $("#zOverlayMount");
+      if (!mount) return false;
+      return !!target?.closest?.("#zOverlayMount");
+    } catch {
+      return false;
+    }
+  }
+
   function hardRouteClick(target) {
-    const el = target?.closest?.("button, .nav-btn, .tab, .seg-btn, .chip, .chat-send, .aim-target");
+    const el = target?.closest?.("button, .nav-btn, .seg-btn, .chip, .chat-send, .aim-target");
     if (!el) return false;
 
+    // If in-game: app UI is NOT connected. Block app taps outside overlay.
+    if (State.inGame && !isInsideGameOverlay(target)) {
+      return true; // swallow
+    }
+
+    // throttle to avoid double-fire on iOS
     const t = now();
     if (t - State.lastTapAt < CONFIG.TAP_THROTTLE_MS) return true;
     State.lastTapAt = t;
@@ -651,8 +742,8 @@
     const tab = el.dataset?.tab || "";
     const segVal = el.dataset?.value || "";
 
-    // bottom nav / optional top tabs
-    if ((el.classList.contains("nav-btn") || el.classList.contains("tab")) && tab) {
+    // Bottom nav links tabs (this is "link buttons")
+    if (el.classList.contains("nav-btn") && tab) {
       selectTab(tab);
       return true;
     }
@@ -703,9 +794,12 @@
     }
 
     // Aim
-    if (id === "aimTarget") { aimHit(); return true; }
+    if (id === "aimTarget") {
+      aimHit();
+      return true;
+    }
 
-    // Buttons
+    // Buttons by id
     switch (id) {
       // Header actions
       case "btnShare":
@@ -733,8 +827,12 @@
 
       case "btnPlayZombies":
       case "btnZQuickPlay":
+        // link app -> game (tab), then enter fullscreen
+        goToGameThenEnter();
+        return true;
+
       case "btnZEnterGame":
-        // ВАЖНО: если жмёшь “Play/Start” — это уже запуск.
+        // already on Game tab; enter
         zombiesEnter();
         return true;
 
@@ -766,9 +864,9 @@
         return true;
 
       case "btnOpenTraining":
-        // РАНЬШЕ: отправляло в бота. ТЕПЕРЬ: открывает вкладку.
+        // Link within app (buttons связаны)
         selectTab("coach");
-        toast("Открыл вкладку: Тренировка 🎯");
+        toast("Тренировка открыта 🎯");
         return true;
 
       // VOD
@@ -782,9 +880,8 @@
       }
 
       case "btnOpenVod":
-        // РАНЬШЕ: отправляло в бота. ТЕПЕРЬ: открывает вкладку.
         selectTab("vod");
-        toast("Открыл вкладку: VOD 🎬");
+        toast("VOD открыт 🎬");
         return true;
 
       // Settings
@@ -795,20 +892,17 @@
         return true;
 
       case "btnOpenSettings":
-        // РАНЬШЕ: отправляло в бота. ТЕПЕРЬ: открывает вкладку.
         selectTab("settings");
-        toast("Открыл вкладку: Настройки ⚙️");
+        toast("Настройки открыты ⚙️");
         return true;
 
       // Aim
       case "btnAimStart":
         aimStart();
         return true;
-
       case "btnAimStop":
         aimStop(false);
         return true;
-
       case "btnAimSend":
         aimSendResult();
         return true;
@@ -824,20 +918,18 @@
         zombiesSetMode("roguelike");
         return true;
 
-      // Zombies quick “shop” hotkeys (bot)
+      // Zombies hotkeys -> bot
       case "btnZBuyJug":
         sendToBot({ type: "zombies_hotkey", buy: "jug", profile: true });
         return true;
-
       case "btnZBuySpeed":
         sendToBot({ type: "zombies_hotkey", buy: "speed", profile: true });
         return true;
-
       case "btnZBuyAmmo":
         sendToBot({ type: "zombies_hotkey", buy: "ammo", profile: true });
         return true;
 
-      // Zombies HQ / guides (bot)
+      // Zombies HQ / guides -> bot
       case "btnZOpenHQ":
       case "btnOpenZombies":
         sendToBot({ type: "nav", target: "zombies", profile: true });
@@ -846,24 +938,20 @@
       case "btnZPerks":
         sendToBot({ type: "zombies", action: "perks", profile: true });
         return true;
-
       case "btnZLoadout":
         sendToBot({ type: "zombies", action: "loadout", profile: true });
         return true;
-
       case "btnZEggs":
         sendToBot({ type: "zombies", action: "easter_eggs", profile: true });
         return true;
-
       case "btnZRound":
         sendToBot({ type: "zombies", action: "round_strategy", profile: true });
         return true;
-
       case "btnZTips":
         sendToBot({ type: "zombies", action: "quick_tips", profile: true });
         return true;
 
-      // Dummy result
+      // Dummy game result from launcher
       case "btnZGameSend":
       case "btnZGameSend2":
         sendToBot({
@@ -884,14 +972,41 @@
   }
 
   // =========================
-  // WIRE EVENTS
+  // iOS ANTI-ZOOM (game + overall)
+  // =========================
+  function wireAntiZoomIOS() {
+    document.addEventListener("gesturestart", (e) => {
+      try { e.preventDefault(); } catch (_) {}
+    }, { passive: false });
+
+    document.addEventListener("touchmove", (e) => {
+      if (!State.inGame) return;
+      if (e.touches && e.touches.length > 1) {
+        try { e.preventDefault(); } catch (_) {}
+      }
+    }, { passive: false });
+
+    document.addEventListener("touchend", (e) => {
+      const t = now();
+      const dt = t - (State.lastTouchEndAt || 0);
+      State.lastTouchEndAt = t;
+      if (!State.inGame) return;
+      if (dt > 0 && dt < CONFIG.IOS_PREVENT_DOUBLE_TAP_ZOOM_MS) {
+        try { e.preventDefault(); } catch (_) {}
+      }
+    }, { passive: false });
+  }
+
+  // =========================
+  // WIRE EVENTS (RELIABLE)
   // =========================
   function wireHardRouter() {
     document.addEventListener("pointerdown", (e) => {
       const t = e.target;
       if (isInteractiveText(t)) return;
       if (hardRouteClick(t)) {
-        const inScrollable = !!t?.closest?.(".chat-log, .bco-z-card");
+        // allow scrolling in chat & potential overlay cards
+        const inScrollable = !!t?.closest?.(".chat-log, .bco-z-card, .bco-z-scroll");
         if (!inScrollable) {
           try { e.preventDefault(); } catch (_) {}
         }
@@ -955,22 +1070,32 @@
       safe(() => window.BCO_TG?.applyInsets?.());
     }
 
+    // Load
     await Storage.load();
     await Storage.loadChat();
+    await Storage.loadUI();
 
+    // Force "straight to game" on open (your ask). If you later want restore-last-tab, remove this line.
+    State.currentTab = "game";
+
+    // UI state
     syncSegmentsFromState();
     syncZModeButtons();
     updateChips();
     chatRender();
     aimUpdateUI();
 
-    setActiveTabs(State.currentTab);
+    // Apply active tab UI immediately
+    applyTabUI(State.currentTab);
 
+    // Wire
+    wireAntiZoomIOS();
     wireHardRouter();
     wireTGButtonsOnce();
     updateTGButtons();
     fillDebug();
 
+    // Public API for engine/overlay
     safe(() => {
       window.BCO_APP = window.BCO_APP || {};
       window.BCO_APP.enterGameTakeover = enterGameTakeover;
@@ -978,7 +1103,13 @@
       window.BCO_APP.sendToBot = sendToBot;
       window.BCO_APP.getProfile = () => ({ ...State.profile });
       window.BCO_APP.selectTab = (t) => selectTab(String(t || "home"));
+      window.BCO_APP.goToGameThenEnter = goToGameThenEnter;
+      window.BCO_APP.zombiesEnter = zombiesEnter;
     });
+
+    // OPTIONAL: auto enter game when opening Mini App (no extra taps)
+    // If you don't want auto-enter, comment next 2 lines.
+    setTimeout(() => zombiesEnter(), 120);
 
     setHealth("js: OK (app) • build=" + State.buildId);
   }
