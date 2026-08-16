@@ -6,7 +6,13 @@ from typing import Any
 from app.observability.quality import quality_telemetry
 
 
-def readiness_snapshot(settings: Any, store: Any) -> dict:
+def readiness_snapshot(
+    settings: Any,
+    store: Any,
+    *,
+    app_version: str = "unknown",
+    release_contract: str = "unknown",
+) -> dict:
     """Privacy-safe runtime readiness. Never exposes secret values/content."""
     ai_enabled = bool(getattr(settings, "ai_enabled", True))
     ai_configured = bool(str(getattr(settings, "openai_api_key", "") or "").strip())
@@ -52,6 +58,10 @@ def readiness_snapshot(settings: Any, store: Any) -> dict:
     return {
         "ok": required_ok,
         "status": status,
+        "release": {
+            "version": str(app_version or "unknown")[:32],
+            "contract": str(release_contract or "unknown")[:64],
+        },
         "storage": {
             "configured_mode": str(getattr(settings, "storage_backend", "auto") or "auto")[:32],
             "active_adapter": storage_class[:64],
