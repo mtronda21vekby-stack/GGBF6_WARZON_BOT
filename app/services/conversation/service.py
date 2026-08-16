@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from app.services.player_memory.service import PlayerMemoryService
+
+
+PartialCallback = Callable[[str, dict[str, Any]], None]
 
 
 def _same_user_tail(history: list[dict], text: str) -> bool:
@@ -48,7 +52,14 @@ class ConversationService:
             else None
         )
 
-    def reply(self, *, text: str, profile: dict, history: list[dict]) -> str:
+    def reply(
+        self,
+        *,
+        text: str,
+        profile: dict,
+        history: list[dict],
+        on_partial: PartialCallback | None = None,
+    ) -> str:
         trusted = False
         chat_id = None
         if self.profiles is not None and hasattr(self.profiles, "is_trusted_context"):
@@ -95,6 +106,7 @@ class ConversationService:
             profile=profile,
             history=history,
             player_context=player_context,
+            on_partial=on_partial,
         )
 
         if trusted and chat_id is not None and not caller_manages_working_memory and self.store is not None:
