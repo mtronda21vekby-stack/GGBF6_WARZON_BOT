@@ -82,5 +82,27 @@ revoke all on function public.bco_record_mistake_once(text, bigint, text, text, 
 grant execute on function public.bco_record_mistake_once(text, bigint, text, text, jsonb)
     to service_role;
 
+-- Keep the existing full-player reset semantics complete: receipts contain
+-- chat_id/mistake metadata and must disappear together with player data.
+create or replace function public.bco_purge_player(p_chat_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+    delete from public.bco_messages where chat_id = p_chat_id;
+    delete from public.bco_player_mistakes where chat_id = p_chat_id;
+    delete from public.bco_mistake_receipts where chat_id = p_chat_id;
+    delete from public.bco_episodes where chat_id = p_chat_id;
+    delete from public.bco_training_sessions where chat_id = p_chat_id;
+    delete from public.bco_progression_events where chat_id = p_chat_id;
+    delete from public.bco_players where chat_id = p_chat_id;
+end;
+$$;
+
+revoke all on function public.bco_purge_player(bigint) from public, anon, authenticated;
+grant execute on function public.bco_purge_player(bigint) to service_role;
+
 -- Receipts are tiny metadata rows. A later maintenance job may delete old
 -- receipts only after the chosen replay horizon has elapsed.
