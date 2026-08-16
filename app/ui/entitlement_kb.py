@@ -4,32 +4,40 @@ from __future__ import annotations
 from app.ui.quickbar import _miniapp_button
 
 
-def kb_premium_bridge() -> dict:
+def _keyboard(rows: list[list[dict]], placeholder: str) -> dict:
     return {
-        "keyboard": [
-            [{"text": "🔗 Связать с сайтом"}, {"text": "💳 Premium статус"}],
-            [{"text": "🎙 Голос: Тиммейт/Коуч"}],
-            [{"text": "😈 Режим мышления"}, {"text": "🧩 Настройки игры"}],
-            [{"text": "🎯 Тренировка: План"}, {"text": "🎬 VOD: Разбор"}],
-            [{"text": "🧠 Память: Статус"}, {"text": "🔓 Отвязать сайт"}],
-            [_miniapp_button()],
-            [{"text": "⬅️ Назад"}],
-        ],
+        "keyboard": rows,
         "resize_keyboard": True,
         "is_persistent": True,
         "one_time_keyboard": False,
-        "input_field_placeholder": "Premium и связка аккаунтов…",
+        "input_field_placeholder": placeholder[:64],
     }
+
+
+def _text(label: str) -> dict:
+    return {"text": label}
+
+
+def kb_premium_bridge() -> dict:
+    """Premium account bridge with status-first information hierarchy."""
+    return _keyboard(
+        [
+            [_text("💳 Premium статус"), _text("🔗 Связать с сайтом")],
+            [_text("🎙 Голос: Тиммейт/Коуч"), _text("😈 Режим мышления")],
+            [_text("🎯 Тренировка: План"), _text("🎬 VOD: Разбор")],
+            [_text("🧩 Настройки игры"), _text("🧠 Память: Статус")],
+            [_text("🔓 Отвязать сайт"), _miniapp_button()],
+            [_text("⬅️ Назад")],
+        ],
+        "Premium · аккаунт · интеллект",
+    )
 
 
 def kb_premium_unlink_confirm() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "⚠️ Подтвердить отвязку"}],
-            [{"text": "Отмена"}],
+    return _keyboard(
+        [
+            [_text("⚠️ Подтвердить отвязку")],
+            [_text("Отмена")],
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-        "input_field_placeholder": "Подтверди или отмени отвязку…",
-    }
+        "Подтверди или отмени отвязку",
+    )
