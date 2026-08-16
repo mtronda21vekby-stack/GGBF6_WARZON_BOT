@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -14,6 +15,7 @@ from app.core.router import Router
 from app.observability.log import get_logger, setup_logging
 from app.observability.readiness import readiness_snapshot
 from app.release import APP_VERSION, RELEASE_CONTRACT
+from app.security.usage_guard import UpdateReplayGuard, UsageGuard
 from app.services.brain.engine import BrainEngine
 from app.services.conversation.service import ConversationService
 from app.services.profiles.service import ProfileService
@@ -32,6 +34,11 @@ def create_app() -> FastAPI:
 
     tg = TelegramClient(settings.bot_token)
     store = build_store(settings)
+    usage_guard = UsageGuard.from_settings(settings)
+    replay_guard = UpdateReplayGuard(
+        ttl_s=settings.telegram_update_dedupe_ttl_s,
+        max_entries=settings.telegram_update_dedupe_max_entries,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -59,10 +66,21 @@ def create_app() -> FastAPI:
 
     profiles = ProfileService(store=store)
     core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
-    conversation = ConversationService(brain=core_brain, store=store, profiles=profiles)
+    conversation = ConversationService(
+        brain=core_brain,
+        store=store,
+        profiles=profiles,
+        usage_guard=usage_guard,
+    )
 
     voice_service = VoiceService(settings=settings)
-    voice_controller = VoiceTelegramController(tg=tg, profiles=profiles, store=store, voice=voice_service)
+    voice_controller = VoiceTelegramController(
+        tg=tg,
+        profiles=profiles,
+        store=store,
+        voice=voice_service,
+        usage_guard=usage_guard,
+    )
 
     vod_service = VODAnalysisService(
         api_key=settings.openai_api_key,
@@ -76,6 +94,7 @@ def create_app() -> FastAPI:
         profiles=profiles,
         store=store,
         player_memory=conversation.player_memory,
+        usage_guard=usage_guard,
         enabled=settings.vod_enabled,
         max_bytes=settings.vod_max_bytes,
         download_timeout_s=settings.vod_download_timeout_s,
@@ -141,6 +160,8 @@ def create_app() -> FastAPI:
             store,
             app_version=APP_VERSION,
             release_contract=RELEASE_CONTRACT,
+            usage_guard=usage_guard,
+            replay_guard=replay_guard,
         )
 
     @app.post("/tg/webhook", include_in_schema=False)
@@ -151,7 +172,32 @@ def create_app() -> FastAPI:
         if settings.webhook_secret and x_telegram_bot_api_secret_token != settings.webhook_secret:
             raise HTTPException(status_code=401, detail="bad secret token")
 
-        raw = await request.json()
+        max_bytes = max(1024, int(settings.telegram_max_update_bytes or 256 * 1024))
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > max_bytes:
+                    raise HTTPException(status_code=413, detail="telegram update too large")
+            except ValueError:
+                pass
+
+        body = await request.body()
+        if len(body) > max_bytes:
+            raise HTTPException(status_code=413, detail="telegram update too large")
+        try:
+            raw = json.loads(body.decode("utf-8")) if body else {}
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid telegram update")
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="invalid telegram update")
+
+        update_id = raw.get("update_id")
+        if update_id is not None and not replay_guard.accept(update_id):
+            # Telegram retries must receive 200 or the platform will keep
+            # redelivering the same update. Duplicate work is intentionally
+            # skipped before any AI/VOD/TTS boundary.
+            return JSONResponse({"ok": True, "duplicate": True})
+
         upd = Update.parse(raw)
 
         try:
