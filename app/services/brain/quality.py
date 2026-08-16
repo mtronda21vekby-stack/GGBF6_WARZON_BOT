@@ -24,7 +24,7 @@ def currentness_blocked_response(knowledge: KnowledgeContext) -> str:
         dated = f"\nПоследняя доступная база датирована: {knowledge.last_updated}."
     source = f"\nИсточник: {knowledge.source}." if knowledge.source else ""
     return (
-        "📡 Live-проверка актуальности сейчас недоступна.\n"
+        "📡 Актуальность не подтверждена: live-проверка сейчас недоступна.\n"
         "Я не буду выдавать старые данные или память модели за текущую мету/последний патч."
         f"{dated}{source}\n\n"
         "Тактику, настройки и разбор игры могу дать сразу; для current/meta ответа нужен успешный официальный live-источник."
