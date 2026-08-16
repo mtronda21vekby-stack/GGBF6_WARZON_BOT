@@ -11,6 +11,20 @@ def main() -> int:
         print("BCO voice preload: disabled")
         return 0
 
+    high_fidelity = bool(getattr(settings, "voice_high_fidelity_enabled", True))
+    cloud_configured = high_fidelity and bool(
+        str(getattr(settings, "openai_api_key", "") or "").strip()
+    )
+    local_fallback = bool(getattr(settings, "voice_local_fallback_enabled", True))
+    print(
+        "BCO voice preload: "
+        f"high_fidelity={'configured' if cloud_configured else 'unavailable'} "
+        f"local_fallback={'enabled' if local_fallback else 'disabled'}"
+    )
+
+    if not local_fallback:
+        return 0
+
     manager = PiperModelManager(
         model_dir=getattr(settings, "voice_model_dir", ".bco_voice"),
         model_name=getattr(settings, "voice_model_name", "ru_RU-denis-medium"),
@@ -19,11 +33,11 @@ def main() -> int:
     backend = PiperBackend(manager)
     try:
         model, config = backend.ensure_model()
-        print(f"BCO voice preload: ready model={model.name} config={config.name}")
+        print(f"BCO voice preload: local fallback ready model={model.name} config={config.name}")
     except Exception as exc:
         # Build must remain deployable even if the external model host is
         # temporarily unavailable. Runtime performs the same lazy ensure.
-        print(f"BCO voice preload: deferred error={type(exc).__name__}")
+        print(f"BCO voice preload: local fallback deferred error={type(exc).__name__}")
     return 0
 
 
