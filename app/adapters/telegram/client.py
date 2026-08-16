@@ -91,6 +91,46 @@ class TelegramClient:
 
         response.raise_for_status()
 
+    async def send_live_draft(self, chat_id: int, draft_id: int, text: str) -> str:
+        """
+        Stream an ephemeral Bot API 10.1 draft.
+
+        Returns `rich`, `plain` or `unsupported`. Draft failures are deliberately
+        non-fatal because the final persistent answer uses send_message().
+        """
+        polished = polish_telegram_text(text)
+        rich_message = tactical_rich_message(polished)
+        if rich_message is not None:
+            response = await self._post_json(
+                "sendRichMessageDraft",
+                {
+                    "chat_id": int(chat_id),
+                    "draft_id": int(draft_id),
+                    "rich_message": rich_message,
+                },
+            )
+            if response.is_success:
+                return "rich"
+            if response.status_code not in (400, 404):
+                response.raise_for_status()
+
+        # Bot API 9.3 text draft fallback. This still gives older clients an
+        # animated live-generation preview without persisting a utility message.
+        response = await self._post_json(
+            "sendMessageDraft",
+            {
+                "chat_id": int(chat_id),
+                "draft_id": int(draft_id),
+                "text": polished[:4096],
+            },
+        )
+        if response.is_success:
+            return "plain"
+        if response.status_code in (400, 404):
+            return "unsupported"
+        response.raise_for_status()
+        return "unsupported"
+
     async def edit_message(
         self,
         chat_id: int,
