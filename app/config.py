@@ -7,7 +7,6 @@ from functools import lru_cache
 try:
     from pydantic_settings import BaseSettings
 except Exception:
-    # fallback если вдруг старая сборка — но лучше поставить pydantic-settings в requirements
     from pydantic import BaseSettings  # type: ignore
 
 
@@ -19,8 +18,13 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
-    # Memory
+    # Memory / persistence
     memory_max_turns: int = int(os.getenv("MEMORY_MAX_TURNS", "20"))
+    storage_backend: str = os.getenv("STORAGE_BACKEND", "auto")
+    storage_timeout_s: float = float(os.getenv("STORAGE_TIMEOUT_S", "8"))
+    supabase_url: str = os.getenv("SUPABASE_URL", "")
+    supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    supabase_schema: str = os.getenv("SUPABASE_SCHEMA", "public")
 
     # AI
     ai_enabled: bool = os.getenv("AI_ENABLED", "1") not in ("0", "false", "False", "")
@@ -33,5 +37,4 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    s = Settings()
-    return s
+    return Settings()

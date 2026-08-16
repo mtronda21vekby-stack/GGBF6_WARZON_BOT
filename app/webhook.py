@@ -10,9 +10,9 @@ from app.config import get_settings
 from app.core.router import Router
 from app.observability.log import get_logger, setup_logging
 from app.services.brain.engine import BrainEngine
-from app.services.brain.memory import InMemoryStore
 from app.services.conversation.service import ConversationService
 from app.services.profiles.service import ProfileService
+from app.services.storage.factory import build_store
 
 log = get_logger("webhook")
 
@@ -21,13 +21,13 @@ def create_app() -> FastAPI:
     settings = get_settings()
     setup_logging(settings.log_level)
 
-    app = FastAPI(title="GGBF6 WARZON BOT", version="4.0.0")
+    app = FastAPI(title="GGBF6 WARZON BOT", version="4.1.0")
 
     tg = TelegramClient(settings.bot_token)
-    store = InMemoryStore(memory_max_turns=settings.memory_max_turns)
+    store = build_store(settings)
     profiles = ProfileService(store=store)
     core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
-    conversation = ConversationService(brain=core_brain)
+    conversation = ConversationService(brain=core_brain, store=store, profiles=profiles)
 
     router = Router(
         tg=tg,
@@ -122,6 +122,12 @@ def create_app() -> FastAPI:
     @app.on_event("shutdown")
     async def _shutdown():
         await tg.close()
+        close_store = getattr(store, "close", None)
+        if callable(close_store):
+            try:
+                close_store()
+            except Exception as exc:
+                log.warning("storage shutdown failed: %s", type(exc).__name__)
 
     return app
 
