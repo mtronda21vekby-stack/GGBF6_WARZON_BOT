@@ -6,6 +6,13 @@ from collections.abc import Iterable
 LEGACY_DIVIDER = "━━━━━━━━━━━━━━━━━━"
 TACTICAL_DIVIDER = "──────────────"
 
+PLAIN_CARD_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("💎 BLACK CROWN PREMIUM", "PREMIUM"),
+    ("🔗 ОДНОРАЗОВАЯ ПРИВЯЗКА", "ACCOUNT LINK"),
+    ("🔐 Привязка доступна", "ACCOUNT SECURITY"),
+    ("⚠️ Подтверди отвязку", "ACCOUNT SECURITY"),
+)
+
 
 def _strip_edges(lines: Iterable[str]) -> list[str]:
     result = list(lines)
@@ -76,25 +83,43 @@ def _unwrap_legacy(lines: list[str]) -> tuple[str, list[str]] | None:
     return _legacy_mode(header), body
 
 
+def _unwrap_plain_card(lines: list[str]) -> tuple[str, list[str]] | None:
+    if not lines:
+        return None
+    first = lines[0].strip()
+    for prefix, channel in PLAIN_CARD_PREFIXES:
+        if first.startswith(prefix):
+            body = _compact_blank_lines(lines[1:])
+            if not body and first != prefix:
+                body = [first[len(prefix) :].lstrip(" :—-")]
+            return channel, body
+    return None
+
+
 def polish_telegram_text(text: str) -> str:
     """
-    Convert the legacy double-frame BCO chrome into a compact tactical card.
+    Convert legacy BCO chrome and selected account panels into compact cards.
 
-    Non-BCO messages, error payloads, source text and code blocks are returned
-    unchanged apart from no-op string coercion.
+    Non-BCO messages, source text and code blocks are returned unchanged.
     """
     raw = str(text or "")
     if not raw:
         return raw
 
     normalized = raw.replace("\r\n", "\n")
-    unwrapped = _unwrap_legacy(normalized.split("\n"))
-    if not unwrapped:
-        return raw
+    lines = normalized.split("\n")
 
-    mode, body_lines = unwrapped
-    body = "\n".join(body_lines)
-    if body.startswith("BLACK CROWN OPS — это искусственный разум"):
-        body = _start_body()
+    unwrapped = _unwrap_legacy(lines)
+    if unwrapped:
+        mode, body_lines = unwrapped
+        body = "\n".join(body_lines)
+        if body.startswith("BLACK CROWN OPS — это искусственный разум"):
+            body = _start_body()
+        return tactical_card(body, channel=mode)
 
-    return tactical_card(body, channel=mode)
+    plain_card = _unwrap_plain_card(lines)
+    if plain_card:
+        channel, body_lines = plain_card
+        return tactical_card("\n".join(body_lines), channel=channel)
+
+    return raw
