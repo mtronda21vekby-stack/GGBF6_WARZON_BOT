@@ -8,6 +8,29 @@ from typing import Any, Mapping
 
 VALID_BUTTON_STYLES = frozenset({"primary", "success", "danger"})
 _ADVANCED_BUTTON_FIELDS = frozenset({"style", "icon_custom_emoji_id"})
+_REPLY_ONLY_FIELDS = frozenset(
+    {
+        "request_users",
+        "request_chat",
+        "request_contact",
+        "request_location",
+        "request_poll",
+    }
+)
+_INLINE_ACTION_FIELDS = frozenset(
+    {
+        "url",
+        "callback_data",
+        "web_app",
+        "login_url",
+        "switch_inline_query",
+        "switch_inline_query_current_chat",
+        "switch_inline_query_chosen_chat",
+        "callback_game",
+        "pay",
+        "copy_text",
+    }
+)
 
 # Exact choices keep the primary product surface deliberate instead of relying
 # only on broad keyword heuristics.
@@ -24,6 +47,7 @@ _EXACT_STYLES: dict[str, str | None] = {
     "📊 Статус": "primary",
     "🛰 COMMAND CENTER": "primary",
     "🛰 MINI APP": "primary",
+    "◼ COMMAND CONSOLE": "primary",
     # Premium / account
     "💳 Premium статус": "success",
     "🔗 Связать с сайтом": "primary",
@@ -54,13 +78,18 @@ _EXACT_STYLES: dict[str, str | None] = {
 
 _NEUTRAL_PREFIXES = (
     "⬅️",
+    "‹",
+    "⌂",
+    "✕",
     "ℹ️",
     "Отмена",
+    "CANCEL",
 )
 _DANGER_TERMS = (
     "сброс",
     "очистить",
     "отвяз",
+    "unlink",
     "подтвердить отвязку",
     "voice off",
     "demon",
@@ -71,15 +100,19 @@ _DANGER_TERMS = (
 )
 _SUCCESS_TERMS = (
     "трениров",
+    "training",
     "premium статус",
+    "premium active",
     "voice auto",
     "тиммейт",
+    "teammate",
     "medic",
     "быстрые советы",
     "перки",
     "pack-a-punch",
 )
 _PRIMARY_PREFIXES = (
+    "◼",
     "🧠",
     "🎮",
     "🎬",
@@ -197,8 +230,75 @@ def _decorate_button(button: Any) -> Any:
     return data
 
 
+def _inline_navigation_enabled() -> bool:
+    for name in ("TELEGRAM_AAA_CONSOLE_ENABLED", "TELEGRAM_INLINE_NAVIGATION"):
+        value = (os.getenv(name) or "1").strip().casefold()
+        if value in {"0", "false", "off", "no"}:
+            return False
+    return True
+
+
+def _callback_value(text: str) -> str:
+    value = str(text or "").strip()
+    if not value or len(value.encode("utf-8")) > 64:
+        return ""
+    return value
+
+
+def upgrade_reply_keyboard_to_inline(reply_markup: dict | None) -> dict | None:
+    """
+    Convert legacy ReplyKeyboardMarkup into an inline navigation surface.
+
+    Existing labels become callback_data, so the legacy Router can continue to
+    process them unchanged. Markups using contact/location/chat request fields
+    remain native reply keyboards because those capabilities have no inline
+    equivalent. `TELEGRAM_AAA_CONSOLE_ENABLED=0` is the emergency rollback.
+    """
+    if not isinstance(reply_markup, Mapping) or not _inline_navigation_enabled():
+        return reply_markup
+    if "keyboard" not in reply_markup or reply_markup.get("remove_keyboard"):
+        return dict(reply_markup)
+
+    rows = reply_markup.get("keyboard")
+    if not isinstance(rows, list):
+        return dict(reply_markup)
+
+    converted: list[list[dict[str, Any]]] = []
+    for row in rows:
+        if not isinstance(row, list):
+            return dict(reply_markup)
+        inline_row: list[dict[str, Any]] = []
+        for raw_button in row:
+            if isinstance(raw_button, str):
+                button: dict[str, Any] = {"text": raw_button}
+            elif isinstance(raw_button, Mapping):
+                button = dict(raw_button)
+            else:
+                return dict(reply_markup)
+
+            if any(field in button for field in _REPLY_ONLY_FIELDS):
+                return dict(reply_markup)
+
+            text = str(button.get("text") or "").strip()
+            if not text:
+                return dict(reply_markup)
+
+            has_action = any(field in button for field in _INLINE_ACTION_FIELDS)
+            if not has_action:
+                callback_data = _callback_value(text)
+                if not callback_data:
+                    return dict(reply_markup)
+                button["callback_data"] = callback_data
+
+            inline_row.append(button)
+        if inline_row:
+            converted.append(inline_row)
+
+    return {"inline_keyboard": converted}
+
+
 def decorate_reply_markup(reply_markup: dict | None) -> dict | None:
-    """Add Bot API 9.4+ native styles without mutating caller-owned data."""
+    """Add Bot API native styles without mutating caller-owned data."""
     if not isinstance(reply_markup, Mapping):
         return reply_markup
 
@@ -239,7 +339,7 @@ def strip_advanced_button_fields(reply_markup: dict | None) -> dict | None:
 
     result = dict(reply_markup)
     for field in ("keyboard", "inline_keyboard"):
-        rows = result.get(field)
+        rows = reply_markup.get(field)
         if not isinstance(rows, list):
             continue
         clean_rows: list[list[Any]] = []

@@ -23,3 +23,29 @@ def test_patch_keeps_extended_fields():
     profile = service.get(1)
     assert profile["rank"] == "Diamond"
     assert profile["current_goal"] == "Iridescent"
+
+
+def test_mode_aliases_stay_synchronized_for_legacy_and_new_brains():
+    service = ProfileService(InMemoryStore())
+    service.patch(1, {"difficulty": "Demon", "voice": "COACH"})
+    profile = service.get(1)
+    intelligence = service.get_intelligence(1).to_dict()
+
+    assert profile["difficulty"] == "Demon"
+    assert profile["brain_mode"] == "Demon"
+    assert profile["voice"] == "COACH"
+    assert profile["voice_mode"] == "COACH"
+    assert intelligence["difficulty"] == "Demon"
+    assert intelligence["brain_mode"] == "Demon"
+    assert intelligence["voice"] == "COACH"
+    assert intelligence["voice_mode"] == "COACH"
+
+
+def test_voice_tts_and_zombies_runtime_fields_survive_intelligence_projection():
+    service = ProfileService(InMemoryStore())
+    service.patch(1, {"tts_mode": "auto", "zombies_map": "Astra", "bf6_class": "Recon"})
+    intelligence = service.get_intelligence(1).to_dict()
+
+    assert intelligence["tts_mode"] == "auto"
+    assert intelligence["zombies_map"] == "Astra"
+    assert intelligence["bf6_class"] == "Recon"

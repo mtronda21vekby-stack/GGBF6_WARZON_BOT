@@ -23,6 +23,7 @@ from app.services.entitlements.site_bridge import SiteEntitlementBridgeAPI
 from app.services.entitlements.telegram import EntitlementTelegramController
 from app.services.profiles.service import ProfileService
 from app.services.storage.factory import build_store
+from app.services.telegram.command_console import CommandConsoleController
 from app.services.vod.service import VODAnalysisService
 from app.services.vod.telegram import VODTelegramIngress
 from app.services.voice.service import VoiceService
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
         ttl_s=settings.telegram_update_dedupe_ttl_s,
         max_entries=settings.telegram_update_dedupe_max_entries,
     )
+    command_console: CommandConsoleController | None = None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -60,6 +62,14 @@ def create_app() -> FastAPI:
                 log.warning("storage startup probe crashed error=%s", type(exc).__name__)
         else:
             log.info("storage startup probe skipped adapter=%s", type(store).__name__)
+
+        if command_console is not None:
+            try:
+                await asyncio.wait_for(command_console.configure_bot_surface(), timeout=8.0)
+                log.info("AAA Telegram command surface configured")
+            except Exception as exc:
+                log.warning("AAA Telegram command surface setup failed: %s", type(exc).__name__)
+
         try:
             yield
         finally:
@@ -89,6 +99,13 @@ def create_app() -> FastAPI:
         store=store,
         profiles=profiles,
         usage_guard=usage_guard,
+    )
+    command_console = CommandConsoleController(
+        tg=tg,
+        profiles=profiles,
+        store=store,
+        entitlements=entitlement_service,
+        settings=settings,
     )
 
     voice_service = VoiceService(settings=settings)
@@ -218,6 +235,24 @@ def create_app() -> FastAPI:
             return JSONResponse({"ok": True, "duplicate": True})
 
         upd = Update.parse(raw)
+
+        try:
+            if await command_console.maybe_handle(upd):
+                return JSONResponse({"ok": True})
+        except Exception as exc:
+            log.exception("AAA command console pre-handler crashed: %s", type(exc).__name__)
+
+        # Inline navigation converted from legacy reply keyboards still uses
+        # the existing deterministic handlers. Acknowledge it immediately so
+        # Telegram removes the client-side progress spinner before routing.
+        try:
+            callback = upd.get("callback_query") if isinstance(upd, dict) else None
+            if isinstance(callback, dict):
+                callback_id = str(callback.get("id") or "").strip()
+                if callback_id:
+                    await tg.answer_callback_query(callback_id)
+        except Exception as exc:
+            log.warning("legacy callback acknowledgement failed: %s", type(exc).__name__)
 
         try:
             if await entitlement_controller.maybe_handle_command(upd):

@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     telegram_max_update_bytes: int = int(os.getenv("TELEGRAM_MAX_UPDATE_BYTES", str(256 * 1024)))
     telegram_update_dedupe_ttl_s: int = int(os.getenv("TELEGRAM_UPDATE_DEDUPE_TTL_S", "900"))
     telegram_update_dedupe_max_entries: int = int(os.getenv("TELEGRAM_UPDATE_DEDUPE_MAX_ENTRIES", "20000"))
+    telegram_aaa_console_enabled: bool = os.getenv("TELEGRAM_AAA_CONSOLE_ENABLED", "1") not in (
+        "0",
+        "false",
+        "False",
+        "off",
+        "OFF",
+        "",
+    )
 
     # Abuse / cost guard. Limits are intentionally generous for legitimate use
     # but cap burst/flood cost at the actual expensive capability boundaries.

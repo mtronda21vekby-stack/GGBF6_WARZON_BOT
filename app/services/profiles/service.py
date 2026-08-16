@@ -67,11 +67,26 @@ class ProfileService:
         data.setdefault("brain_mode", data.get("difficulty"))
         return PlayerIntelligence.from_mapping(data)
 
-    def patch(self, chat_id: int, patch: Mapping[str, Any]) -> None:
+    @staticmethod
+    def _with_aliases(patch: Mapping[str, Any]) -> dict[str, Any]:
         clean = {
             str(k): v for k, v in (patch or {}).items()
             if v is not None and not str(k).startswith("_")
         }
+        # New Intelligence Core names and legacy Router names remain equivalent
+        # during the incremental migration.
+        if clean.get("brain_mode") is not None and clean.get("difficulty") is None:
+            clean["difficulty"] = clean["brain_mode"]
+        if clean.get("difficulty") is not None and clean.get("brain_mode") is None:
+            clean["brain_mode"] = clean["difficulty"]
+        if clean.get("voice_mode") is not None and clean.get("voice") is None:
+            clean["voice"] = clean["voice_mode"]
+        if clean.get("voice") is not None and clean.get("voice_mode") is None:
+            clean["voice_mode"] = clean["voice"]
+        return clean
+
+    def patch(self, chat_id: int, patch: Mapping[str, Any]) -> None:
+        clean = self._with_aliases(patch)
         if not clean or not self.store:
             return
         if hasattr(self.store, "set_profile"):

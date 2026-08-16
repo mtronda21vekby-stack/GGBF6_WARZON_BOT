@@ -113,24 +113,35 @@ def _keyboard(rows: Iterable[list[dict]], *, placeholder: str = "Команда 
 
 
 # =========================
-# MAIN — NATIVE TACTICAL COMMAND DECK
+# MAIN — COMPACT RESPONSE ACTION BAR
 # =========================
 def kb_main() -> dict:
-    """Primary deck using Bot API 9.4+ native colored button styles."""
-    return _keyboard(
-        [
-            _row("🧠 ИИ", "🎯 Тренировка"),
-            _row("🎮 Игра", "🎬 VOD"),
-            _row("🧟 Zombies", "📌 Профиль"),
-            _row("💎 Premium", "⚙️ Настройки"),
-            _row("📊 Статус", _miniapp_button()),
-        ],
-        placeholder="Опиши файт: ситуация · ошибка · цель",
-    )
+    """
+    Keep AI responses clean: one compact inline action bar instead of attaching
+    the entire standard Telegram keyboard under every answer.
+    """
+    row = [
+        {
+            "text": "◼ COMMAND CONSOLE",
+            "callback_data": "bco:home",
+            "style": "primary",
+        }
+    ]
+    url = _webapp_url()
+    if url:
+        row.append(
+            {
+                "text": "🛰 COMMAND CENTER",
+                "web_app": {"url": url},
+                "style": "primary",
+            }
+        )
+    markup = {"inline_keyboard": [row]}
+    return decorate_reply_markup(markup) or markup
 
 
 # =========================
-# PREMIUM HUB (legacy-compatible)
+# PREMIUM HUB (legacy-compatible; transport upgrades it to inline)
 # =========================
 def kb_premium() -> dict:
     return _keyboard(
