@@ -37,12 +37,13 @@ def _settings():
         voice_enabled=True,
         usage_guard_enabled=True,
         telegram_max_update_bytes=256 * 1024,
+        premium_link_enabled=True,
     )
 
 
 def test_release_contract_is_explicit_and_readiness_exposes_version_only():
-    assert APP_VERSION == "12.0.0"
-    assert RELEASE_CONTRACT == "bco-aaa-v12"
+    assert APP_VERSION == "13.0.0"
+    assert RELEASE_CONTRACT == "bco-aaa-v13"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -50,7 +51,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "12.0.0", "contract": "bco-aaa-v12"}
+    assert snap["release"] == {"version": "13.0.0", "contract": "bco-aaa-v13"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["storage"]["recovery"]["last_probe_ok"] is True
     rendered = repr(snap)
