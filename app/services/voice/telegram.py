@@ -58,6 +58,7 @@ class VoiceTelegramController:
     profiles: Any
     store: Any
     voice: VoiceService
+    usage_guard: Any = None
 
     def _profile(self, chat_id: int) -> dict:
         try:
@@ -92,6 +93,20 @@ class VoiceTelegramController:
         await self.tg.send_message(chat_id, body, kb_voice_panel())
 
     async def _speak(self, chat_id: int, text: str, *, explicit: bool) -> bool:
+        if self.usage_guard is not None:
+            try:
+                decision = self.usage_guard.check(chat_id, "voice")
+                if not bool(getattr(decision, "allowed", True)):
+                    if explicit:
+                        wait = max(1, int(getattr(decision, "retry_after_s", 1) or 1))
+                        await self._send_panel(
+                            chat_id,
+                            f"⏳ Озвучка на cooldown. Повтори примерно через {wait} сек.",
+                        )
+                    return False
+            except Exception:
+                pass
+
         profile = self._profile(chat_id)
         try:
             artifact = await self.voice.synthesize(text, profile)
