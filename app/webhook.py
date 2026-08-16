@@ -25,7 +25,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     setup_logging(settings.log_level)
 
-    app = FastAPI(title="GGBF6 WARZON BOT", version="5.0.0")
+    app = FastAPI(title="GGBF6 WARZON BOT", version="6.0.0")
 
     tg = TelegramClient(settings.bot_token)
     store = build_store(settings)
@@ -34,12 +34,7 @@ def create_app() -> FastAPI:
     conversation = ConversationService(brain=core_brain, store=store, profiles=profiles)
 
     voice_service = VoiceService(settings=settings)
-    voice_controller = VoiceTelegramController(
-        tg=tg,
-        profiles=profiles,
-        store=store,
-        voice=voice_service,
-    )
+    voice_controller = VoiceTelegramController(tg=tg, profiles=profiles, store=store, voice=voice_service)
 
     vod_service = VODAnalysisService(
         api_key=settings.openai_api_key,
@@ -58,13 +53,18 @@ def create_app() -> FastAPI:
         download_timeout_s=settings.vod_download_timeout_s,
     )
 
-    router = Router(
-        tg=tg,
-        brain=conversation,
-        profiles=profiles,
-        store=store,
-        settings=settings,
-    )
+    router = Router(tg=tg, brain=conversation, profiles=profiles, store=store, settings=settings)
+
+    # Register the trusted intelligence API before the Mini App GET catch-all.
+    try:
+        from app.webapp.command_center_router import bind_runtime as command_center_bind_runtime
+        from app.webapp.command_center_router import router as command_center_router
+
+        app.include_router(command_center_router)
+        command_center_bind_runtime(store=store, profiles=profiles)
+        log.info("Command Center runtime bind: OK")
+    except Exception as exc:
+        log.exception("Command Center runtime bind FAILED: %s", type(exc).__name__)
 
     try:
         from app.webapp.webapp_router import bind_runtime as webapp_bind_runtime
@@ -72,12 +72,7 @@ def create_app() -> FastAPI:
 
         app.include_router(webapp_router)
         try:
-            webapp_bind_runtime(
-                brain=conversation,
-                profiles=profiles,
-                store=store,
-                settings=settings,
-            )
+            webapp_bind_runtime(brain=conversation, profiles=profiles, store=store, settings=settings)
             log.info("Mini App runtime bind: OK")
         except Exception as exc:
             log.exception("Mini App runtime bind FAILED: %s", exc)
@@ -110,23 +105,18 @@ def create_app() -> FastAPI:
         request: Request,
         x_telegram_bot_api_secret_token: str | None = Header(default=None),
     ):
-        if settings.webhook_secret:
-            if x_telegram_bot_api_secret_token != settings.webhook_secret:
-                raise HTTPException(status_code=401, detail="bad secret token")
+        if settings.webhook_secret and x_telegram_bot_api_secret_token != settings.webhook_secret:
+            raise HTTPException(status_code=401, detail="bad secret token")
 
         raw = await request.json()
         upd = Update.parse(raw)
 
-        # Voice controls are a narrow pre-handler. Existing persona buttons
-        # (TEAMMATE/COACH) still fall through to the legacy Router.
         try:
             if await voice_controller.maybe_handle_command(upd):
                 return JSONResponse({"ok": True})
         except Exception as exc:
             log.exception("voice command pre-handler crashed: %s", type(exc).__name__)
 
-        # Media/VOD gets a dedicated capability boundary before the legacy
-        # text router. This keeps the large existing Router stable.
         try:
             if await vod_ingress.maybe_handle(upd):
                 return JSONResponse({"ok": True})
@@ -137,7 +127,6 @@ def create_app() -> FastAPI:
             msg = (upd.get("message") or upd.get("edited_message") or {}) if isinstance(upd, dict) else {}
             web_app_data = msg.get("web_app_data") if isinstance(msg, dict) else None
             data_raw = web_app_data.get("data") if isinstance(web_app_data, dict) else None
-
             if data_raw:
                 handler = getattr(router, "handle_webapp_data", None)
                 if callable(handler):
@@ -159,9 +148,6 @@ def create_app() -> FastAPI:
         except Exception as exc:
             log.exception("Unhandled error: %s", exc)
 
-        # AUTO speaks only when Router/ConversationService actually appended a
-        # new assistant turn. Menu responses do not mutate working memory and
-        # therefore do not trigger TTS.
         try:
             await voice_controller.maybe_auto(chat_id, before_voice_signature)
         except Exception as exc:
