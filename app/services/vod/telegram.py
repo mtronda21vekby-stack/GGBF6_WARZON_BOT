@@ -40,6 +40,7 @@ class VODTelegramIngress:
     profiles: Any
     store: Any
     player_memory: Any = None
+    usage_guard: Any = None
     enabled: bool = True
     max_bytes: int = 20 * 1024 * 1024
     download_timeout_s: float = 60.0
@@ -82,6 +83,21 @@ class VODTelegramIngress:
                 ),
             )
             return True
+
+        # Charge only actual media analysis, not opening the VOD panel or
+        # rejecting an oversized attachment.
+        if self.usage_guard is not None:
+            try:
+                decision = self.usage_guard.check(chat_id, "vod")
+                if not bool(getattr(decision, "allowed", True)):
+                    wait = max(1, int(getattr(decision, "retry_after_s", 1) or 1))
+                    await self.tg.send_message(
+                        chat_id,
+                        f"⏳ VOD-анализ сейчас на cooldown. Повтори примерно через {wait} сек.",
+                    )
+                    return True
+            except Exception:
+                pass
 
         note = str(message.get("caption") or "").strip()[:1200]
         await self.tg.send_message(
