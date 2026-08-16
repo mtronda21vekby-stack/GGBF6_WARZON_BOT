@@ -33,12 +33,24 @@ services:
       - key: VOICE_ENABLED
         value: "1"
       - key: VOICE_PROVIDER
-        value: piper
+        value: auto
+      - key: VOICE_HIGH_FIDELITY_ENABLED
+        value: "1"
+      - key: VOICE_LOCAL_FALLBACK_ENABLED
+        value: "1"
+      - key: VOICE_OPENAI_MODEL
+        value: gpt-4o-mini-tts
+      - key: VOICE_OPENAI_VOICE
+        value: cedar
+      - key: VOICE_OPENAI_TIMEOUT_S
+        value: "45"
       - key: VOICE_MODEL_NAME
         value: ru_RU-denis-medium
       - key: VOICE_MODEL_DIR
         value: .bco_voice
       - key: VOICE_MAX_CHARS
-        value: "1600"
+        value: "1800"
+      - key: VOICE_OPUS_BITRATE_KBPS
+        value: "48"
       # OPENAI_API_KEY и SUPABASE_SERVICE_ROLE_KEY не хранить в публичном репозитории.
       # Добавить их только как server-side secrets в Render Dashboard.
