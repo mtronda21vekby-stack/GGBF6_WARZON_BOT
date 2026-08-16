@@ -14,6 +14,7 @@ def readiness_snapshot(
     release_contract: str = "unknown",
     usage_guard: Any = None,
     replay_guard: Any = None,
+    entitlement_service: Any = None,
 ) -> dict:
     """Privacy-safe runtime readiness. Never exposes secret values/content."""
     ai_enabled = bool(getattr(settings, "ai_enabled", True))
@@ -56,6 +57,30 @@ def readiness_snapshot(
         except Exception:
             replay_snapshot = {"status": "unavailable"}
 
+    entitlement_snapshot: dict[str, Any] = {
+        "enabled": False,
+        "configured": False,
+        "last_success_at": None,
+        "last_error": "",
+    }
+    entitlement_readiness = getattr(entitlement_service, "readiness", None)
+    if callable(entitlement_readiness):
+        try:
+            raw = dict(entitlement_readiness() or {})
+            entitlement_snapshot = {
+                "enabled": bool(raw.get("enabled", False)),
+                "configured": bool(raw.get("configured", False)),
+                "last_success_at": str(raw.get("last_success_at") or "")[:64] or None,
+                "last_error": str(raw.get("last_error") or "")[:64],
+            }
+        except Exception:
+            entitlement_snapshot = {
+                "enabled": True,
+                "configured": False,
+                "last_success_at": None,
+                "last_error": "readiness_unavailable",
+            }
+
     features = {
         "ai": ai_enabled and ai_configured,
         "persistent_memory_configured": supabase_secret and supabase_url,
@@ -68,6 +93,8 @@ def readiness_snapshot(
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
         "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),
         "telegram_replay_dedupe": replay_guard is not None,
+        "premium_account_link": entitlement_snapshot["enabled"] and entitlement_snapshot["configured"],
+        "premium_entitlement_authority": entitlement_snapshot["configured"],
     }
     primary_degraded = bool(recovery) and recovery.get("primary_available") is False
     probe_failed = bool(recovery) and recovery.get("last_probe_ok") is False
@@ -87,6 +114,7 @@ def readiness_snapshot(
             "resilient_fallback": "Resilient" in storage_class,
             "recovery": recovery,
         },
+        "premium_link": entitlement_snapshot,
         "features": features,
         "abuse_guard": {
             "usage": guard_snapshot,
