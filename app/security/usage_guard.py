@@ -144,12 +144,20 @@ class UsageGuard:
     def _bucket(self, key: tuple[str, str]) -> Deque[float]:
         bucket = self._buckets.get(key)
         if bucket is None:
+            # Never evict a global bucket: otherwise an attacker could churn
+            # forged chat IDs until the system-wide cost budget is forgotten.
             while len(self._buckets) >= self._max_buckets:
-                old_key, _ = self._buckets.popitem(last=False)
-                # Global buckets are recreated immediately if needed and do not
-                # contain user identity, so normal bounded eviction is safe.
-                if old_key == key:
+                victim = next(
+                    (
+                        existing
+                        for existing in self._buckets.keys()
+                        if existing[1] != "global" and existing != key
+                    ),
+                    None,
+                )
+                if victim is None:
                     break
+                del self._buckets[victim]
             bucket = deque()
             self._buckets[key] = bucket
         else:
