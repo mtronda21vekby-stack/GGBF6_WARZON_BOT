@@ -3,468 +3,185 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Mapping
 
 import certifi
 import httpx
 from openai import OpenAI
 
+from app.services.brain.intents import IntentResult, classify_intent
+from app.services.brain.knowledge_context import KnowledgeContext
+from app.services.brain.prompt_builder import PromptBuilder
+from app.services.brain.response_policy import ResponsePolicy, get_response_policy
 
-# ----------------------------
-# Helpers: styles / safety
-# ----------------------------
-def _s(val: Any, default: str = "") -> str:
+
+def _s(value: Any, default: str = "") -> str:
     try:
-        v = "" if val is None else str(val)
-        v = v.strip()
-        return v if v else default
+        text = "" if value is None else str(value).strip()
     except Exception:
-        return default
+        text = ""
+    return text or default
 
 
-def _difficulty_style(diff: str) -> str:
-    d = (diff or "Normal").lower()
-    if "demon" in d:
-        return "DEMON"
-    if "pro" in d:
-        return "PRO"
-    return "NORMAL"
-
-
-def _voice_mode(profile: Dict[str, Any]) -> str:
-    """
-    IMPORTANT:
-    В твоём проекте профиль хранит voice как "TEAMMATE"/"COACH".
-    Раньше тут читалось "voice_mode" -> из-за этого коуч мог не включаться.
-    Теперь поддерживаем ОБА ключа (voice и voice_mode), ничего не ломаем.
-    """
-    v = _s((profile or {}).get("voice") or (profile or {}).get("voice_mode"), "TEAMMATE").upper()
-    return "COACH" if "COACH" in v else "TEAMMATE"
-
-
-def _limit_text(text: str, max_chars: int = 4000) -> str:
-    t = _s(text, "")
-    if len(t) <= max_chars:
-        return t
-    return t[: max_chars - 20] + "\n…(обрезано)"
-
-
-def _extract_recent(history: List[dict], max_turns: int = 20) -> List[dict]:
-    """
-    history item format expected:
-      {"role":"user"/"assistant", "content":"..."} OR your store variants
-    We keep only valid roles.
-    """
-    out: List[dict] = []
-    for m in (history or [])[-max_turns:]:
-        role = _s(m.get("role"), "").lower()
-        content = m.get("content")
-        if role in ("user", "assistant") and content:
-            out.append({"role": role, "content": _limit_text(str(content), 2000)})
-    return out
-
-
-def _clean_for_similarity(s: str) -> str:
-    return " ".join(_s(s).lower().replace("\n", " ").split())
-
-
-# ----------------------------
-# Emotion + eSports style helpers
-# ----------------------------
 _TILT_WORDS = (
-    "тильт", "горю", "сгорел", "бесит", "бесит", "достало", "ненавижу", "психую",
-    "злюсь", "ярость", "разнес", "разнести", "сломался", "всё пропало", "не могу",
-    "руки трясутся", "паника", "страшно", "засцал", "очкую", "слил", "сливаю",
-    "идиоты", "тиммейты", "рандомы", "клоуны", "мусор", "игра говно",
+    "тильт", "горю", "сгорел", "бесит", "достало", "ненавижу", "психую", "злюсь",
+    "паника", "страшно", "руки трясутся", "слил", "сливаю", "рандомы", "клоуны",
 )
-_LOW_CONF_WORDS = ("я ноль", "я слабый", "не умею", "не получается", "я не могу", "плохо играю", "я дно", "я бездарь")
-_HYPE_WORDS = ("погнали", "давай", "хочу разнести", "хочу топ", "топ1", "тащу", "вынесу", "разъеб", "доминировать")
-_CALM_WORDS = ("спокойно", "ок", "норм", "давай по факту", "без воды", "по делу", "анализ")
+_LOW_CONF_WORDS = ("я ноль", "я слабый", "не умею", "не получается", "я не могу", "я дно")
+_HYPE_WORDS = ("погнали", "хочу разнести", "хочу топ", "топ1", "тащу", "доминировать")
+_CALM_WORDS = ("спокойно", "давай по факту", "без воды", "по делу", "анализ")
 
 
-def _detect_emotion(user_text: str) -> Tuple[str, str]:
-    """
-    Returns:
-      (state, intensity)
-      state: tilt | anxiety | low_conf | hype | calm | neutral
-      intensity: low | mid | high
-    """
-    t = _clean_for_similarity(user_text)
+def detect_emotion(user_text: str) -> tuple[str, str]:
+    text = " ".join((user_text or "").lower().replace("\n", " ").split())
+    exclamations = (user_text or "").count("!") + (user_text or "").count("‼")
+    letters = [c for c in (user_text or "") if c.isalpha()]
+    caps = sum(1 for c in letters if c.isupper())
+    ratio = caps / max(1, len(letters))
 
-    def has_any(words) -> bool:
-        return any(w in t for w in words)
+    intensity = "high" if exclamations >= 3 or ratio > 0.28 else "mid" if exclamations == 2 or ratio > 0.18 else "low"
 
-    # intensity heuristic: caps, много !, мат/агрессия, повтор слов
-    exclam = user_text.count("!") + user_text.count("‼")
-    caps = sum(1 for ch in user_text if "A" <= ch <= "Z" or "А" <= ch <= "Я")
-    caps_ratio = caps / max(1, len(user_text))
-
-    intensity = "low"
-    if exclam >= 3 or caps_ratio > 0.18:
-        intensity = "high"
-    elif exclam == 2 or caps_ratio > 0.10:
-        intensity = "mid"
-
-    if has_any(_TILT_WORDS):
-        # если паника отдельно
-        if "паник" in t or "страш" in t or "руки тряс" in t:
-            return ("anxiety", intensity)
-        return ("tilt", intensity)
-
-    if has_any(_LOW_CONF_WORDS):
-        return ("low_conf", intensity)
-
-    if has_any(_HYPE_WORDS):
-        return ("hype", intensity)
-
-    if has_any(_CALM_WORDS):
-        return ("calm", intensity)
-
-    return ("neutral", intensity)
+    if any(x in text for x in _TILT_WORDS):
+        if any(x in text for x in ("паник", "страш", "руки тряс")):
+            return "anxiety", intensity
+        return "tilt", intensity
+    if any(x in text for x in _LOW_CONF_WORDS):
+        return "low_conf", intensity
+    if any(x in text for x in _HYPE_WORDS):
+        return "hype", intensity
+    if any(x in text for x in _CALM_WORDS):
+        return "calm", intensity
+    return "neutral", intensity
 
 
-def _esports_anchor(voice: str, state: str) -> str:
-    """
-    Без имён и без “цитат”, чтобы не врать.
-    Даём узнаваемые киберспорт-паттерны и протоколы.
-    """
-    if voice == "COACH":
-        if state in ("tilt", "anxiety"):
-            return (
-                "Киберспорт-принцип: после ошибки не «думать быстрее», а «упростить протокол».\n"
-                "Топ-игроки в тильте режут вариативность: 1 план → 1 триггер → 1 коммит.\n"
-                "Это называется дисциплина решения, а не настроение."
-            )
-        if state == "low_conf":
-            return (
-                "Киберспорт-принцип: уверенность строится не фразами, а повторяемым циклом.\n"
-                "Стабильность = одинаковый pre-fight чек + одинаковый post-fight разбор.\n"
-                "Топ-уровень — это не «талант», это «одинаково правильные решения 100 раз подряд»."
-            )
-        if state == "hype":
-            return (
-                "Киберспорт-принцип: агрессия работает только если она «информационная».\n"
-                "Топ-команды не «влетают», они сначала забирают инфу, затем делают сжатый коммит 2–3 секунды."
-            )
-        return (
-            "Киберспорт-принцип: раунд выигрывается протоколом.\n"
-            "Топ-уровень держится на 3 вещах: инфа → тайминг → коммит.\n"
-            "Всё остальное — шум."
-        )
-
-    # TEAMMATE
-    if state in ("tilt", "anxiety"):
-        return (
-            "Киберспорт-лайфхак: когда горишь — топы не «жмут сильнее», они режут мув на один шаг.\n"
-            "Сначала инфа, потом файт. Без геройства."
-        )
-    if state == "low_conf":
-        return (
-            "Киберспорт-лайфхак: уверенность = повторяемый микро-план.\n"
-            "Один и тот же вход, один и тот же пик, одна и та же страховка — и ты перестаёшь сомневаться."
-        )
-    if state == "hype":
-        return (
-            "Киберспорт-лайфхак: агрессия — норм, но только с инфой.\n"
-            "Сначала «проверил», потом «вломил». Иначе это лотерея."
-        )
-    return (
-        "Киберспорт-лайфхак: топы почти всегда играют «для инфы» перед коммитом.\n"
-        "Ты не медлишь — ты создаёшь выгодный файт."
-    )
+def _temperature(profile: Mapping[str, Any], user_text: str) -> float:
+    brain = _s(profile.get("difficulty") or profile.get("brain_mode"), "Normal").upper()
+    state, intensity = detect_emotion(user_text)
+    value = 0.62
+    if brain == "PRO":
+        value = 0.68
+    elif brain == "DEMON":
+        value = 0.72
+    if state in {"tilt", "anxiety"}:
+        value -= 0.08 if intensity == "high" else 0.05
+    elif state == "hype":
+        value += 0.03
+    return max(0.42, min(0.82, value))
 
 
-def _emotion_directive(voice: str, state: str, intensity: str) -> str:
-    """
-    Это добавка к system prompt: как отвечать в зависимости от эмоций.
-    """
-    # базовая жесткость регулируем от интенсивности (высокая -> проще, короче)
-    if state == "tilt":
-        if voice == "COACH":
-            return (
-                "Эмо-режим: USER TILT.\n"
-                "Сначала стабилизируй (1 короткий шаг), потом план.\n"
-                "Тон: холодный контроль, без давления, без морали.\n"
-                "Если intensity=high — сделай ответ короче и проще, 3–5 пунктов максимум.\n"
-                "Никаких «успокойся»; вместо этого — конкретный протокол."
-            )
-        return (
-            "Эмо-режим: USER TILT.\n"
-            "Сначала «быстрый ресет» (1 действие на 10 секунд), потом 3 правила.\n"
-            "Тон: свой в отряде, уверенно, без нотаций.\n"
-            "Если intensity=high — коротко, без длинных объяснений."
-        )
-
-    if state == "anxiety":
-        if voice == "COACH":
-            return (
-                "Эмо-режим: USER ANXIETY.\n"
-                "Задача: убрать хаос. Дай протокол «до файта / в файте / после».\n"
-                "Тон: уверенный, защищающий, абсолютный контроль.\n"
-                "1 вопрос максимум, лучше сразу план."
-            )
-        return (
-            "Эмо-режим: USER ANXIETY.\n"
-            "Дай простой анти-паник чек-лист: дыхание/угол/инфа/коммит.\n"
-            "Тон: тиммейт, который прикрывает. Без стыда, без давления."
-        )
-
-    if state == "low_conf":
-        if voice == "COACH":
-            return (
-                "Эмо-режим: USER LOW CONF.\n"
-                "Сначала покажи ясный путь: маленькие победы → метрика → усложнение.\n"
-                "Тон: «я доведу до топ-1 через систему», но без пустой мотивации.\n"
-                "Дай измеримый шаг на сегодня."
-            )
-        return (
-            "Эмо-режим: USER LOW CONF.\n"
-            "Подними уверенность через микро-план: 1 навык, 1 правило, 1 метрика.\n"
-            "Тон: свой, поддерживающий, но жёсткий по делу. Без сюсюканья."
-        )
-
-    if state == "hype":
-        if voice == "COACH":
-            return (
-                "Эмо-режим: USER HYPE.\n"
-                "Используй энергию: усложни план и добавь критерии качества.\n"
-                "Тон: элитный контроль: агрессия только с инфой.\n"
-                "Дай правило «не коммит без подтверждения»."
-            )
-        return (
-            "Эмо-режим: USER HYPE.\n"
-            "Поддержи огонь, но держи мозг холодным.\n"
-            "Тон: отрядный вайб + конкретика. 1 триггер агрессии, 1 стоп-сигнал."
-        )
-
-    if state == "calm":
-        if voice == "COACH":
-            return (
-                "Эмо-режим: USER CALM.\n"
-                "Можно давать сложнее: причинно-следственные связи + метрика + чек-лист.\n"
-                "Тон: сухой, элитный, структурный."
-            )
-        return (
-            "Эмо-режим: USER CALM.\n"
-            "Держи разговорно и по делу, но добавь 1–2 точных микро-правки."
-        )
-
-    # neutral
-    return (
-        "Эмо-режим: USER NEUTRAL.\n"
-        "Стандарт: максимально полезно, без воды, 1 вопрос максимум при нехватке вводных."
-    )
+def _clean_similarity(text: str) -> str:
+    return " ".join(_s(text).lower().replace("\n", " ").split())
 
 
-# ----------------------------
-# Main AI Hook
-# ----------------------------
 @dataclass
 class AIHook:
     api_key: str
     model: str = "gpt-4.1-mini"
-
-    # retry config (Render free иногда шатает сеть)
     max_attempts: int = 4
     base_sleep: float = 0.7
+    prompt_builder: PromptBuilder | None = None
 
     def _client(self) -> OpenAI:
-        # Render иногда даёт сетевые глюки -> таймауты + нормальный SSL
         timeout = httpx.Timeout(connect=20.0, read=75.0, write=45.0, pool=75.0)
         limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
-
         http_client = httpx.Client(
             timeout=timeout,
             limits=limits,
             verify=certifi.where(),
-            headers={"User-Agent": "BLACK-CROWN-OPS/1.0 (Render)"},
+            headers={"User-Agent": "BLACK-CROWN-OPS/2.0"},
         )
-
         base_url = _s(os.getenv("OPENAI_BASE_URL"), "") or None
         return OpenAI(api_key=self.api_key, base_url=base_url, http_client=http_client)
 
-    def _system_prompt(self, profile: Dict[str, Any], user_text: str) -> str:
-        game = _s(profile.get("game"), "Warzone")
-        platform = _s(profile.get("platform"), "PC")
-        input_ = _s(profile.get("input"), "Controller")
-        diff = _s(profile.get("difficulty"), "Normal")
-        bf6_class = _s(profile.get("bf6_class"), "Assault")
-        role = _s(profile.get("role"), "Flex")
-        voice = _voice_mode(profile)
-        style = _difficulty_style(diff)
-
-        emo_state, emo_intensity = _detect_emotion(user_text)
-        emo_rules = _emotion_directive(voice, emo_state, emo_intensity)
-        esports = _esports_anchor(voice, emo_state)
-
-        if voice == "COACH":
-            tone_block = (
-                "Ты — BLACK CROWN OPS: искусственный разум для соревновательных FPS.\n"
-                "Ты не «бот» и не «поддержка». Ты ведёшь к мировому ТОП-1 через систему.\n\n"
-                "Структура ответа:\n"
-                "1) Диагноз (1-2 строки)\n"
-                "2) СЕЙЧАС (в бою: 3-6 коротких пунктов)\n"
-                "3) ДАЛЬШЕ (тренировка/настройки: 3-6 пунктов)\n"
-                "4) Метрика (1 конкретный измеримый критерий)\n"
-                "Правила:\n"
-                "- Никаких шаблонов и одинаковых вступлений.\n"
-                "- Если вводных мало — максимум 1 уточняющий вопрос, иначе сразу план.\n"
-                "- Пиши по-русски. Лёгкий юмор разрешён, кринж — запрещён.\n"
-                "- Без фейковых цитат и без имён игроков; киберспорт-логика — да.\n"
-            )
-        else:
-            tone_block = (
-                "Ты — BLACK CROWN OPS в режиме тиммейта: свой в отряде, но умный.\n"
-                "Ты не читаешь лекции. Ты даёшь решения и правила.\n\n"
-                "Стиль:\n"
-                "- Разговорно, уверенно, коротко.\n"
-                "- Можешь подколоть, но без токсика.\n"
-                "- Сначала 1-2 ключевые мысли, потом быстрый план.\n"
-                "Правила:\n"
-                "- Не повторяй одну и ту же фразу.\n"
-                "- Если мало вводных — 1 вопрос максимум, иначе действуй.\n"
-                "- Пиши по-русски. Юмор — да, занудство — нет.\n"
-                "- Без фейковых цитат и без имён игроков; киберспорт-логика — да.\n"
-            )
-
-        return (
-            "SYSTEM:\n"
-            "Ты — BLACK CROWN OPS (Warzone / BO7 / BF6 + Zombies). Это искусственный разум.\n"
-            f"Brain style: {style}\n"
-            f"Voice mode: {voice}\n"
-            f"Emotion state: {emo_state} | intensity: {emo_intensity}\n\n"
-            f"{tone_block}\n"
-            "Эмоциональная адаптация (обязательно соблюдай):\n"
-            f"{emo_rules}\n\n"
-            "Киберспорт-якорь (используй как пример/рамку, без имён):\n"
-            f"{esports}\n\n"
-            "Контекст игрока (внутри ответа не перечисляй как лог, используй как знание):\n"
-            f"- game={game}, platform={platform}, input={input_}, difficulty={diff}, role={role}, bf6_class={bf6_class}\n\n"
-            "Если юзер пишет просто 'привет' — отвечай нормально, как человек, и мягко попроси вводные.\n"
-            "Запрещено: повторять одну и ту же болванку, отвечать пустыми общими словами.\n"
-        ).strip()
-
-    def _temperature(self, profile: Dict[str, Any], user_text: str) -> float:
-        style = _difficulty_style(_s(profile.get("difficulty"), "Normal"))
-        emo_state, emo_intensity = _detect_emotion(user_text)
-
-        base = 0.66
-        if style == "DEMON":
-            base = 0.78
-        elif style == "PRO":
-            base = 0.72
-
-        # эмоции: в тильте/панике делаем чуть суше (меньше разброс), в хайпе — чуть живее
-        if emo_state in ("tilt", "anxiety"):
-            base -= 0.08 if emo_intensity == "high" else 0.05
-        elif emo_state == "hype":
-            base += 0.05
-
-        # safety clamp
-        if base < 0.45:
-            base = 0.45
-        if base > 0.88:
-            base = 0.88
-        return base
-
-    def _build_messages(self, profile: Dict[str, Any], history: List[dict], user_text: str) -> List[dict]:
-        system = self._system_prompt(profile, user_text)
-        msgs: List[dict] = [{"role": "system", "content": system}]
-        msgs.extend(_extract_recent(history or [], max_turns=20))
-        msgs.append({"role": "user", "content": _limit_text(user_text, 3000)})
-        return msgs
-
-    def _looks_like_repeat(self, history: List[dict], candidate: str) -> bool:
-        """
-        Детектор залипания: если ответ слишком похож на предыдущий assistant.
-        """
-        cand = _s(candidate, "")
-        if not cand:
-            return False
-
+    def _looks_like_repeat(self, history: list[dict], candidate: str) -> bool:
         last = ""
-        for m in reversed(history or []):
-            if _s(m.get("role"), "").lower() == "assistant":
-                last = _s(m.get("content"), "")
+        for item in reversed(history or []):
+            if _s(item.get("role")).lower() == "assistant":
+                last = _s(item.get("content"))
                 break
-        if not last:
+        if not last or not candidate:
             return False
+        a = _clean_similarity(candidate)
+        b = _clean_similarity(last)
+        return bool(a[:220] and a[:220] == b[:220])
 
-        a = _clean_for_similarity(cand)
-        b = _clean_for_similarity(last)
+    def _anti_repeat_hint(self) -> dict:
+        return {
+            "role": "system",
+            "content": (
+                "Quality retry: the candidate was too similar to the previous assistant answer. "
+                "Keep the facts unchanged, but use a different opening, structure and tactical angle. "
+                "Do not add invented details."
+            ),
+        }
 
-        # если почти одинаковые первые 220 символов — это залипание
-        return a[:220] and (a[:220] == b[:220])
+    def generate(
+        self,
+        *,
+        profile: dict[str, Any],
+        history: list[dict],
+        user_text: str,
+        intent_result: IntentResult | None = None,
+        policy: ResponsePolicy | None = None,
+        knowledge: KnowledgeContext | None = None,
+        player_context: Mapping[str, Any] | None = None,
+    ) -> str:
+        intent_result = intent_result or classify_intent(user_text, profile)
+        policy = policy or get_response_policy(intent_result, profile)
+        knowledge = knowledge or KnowledgeContext.unknown()
+        emotion_state, emotion_intensity = detect_emotion(user_text)
+        builder = self.prompt_builder or PromptBuilder()
 
-    def _anti_repeat_hint(self, profile: Dict[str, Any], user_text: str) -> str:
-        voice = _voice_mode(profile)
-        emo_state, _ = _detect_emotion(user_text)
-        if voice == "COACH":
-            return (
-                "ВАЖНО: твой прошлый ответ был слишком похож на предыдущий. "
-                "Сделай другой угол: другой порядок блоков, другие первые слова, "
-                "добавь киберспорт-якорь по-другому. "
-                "1 вопрос максимум. "
-                f"Emotion={emo_state}. Не начинай с тех же слов."
-            )
-        return (
-            "ВАЖНО: не повторяйся. Ответь по-новому, как тиммейт: "
-            "другие первые слова, другой угол, 1 вопрос максимум. "
-            f"Emotion={emo_state}."
+        messages = builder.build_messages(
+            profile=profile,
+            history=history or [],
+            user_text=user_text,
+            intent=intent_result,
+            policy=policy,
+            knowledge=knowledge,
+            emotion_state=emotion_state,
+            emotion_intensity=emotion_intensity,
+            player_context=player_context,
         )
 
-    def generate(self, *, profile: Dict[str, Any], history: List[dict], user_text: str) -> str:
-        """
-        Главная точка: вызывает OpenAI, ретраи, анти-повтор, человекоподобный стиль.
-        """
         client = self._client()
-        msgs = self._build_messages(profile, history or [], user_text)
-
-        last_err: Optional[Exception] = None
-        temp = self._temperature(profile, user_text)
+        temp = _temperature(profile, user_text)
+        last_error: Exception | None = None
 
         for attempt in range(1, self.max_attempts + 1):
             try:
-                resp = client.chat.completions.create(
+                response = client.chat.completions.create(
                     model=self.model,
-                    messages=msgs,
+                    messages=messages,
                     temperature=temp,
                 )
-                text_out = (resp.choices[0].message.content or "").strip()
+                output = (response.choices[0].message.content or "").strip()
 
-                # анти-залипание: если повторился — добавляем хинт и делаем 1 повторный запрос
-                if self._looks_like_repeat(history or [], text_out):
-                    msgs.append({"role": "system", "content": self._anti_repeat_hint(profile, user_text)})
-                    resp2 = client.chat.completions.create(
+                if output and self._looks_like_repeat(history or [], output):
+                    retry_messages = [*messages, self._anti_repeat_hint()]
+                    retry = client.chat.completions.create(
                         model=self.model,
-                        messages=msgs,
-                        temperature=min(0.90, temp + 0.06),
+                        messages=retry_messages,
+                        temperature=min(0.86, temp + 0.05),
                     )
-                    text_out = (resp2.choices[0].message.content or "").strip()
+                    output = (retry.choices[0].message.content or "").strip()
 
-                if not text_out:
-                    return (
-                        "🧠 Пустой ответ (бывает 😅).\n"
-                        "Напиши одной строкой:\n"
-                        "Игра | input | где умираешь | что хочешь улучшить."
-                    )
+                if output:
+                    return output
 
-                return text_out
-
-            except Exception as e:
-                last_err = e
-                time.sleep(self.base_sleep * attempt)
+                return (
+                    "🧠 Пустой ответ от модели.\n"
+                    "Напиши ситуацию ещё раз одной строкой — без потери текущего профиля."
+                )
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.max_attempts:
+                    time.sleep(self.base_sleep * attempt)
 
         return (
-            "🧠 ИИ: ERROR (после ретраев)\n"
-            f"{type(last_err).__name__}: {last_err}\n\n"
-            "Что проверить в Render → Environment:\n"
-            "1) OPENAI_API_KEY = твой ключ\n"
-            "2) AI_ENABLED=1\n"
-            "3) OPENAI_MODEL (по умолчанию gpt-4.1-mini)\n"
-            "4) Если используешь прокси: OPENAI_BASE_URL\n\n"
-            "Если Render free — сеть иногда шатает. Ретраи уже включены."
+            "🧠 ИИ временно недоступен после повторных попыток.\n"
+            f"Ошибка: {type(last_error).__name__ if last_error else 'unknown'}.\n"
+            "Проверь OPENAI_API_KEY / OPENAI_MODEL и повтори запрос."
         )

@@ -1,18 +1,17 @@
 # app/webhook.py
 from __future__ import annotations
 
-from fastapi import FastAPI, Request, Header, HTTPException
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 
-from app.config import get_settings
-from app.observability.log import setup_logging, get_logger
-
-from app.adapters.telegram.types import Update
 from app.adapters.telegram.client import TelegramClient
-
+from app.adapters.telegram.types import Update
+from app.config import get_settings
 from app.core.router import Router
+from app.observability.log import get_logger, setup_logging
 from app.services.brain.engine import BrainEngine
 from app.services.brain.memory import InMemoryStore
+from app.services.conversation.service import ConversationService
 from app.services.profiles.service import ProfileService
 
 log = get_logger("webhook")
@@ -22,48 +21,41 @@ def create_app() -> FastAPI:
     settings = get_settings()
     setup_logging(settings.log_level)
 
-    app = FastAPI(title="GGBF6 WARZON BOT", version="3.0.0")
+    app = FastAPI(title="GGBF6 WARZON BOT", version="4.0.0")
 
-    # =========================================================
-    # CORE SERVICES (НЕ ТРОГАЕМ)
-    # =========================================================
     tg = TelegramClient(settings.bot_token)
-
     store = InMemoryStore(memory_max_turns=settings.memory_max_turns)
     profiles = ProfileService(store=store)
-    brain = BrainEngine(store=store, profiles=profiles, settings=settings)
+    core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
+    conversation = ConversationService(brain=core_brain)
 
     router = Router(
         tg=tg,
-        brain=brain,
+        brain=conversation,
         profiles=profiles,
         store=store,
         settings=settings,
     )
 
-    # =========================================================
-    # MINI APP (Telegram WebApp) — SAFE + FUTURE-PROOF
-    # Структура:
-    # app/webapp/webapp_router.py
-    # app/webapp/static/index.html
-    # =========================================================
     try:
-        from app.webapp.webapp_router import router as webapp_router
         from app.webapp.webapp_router import bind_runtime as webapp_bind_runtime
+        from app.webapp.webapp_router import router as webapp_router
 
         app.include_router(webapp_router)
-
-        # ✅ КЛЮЧЕВОЕ: пробрасываем runtime в webapp_router,
-        # чтобы /webapp/api/ask видел brain/profiles/store/settings
         try:
-            webapp_bind_runtime(brain=brain, profiles=profiles, store=store, settings=settings)
+            webapp_bind_runtime(
+                brain=conversation,
+                profiles=profiles,
+                store=store,
+                settings=settings,
+            )
             log.info("Mini App runtime bind: OK")
-        except Exception as e:
-            log.exception("Mini App runtime bind FAILED: %s", e)
+        except Exception as exc:
+            log.exception("Mini App runtime bind FAILED: %s", exc)
 
         log.info("Mini App router loaded")
-    except Exception as e:
-        log.exception("Mini App router NOT loaded: %s", e)
+    except Exception as exc:
+        log.exception("Mini App router NOT loaded: %s", exc)
 
         @app.get("/webapp", response_class=HTMLResponse, include_in_schema=False)
         async def webapp_missing():
@@ -76,9 +68,6 @@ def create_app() -> FastAPI:
                 "</ul>"
             )
 
-    # =========================================================
-    # HEALTH / ROOT
-    # =========================================================
     @app.get("/", include_in_schema=False)
     async def root():
         return {"ok": True, "service": "ggbf6-warzon-bot"}
@@ -87,10 +76,6 @@ def create_app() -> FastAPI:
     async def health():
         return {"ok": True, "status": "alive"}
 
-    # =========================================================
-    # TELEGRAM WEBHOOK (НЕ ТРОГАЕМ)
-    # + ДОБАВЛЯЕМ MINI APP -> BOT (web_app_data) ПЕРЕХВАТ (SAFE)
-    # =========================================================
     @app.post("/tg/webhook", include_in_schema=False)
     async def telegram_webhook(
         request: Request,
@@ -103,10 +88,6 @@ def create_app() -> FastAPI:
         raw = await request.json()
         upd = Update.parse(raw)
 
-        # =========================================================
-        # MINI APP -> BOT (web_app_data)
-        # Telegram присылает message.web_app_data.data после tg.sendData(...)
-        # =========================================================
         try:
             msg = getattr(upd, "message", None)
             web_app_data = getattr(msg, "web_app_data", None) if msg else None
@@ -124,25 +105,20 @@ def create_app() -> FastAPI:
                     try:
                         await handler(upd, data_raw)
                         return JSONResponse({"ok": True})
-                    except Exception as e:
-                        log.exception("handle_webapp_data crashed: %s", e)
-                        # падаем обратно в обычный пайплайн (не ломаем)
+                    except Exception as exc:
+                        log.exception("handle_webapp_data crashed: %s", exc)
                 else:
-                    log.warning("Router has no handle_webapp_data() yet (web_app_data received)")
-        except Exception as e:
-            log.exception("web_app_data pre-handler crashed: %s", e)
+                    log.warning("Router has no handle_webapp_data() yet")
+        except Exception as exc:
+            log.exception("web_app_data pre-handler crashed: %s", exc)
 
-        # обычный пайплайн
         try:
             await router.handle_update(upd)
-        except Exception as e:
-            log.exception("Unhandled error: %s", e)
+        except Exception as exc:
+            log.exception("Unhandled error: %s", exc)
 
         return JSONResponse({"ok": True})
 
-    # =========================================================
-    # SHUTDOWN
-    # =========================================================
     @app.on_event("shutdown")
     async def _shutdown():
         await tg.close()
@@ -150,7 +126,4 @@ def create_app() -> FastAPI:
     return app
 
 
-# =========================================================
-# Render / uvicorn ENTRYPOINT (НЕ ТРОГАЕМ)
-# =========================================================
 app = create_app()

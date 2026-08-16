@@ -3,6 +3,11 @@ from __future__ import annotations
 # ЯЗЫК:
 # - BF6 SETTINGS: ENGLISH
 # - Warzone/BO7 SETTINGS: РУССКИЙ
+#
+# NOTE: this is a legacy static preset table. The original file in main was
+# truncated inside the BF6 Demon PC preset and therefore did not compile.
+# This repair preserves every value that existed before the truncation and
+# deliberately does not invent missing BF6 Demon PS/Xbox values.
 
 PRESETS = {
     "warzone": {
@@ -51,4 +56,7 @@ PRESETS = {
             "xbox": {"title": "BF6 • Xbox (Controller) • Pro", "settings": {"Controller": {"Deadzone L": "3", "Deadzone R": "3"}, "Camera": {"FOV": "105"}}},
         },
         "demon": {
-            "pc": {"title": "BF6 • PC (KBM) • Demon", "settings": {"Mouse": {"DPI": "800", "In-game Sens": "4.3"}, "Camera": {"FOV": "105
+            "pc": {"title": "BF6 • PC (KBM) • Demon", "settings": {"Mouse": {"DPI": "800", "In-game Sens": "4.3"}, "Camera": {"FOV": "105"}}},
+        },
+    },
+}
