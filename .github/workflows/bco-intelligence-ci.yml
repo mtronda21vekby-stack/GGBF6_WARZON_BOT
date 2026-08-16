@@ -7,6 +7,7 @@ on:
       - feature/bco-aaa-intelligence-v1
       - feature/bco-aaa-player-intelligence-v2
       - feature/bco-aaa-live-game-intelligence-v3
+      - feature/bco-aaa-vod-intelligence-v4
   pull_request:
     branches:
       - main

@@ -88,6 +88,18 @@ class PlayerMemoryService:
                 parts.append("Тренды: " + ", ".join(trend_bits))
         return ". ".join(parts)[:1000]
 
+    def _refresh_derived(self, chat_id: int, fallback_profile: dict[str, Any]) -> None:
+        try:
+            latest_profile = self.profiles.get(chat_id)
+        except Exception:
+            latest_profile = dict(fallback_profile or {})
+        snapshot = self.analytics.snapshot(chat_id)
+        try:
+            self.store.set_derived_intelligence(chat_id, snapshot)
+            self.store.set_summary(chat_id, self._build_summary(chat_id, latest_profile, snapshot))
+        except Exception:
+            pass
+
     def observe(self, *, chat_id: int, text: str, profile: dict[str, Any], reply: str = "", trusted: bool = True) -> None:
         """Persist only evidence-backed long-term intelligence.
 
@@ -163,13 +175,83 @@ class PlayerMemoryService:
             except Exception:
                 pass
 
+        self._refresh_derived(cid, profile)
+
+    def observe_vod(
+        self,
+        *,
+        chat_id: int,
+        profile: dict[str, Any],
+        result: Any,
+        trusted: bool = True,
+    ) -> None:
+        """Persist only high-confidence evidence from sampled VOD frames.
+
+        VOD vision is deliberately not treated as continuous-video truth.
+        Findings below the confidence threshold remain in the report/episode
+        but do not become recurring player mistakes.
+        """
+        if not trusted:
+            return
+        cid = int(chat_id)
+
+        payload = {}
+        if hasattr(result, "memory_payload") and callable(result.memory_payload):
+            try:
+                payload = dict(result.memory_payload() or {})
+            except Exception:
+                payload = {}
+
+        high_conf_labels: list[str] = []
+        mistakes = list(getattr(result, "mistakes", []) or [])
+        for item in mistakes:
+            label = str(getattr(item, "label", "") or "").strip()
+            try:
+                confidence = float(getattr(item, "confidence", 0.0) or 0.0)
+            except Exception:
+                confidence = 0.0
+            if label and confidence >= 0.65:
+                high_conf_labels.append(label)
+                try:
+                    self.store.add_recurring_mistake(cid, label)
+                except Exception:
+                    pass
+
         try:
-            latest_profile = self.profiles.get(cid)
-        except Exception:
-            latest_profile = dict(profile or {})
-        snapshot = self.analytics.snapshot(cid)
-        try:
-            self.store.set_derived_intelligence(cid, snapshot)
-            self.store.set_summary(cid, self._build_summary(cid, latest_profile, snapshot))
+            self.store.add_episode(cid, {
+                "kind": "vod_sampled_frames",
+                "game": profile.get("game"),
+                "source": "vision_sampled_frames",
+                "analysis": payload,
+                "confirmed_mistakes": high_conf_labels[:8],
+                "at": _now_iso(),
+            })
         except Exception:
             pass
+
+        try:
+            self.store.add_progression_event(cid, {
+                "type": "vod_review",
+                "game": profile.get("game"),
+                "source": "vision_sampled_frames",
+                "sampled_frames": len(getattr(result, "sampled_timestamps", []) or []),
+                "high_confidence_mistakes": len(high_conf_labels),
+                "at": _now_iso(),
+            })
+        except Exception:
+            pass
+
+        summary = str(getattr(result, "summary", "") or "").strip()
+        next_drill = str(getattr(result, "next_drill", "") or "").strip()
+        patch: dict[str, Any] = {}
+        if summary:
+            patch["last_session_summary"] = f"VOD sampled-frames: {summary[:700]}"
+        if next_drill:
+            patch["training_focus"] = next_drill[:400]
+        if patch:
+            try:
+                self.profiles.patch(cid, patch)
+            except Exception:
+                pass
+
+        self._refresh_derived(cid, profile)

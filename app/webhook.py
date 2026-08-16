@@ -13,6 +13,8 @@ from app.services.brain.engine import BrainEngine
 from app.services.conversation.service import ConversationService
 from app.services.profiles.service import ProfileService
 from app.services.storage.factory import build_store
+from app.services.vod.service import VODAnalysisService
+from app.services.vod.telegram import VODTelegramIngress
 
 log = get_logger("webhook")
 
@@ -21,13 +23,30 @@ def create_app() -> FastAPI:
     settings = get_settings()
     setup_logging(settings.log_level)
 
-    app = FastAPI(title="GGBF6 WARZON BOT", version="4.1.0")
+    app = FastAPI(title="GGBF6 WARZON BOT", version="4.2.0")
 
     tg = TelegramClient(settings.bot_token)
     store = build_store(settings)
     profiles = ProfileService(store=store)
     core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
     conversation = ConversationService(brain=core_brain, store=store, profiles=profiles)
+
+    vod_service = VODAnalysisService(
+        api_key=settings.openai_api_key,
+        model=settings.vod_vision_model,
+        max_frames=settings.vod_max_frames,
+        max_width=settings.vod_frame_width,
+    )
+    vod_ingress = VODTelegramIngress(
+        tg=tg,
+        vod=vod_service,
+        profiles=profiles,
+        store=store,
+        player_memory=conversation.player_memory,
+        enabled=settings.vod_enabled,
+        max_bytes=settings.vod_max_bytes,
+        download_timeout_s=settings.vod_download_timeout_s,
+    )
 
     router = Router(
         tg=tg,
@@ -87,6 +106,14 @@ def create_app() -> FastAPI:
 
         raw = await request.json()
         upd = Update.parse(raw)
+
+        # Media/VOD gets a dedicated capability boundary before the legacy
+        # text router. This keeps the large existing Router stable.
+        try:
+            if await vod_ingress.maybe_handle(upd):
+                return JSONResponse({"ok": True})
+        except Exception as exc:
+            log.exception("VOD pre-handler crashed: %s", type(exc).__name__)
 
         try:
             msg = getattr(upd, "message", None)
