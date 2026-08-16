@@ -9,9 +9,15 @@ from typing import Any, Mapping, Optional, Tuple
 
 from app.services.brain.ai_hook import AIHook
 from app.services.brain.intents import classify_intent
-from app.services.brain.knowledge_context import CompositeKnowledgeProvider, KnowledgeProvider, KnowledgeRequest
+from app.services.brain.knowledge_context import (
+    CompositeKnowledgeProvider,
+    KnowledgeProvider,
+    KnowledgeRequest,
+    StaticKnowledgeProvider,
+)
 from app.services.brain.quality import currentness_blocked_response, enforce_response_limit
 from app.services.brain.response_policy import get_response_policy
+from app.services.knowledge.official_snapshots import OfficialSnapshotProvider
 
 
 log = logging.getLogger("bco.intelligence")
@@ -26,7 +32,13 @@ class BrainEngine:
 
     def __post_init__(self) -> None:
         if self.knowledge_provider is None:
-            self.knowledge_provider = CompositeKnowledgeProvider()
+            # Current official snapshots are queried first. They only return
+            # VERIFIED_CURRENT while their verification TTL is valid. Static
+            # repository knowledge remains the fallback for non-current tasks.
+            self.knowledge_provider = CompositeKnowledgeProvider([
+                OfficialSnapshotProvider(),
+                StaticKnowledgeProvider(),
+            ])
 
     def _ai(self) -> Tuple[Optional[AIHook], str]:
         if not getattr(self.settings, "ai_enabled", True):

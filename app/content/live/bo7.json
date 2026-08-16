@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "game": "bo7",
+  "title": "Call of Duty: Black Ops 7 Season 05 Patch Notes",
+  "publisher": "Treyarch",
+  "source_kind": "official_patch_notes",
+  "source_url": "https://www.callofduty.com/patchnotes/2026/07/call-of-duty-black-ops-7-season-05-patch-notes",
+  "published_at": "2026-07-22T00:00:00Z",
+  "verified_at": "2026-08-16T08:00:00Z",
+  "facts": [
+    {
+      "text": "Black Ops 7 Season 05 official patch notes were published July 22, 2026 by Treyarch.",
+      "tags": ["patch", "meta_context"]
+    },
+    {
+      "text": "FG42 was introduced as a new Assault Rifle in Season 05.",
+      "tags": ["weapon", "weapon_balance"]
+    },
+    {
+      "text": "Treyarch nerfed the AN-94 hyperburst so body shots in its maximum-damage range no longer produce the previous 4-shot kill profile.",
+      "tags": ["weapon_balance", "weapon"]
+    },
+    {
+      "text": "Season 05 Ranked increased base SR loss to -25 in Platinum, -30 in Diamond, and -40 in Crimson.",
+      "tags": ["ranked", "patch"]
+    },
+    {
+      "text": "Opponent Rank Adjustments in Ranked now apply only when the opponent is at least three Rank Tiers above or below the player's current Rank.",
+      "tags": ["ranked", "patch"]
+    },
+    {
+      "text": "Season 05 added Frequency, Vertigo and other maps to multiple Ranked Play mode pools.",
+      "tags": ["ranked", "map", "patch"]
+    },
+    {
+      "text": "Zombies Rogue Run reduced zombie spawns per round and now starts players with full Armor Health plus three armor plates in reserve.",
+      "tags": ["zombies", "patch"]
+    },
+    {
+      "text": "Zombies Rogue Run now transfers Ammo Mods when a player replaces a weapon reward in the same slot.",
+      "tags": ["zombies", "patch"]
+    },
+    {
+      "text": "Season 05 includes fixes for both Astra Malorum and Ashes of the Damned, including collision and map-specific gameplay issues.",
+      "tags": ["zombies", "patch"]
+    }
+  ]
+}

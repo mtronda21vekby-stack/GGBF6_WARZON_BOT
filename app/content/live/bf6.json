@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "game": "bf6",
+  "title": "Battlefield 6 Update 1.4.1.0",
+  "publisher": "Battlefield / Electronic Arts",
+  "source_kind": "official_patch_notes",
+  "source_url": "https://forums.ea.com/blog/battlefield-game-info-hub-en/battlefield-6-update-1-4-1-0/13563635",
+  "published_at": "2026-07-21T00:00:00Z",
+  "verified_at": "2026-08-16T08:00:00Z",
+  "facts": [
+    {
+      "text": "Battlefield 6 Update 1.4.1.0 launched July 21, 2026 with Season 4: Pacific Front.",
+      "tags": ["patch", "meta_context"]
+    },
+    {
+      "text": "Season 4 introduced Tsuru Reef as a large-scale Pacific battleground with naval warfare across land, air and sea.",
+      "tags": ["patch", "map"]
+    },
+    {
+      "text": "Update 1.4.1.0 introduced the Dynamic Wave System for ocean combat.",
+      "tags": ["patch", "gameplay"]
+    },
+    {
+      "text": "Season 4 introduced the 7.7m NSW RHIB and RCB-90 Patrol Boat along with new weapons and REDSEC updates.",
+      "tags": ["patch", "weapon", "vehicle"]
+    },
+    {
+      "text": "Update 1.4.1.0 includes broad improvements across weapons, gadgets, vehicles, REDSEC, Portal, UI, audio and gameplay polish.",
+      "tags": ["patch", "meta_context"]
+    },
+    {
+      "text": "The official 1.4.1.0 update notes do not provide a definitive weapon meta ranking; a 'best weapon' claim therefore requires additional evidence beyond this patch snapshot.",
+      "tags": ["meta_context", "weapon_balance"]
+    }
+  ]
+}
