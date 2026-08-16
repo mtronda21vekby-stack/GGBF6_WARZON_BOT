@@ -12,6 +12,8 @@ def readiness_snapshot(
     *,
     app_version: str = "unknown",
     release_contract: str = "unknown",
+    usage_guard: Any = None,
+    replay_guard: Any = None,
 ) -> dict:
     """Privacy-safe runtime readiness. Never exposes secret values/content."""
     ai_enabled = bool(getattr(settings, "ai_enabled", True))
@@ -40,6 +42,20 @@ def readiness_snapshot(
         except Exception:
             recovery = {"status": "unavailable"}
 
+    guard_snapshot: dict[str, Any] = {}
+    if usage_guard is not None and callable(getattr(usage_guard, "snapshot", None)):
+        try:
+            guard_snapshot = dict(usage_guard.snapshot() or {})
+        except Exception:
+            guard_snapshot = {"status": "unavailable"}
+
+    replay_snapshot: dict[str, Any] = {}
+    if replay_guard is not None and callable(getattr(replay_guard, "snapshot", None)):
+        try:
+            replay_snapshot = dict(replay_guard.snapshot() or {})
+        except Exception:
+            replay_snapshot = {"status": "unavailable"}
+
     features = {
         "ai": ai_enabled and ai_configured,
         "persistent_memory_configured": supabase_secret and supabase_url,
@@ -50,6 +66,8 @@ def readiness_snapshot(
         "command_center": True,
         "persistence_recovery": bool(recovery_fn),
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
+        "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),
+        "telegram_replay_dedupe": replay_guard is not None,
     }
     primary_degraded = bool(recovery) and recovery.get("primary_available") is False
     probe_failed = bool(recovery) and recovery.get("last_probe_ok") is False
@@ -70,5 +88,10 @@ def readiness_snapshot(
             "recovery": recovery,
         },
         "features": features,
+        "abuse_guard": {
+            "usage": guard_snapshot,
+            "telegram_replay": replay_snapshot,
+            "telegram_max_update_bytes": int(getattr(settings, "telegram_max_update_bytes", 0) or 0),
+        },
         "quality": quality_telemetry.snapshot(),
     }
