@@ -12,6 +12,7 @@ except Exception:
 
 
 DEFAULT_BCO_SUPABASE_URL = "https://wqriwhciqvrbhkkiuhxb.supabase.co"
+DEFAULT_BLACKCROWN_ACCOUNT_URL = "https://blackcrown.work/account/telegram"
 
 
 class Settings(BaseSettings):
@@ -53,6 +54,12 @@ class Settings(BaseSettings):
     supabase_url: str = os.getenv("SUPABASE_URL", DEFAULT_BCO_SUPABASE_URL)
     supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     supabase_schema: str = os.getenv("SUPABASE_SCHEMA", "public")
+
+    # Shared BlackCrown identity / Premium entitlement authority.
+    premium_link_enabled: bool = os.getenv("PREMIUM_LINK_ENABLED", "1") not in ("0", "false", "False", "")
+    blackcrown_account_url: str = os.getenv("BLACKCROWN_ACCOUNT_URL", DEFAULT_BLACKCROWN_ACCOUNT_URL)
+    premium_link_ttl_s: int = int(os.getenv("PREMIUM_LINK_TTL_S", "600"))
+    entitlement_timeout_s: float = float(os.getenv("ENTITLEMENT_TIMEOUT_S", "8"))
 
     # Live official game intelligence
     live_knowledge_enabled: bool = os.getenv("LIVE_KNOWLEDGE_ENABLED", "1") not in ("0", "false", "False", "")

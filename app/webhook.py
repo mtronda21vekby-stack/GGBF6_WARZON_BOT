@@ -18,6 +18,9 @@ from app.release import APP_VERSION, RELEASE_CONTRACT
 from app.security.usage_guard import UpdateReplayGuard, UsageGuard
 from app.services.brain.engine import BrainEngine
 from app.services.conversation.service import ConversationService
+from app.services.entitlements.service import PremiumEntitlementService
+from app.services.entitlements.site_bridge import SiteEntitlementBridgeAPI
+from app.services.entitlements.telegram import EntitlementTelegramController
 from app.services.profiles.service import ProfileService
 from app.services.storage.factory import build_store
 from app.services.vod.service import VODAnalysisService
@@ -34,6 +37,12 @@ def create_app() -> FastAPI:
 
     tg = TelegramClient(settings.bot_token)
     store = build_store(settings)
+    entitlement_service = PremiumEntitlementService(settings)
+    entitlement_controller = EntitlementTelegramController(tg=tg, service=entitlement_service)
+    site_entitlement_bridge = SiteEntitlementBridgeAPI(
+        settings=settings,
+        entitlements=entitlement_service,
+    )
     usage_guard = UsageGuard.from_settings(settings)
     replay_guard = UpdateReplayGuard(
         ttl_s=settings.telegram_update_dedupe_ttl_s,
@@ -54,6 +63,14 @@ def create_app() -> FastAPI:
         try:
             yield
         finally:
+            try:
+                await site_entitlement_bridge.close()
+            except Exception as exc:
+                log.warning("site entitlement bridge shutdown failed: %s", type(exc).__name__)
+            try:
+                await entitlement_service.close()
+            except Exception as exc:
+                log.warning("entitlement service shutdown failed: %s", type(exc).__name__)
             await tg.close()
             close_store = getattr(store, "close", None)
             if callable(close_store):
@@ -63,6 +80,7 @@ def create_app() -> FastAPI:
                     log.warning("storage shutdown failed: %s", type(exc).__name__)
 
     app = FastAPI(title="GGBF6 WARZON BOT", version=APP_VERSION, lifespan=lifespan)
+    app.include_router(site_entitlement_bridge.router)
 
     profiles = ProfileService(store=store)
     core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
@@ -162,6 +180,7 @@ def create_app() -> FastAPI:
             release_contract=RELEASE_CONTRACT,
             usage_guard=usage_guard,
             replay_guard=replay_guard,
+            entitlement_service=entitlement_service,
         )
 
     @app.post("/tg/webhook", include_in_schema=False)
@@ -199,6 +218,12 @@ def create_app() -> FastAPI:
             return JSONResponse({"ok": True, "duplicate": True})
 
         upd = Update.parse(raw)
+
+        try:
+            if await entitlement_controller.maybe_handle_command(upd):
+                return JSONResponse({"ok": True})
+        except Exception as exc:
+            log.exception("Premium account bridge pre-handler crashed: %s", type(exc).__name__)
 
         try:
             if await voice_controller.maybe_handle_command(upd):
