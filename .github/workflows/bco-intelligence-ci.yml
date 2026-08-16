@@ -3,6 +3,7 @@ name: BCO Intelligence CI
 on:
   push:
     branches:
+      - main
       - feature/bco-aaa-intelligence-v1
       - feature/bco-aaa-player-intelligence-v2
       - feature/bco-aaa-live-game-intelligence-v3
