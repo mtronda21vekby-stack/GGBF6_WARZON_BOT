@@ -6,14 +6,16 @@ alter table public.bco_episodes add column if not exists operation_id text;
 alter table public.bco_training_sessions add column if not exists operation_id text;
 alter table public.bco_progression_events add column if not exists operation_id text;
 
+-- Regular UNIQUE indexes are intentional: PostgreSQL permits multiple NULLs,
+-- while PostgREST can use operation_id directly as an on_conflict target.
 create unique index if not exists bco_messages_operation_id_uidx
-    on public.bco_messages(operation_id) where operation_id is not null;
+    on public.bco_messages(operation_id);
 create unique index if not exists bco_episodes_operation_id_uidx
-    on public.bco_episodes(operation_id) where operation_id is not null;
+    on public.bco_episodes(operation_id);
 create unique index if not exists bco_training_sessions_operation_id_uidx
-    on public.bco_training_sessions(operation_id) where operation_id is not null;
+    on public.bco_training_sessions(operation_id);
 create unique index if not exists bco_progression_events_operation_id_uidx
-    on public.bco_progression_events(operation_id) where operation_id is not null;
+    on public.bco_progression_events(operation_id);
 
 create table if not exists public.bco_mistake_receipts (
     operation_id text primary key,
@@ -80,6 +82,5 @@ revoke all on function public.bco_record_mistake_once(text, bigint, text, text, 
 grant execute on function public.bco_record_mistake_once(text, bigint, text, text, jsonb)
     to service_role;
 
--- Keep receipt growth bounded without coupling cleanup to request handling.
--- A later maintenance job may safely remove receipts older than the chosen
--- retry horizon; until then they are tiny metadata rows and guarantee replay safety.
+-- Receipts are tiny metadata rows. A later maintenance job may delete old
+-- receipts only after the chosen replay horizon has elapsed.
