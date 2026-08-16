@@ -13,7 +13,7 @@ log = logging.getLogger("bco.storage")
 
 
 class PersistentSupabaseStore(SupabaseStore):
-    def purge_player(self, chat_id: int) -> None:
+    def purge_player(self, chat_id: int, *, operation_id: str | None = None) -> None:
         self._request(
             "POST",
             "rpc/bco_purge_player",
@@ -28,12 +28,7 @@ class PersistentResilientStore(ResilientStore):
 
 
 def build_store(settings: Any):
-    """Build persistence without making an external database mandatory.
-
-    STORAGE_BACKEND=memory|supabase|auto. In auto mode the remote backend is
-    enabled only when both Supabase secret values are present. Runtime outages
-    degrade to the mirrored in-process store instead of taking down Telegram.
-    """
+    """Build optional persistent storage with in-process recovery fallback."""
     memory = InMemoryStore(memory_max_turns=getattr(settings, "memory_max_turns", 20))
     backend = str(getattr(settings, "storage_backend", "auto") or "auto").strip().lower()
     url = str(getattr(settings, "supabase_url", "") or "").strip()
@@ -60,8 +55,18 @@ def build_store(settings: Any):
             schema=str(getattr(settings, "supabase_schema", "public") or "public"),
             timeout_s=float(getattr(settings, "storage_timeout_s", 8.0) or 8.0),
         )
-        log.info("storage backend=supabase resilient_fallback=memory")
-        return PersistentResilientStore(primary=primary, fallback=memory)
+        outbox_max = int(getattr(settings, "storage_outbox_max", 500) or 500)
+        replay_batch = int(getattr(settings, "storage_replay_batch", 50) or 50)
+        log.info(
+            "storage backend=supabase resilient_fallback=memory outbox_max=%d replay_batch=%d",
+            outbox_max, replay_batch,
+        )
+        return PersistentResilientStore(
+            primary=primary,
+            fallback=memory,
+            outbox_max=outbox_max,
+            replay_batch=replay_batch,
+        )
     except Exception as exc:
         log.warning("storage init failed backend=supabase error=%s; using memory", type(exc).__name__)
         return memory
