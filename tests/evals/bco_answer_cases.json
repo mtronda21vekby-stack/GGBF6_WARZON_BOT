@@ -1,0 +1,58 @@
+[
+  {
+    "text": "Привет",
+    "intent": "CASUAL",
+    "must_not_claim_current_meta": true,
+    "should_be_actionable": false,
+    "max_clarifying_questions": 0
+  },
+  {
+    "text": "Почему я постоянно умираю при ротации?",
+    "intent": "DEATH_ANALYSIS",
+    "must_not_claim_current_meta": true,
+    "should_be_actionable": true,
+    "max_clarifying_questions": 1
+  },
+  {
+    "text": "Какая сейчас мета в Warzone?",
+    "intent": "META_CURRENT",
+    "must_not_claim_current_meta": true,
+    "should_be_actionable": true,
+    "max_clarifying_questions": 1
+  },
+  {
+    "text": "Настрой сенсу под Xbox controller",
+    "intent": "GAME_SETTINGS",
+    "must_not_claim_current_meta": true,
+    "should_be_actionable": true,
+    "max_clarifying_questions": 1
+  },
+  {
+    "text": "Я в тильте, слил пять игр",
+    "intent": "GAME_TACTICS",
+    "must_not_claim_current_meta": true,
+    "should_be_actionable": true,
+    "max_clarifying_questions": 1
+  },
+  {
+    "text": "Что брать первым на Ashes?",
+    "intent": "ZOMBIES",
+    "must_not_claim_current_meta": true,
+    "should_be_actionable": true,
+    "max_clarifying_questions": 1
+  },
+  {
+    "text": "Я Entry, постоянно умираю первым",
+    "intent": "DEATH_ANALYSIS",
+    "must_not_claim_current_meta": true,
+    "should_be_actionable": true,
+    "max_clarifying_questions": 1
+  },
+  {
+    "text": "Разбери: умер в топ-5, полез за киллом из сильной позиции",
+    "intent": "DEATH_ANALYSIS",
+    "must_not_claim_current_meta": true,
+    "should_be_actionable": true,
+    "max_clarifying_questions": 1
+  }
+]
