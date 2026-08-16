@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Tuple
 
+from app.observability.quality import quality_telemetry
 from app.services.brain.ai_hook import AIHook
 from app.services.brain.intents import classify_intent
 from app.services.brain.knowledge_context import (
@@ -68,25 +69,33 @@ class BrainEngine:
         knowledge = self.knowledge_provider.query(
             KnowledgeRequest(intent=intent, text=text, profile=profile)
         ) if self.knowledge_provider else None
+        knowledge_name = knowledge.confidence.value if knowledge else "UNKNOWN"
 
         if intent.needs_current_data and (knowledge is None or not knowledge.is_verified_current):
             fallback_knowledge = knowledge or CompositeKnowledgeProvider().query(
                 KnowledgeRequest(intent=intent, text=text, profile=profile)
             )
             result = currentness_blocked_response(fallback_knowledge)
+            latency = int((time.monotonic() - started) * 1000)
+            quality_telemetry.record_reply(
+                intent=intent.intent.value,
+                latency_ms=latency,
+                knowledge=knowledge_name,
+                outcome="currentness_blocked",
+                currentness_blocked=True,
+            )
             log.info(
                 "bco_reply request_id=%s intent=%s game=%s voice=%s brain=%s model=%s "
                 "latency_ms=%d knowledge=%s response_len=%d current_gate=blocked",
                 request_id, intent.intent.value, profile.get("game"), profile.get("voice"),
                 profile.get("difficulty"), getattr(self.settings, "openai_model", "?"),
-                int((time.monotonic() - started) * 1000),
-                (knowledge.confidence.value if knowledge else "UNKNOWN"), len(result),
+                latency, knowledge_name, len(result),
             )
             return result
 
         ai, reason = self._ai()
         if not ai:
-            return (
+            result = (
                 "🧠 ИИ: OFF\n"
                 f"Причина: {reason}\n\n"
                 "Нужны Environment variables:\n"
@@ -94,10 +103,19 @@ class BrainEngine:
                 "• AI_ENABLED=1\n"
                 "• OPENAI_MODEL"
             )
+            quality_telemetry.record_reply(
+                intent=intent.intent.value,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                knowledge=knowledge_name,
+                outcome="disabled",
+            )
+            return result
 
         error_class = ""
+        result = ""
+        meta: dict[str, Any] = {}
         try:
-            result = ai.generate(
+            generated = ai.generate(
                 profile=profile,
                 history=history or [],
                 user_text=text,
@@ -106,20 +124,37 @@ class BrainEngine:
                 knowledge=knowledge,
                 player_context=dict(player_context or profile),
             )
-            return enforce_response_limit(result, policy)
+            meta = dict(ai.last_generation_meta or {})
+            result = enforce_response_limit(generated, policy)
+            return result
         except Exception as exc:
             error_class = type(exc).__name__
-            return (
+            meta = dict(getattr(ai, "last_generation_meta", {}) or {})
+            meta["outcome"] = "error"
+            meta["error_class"] = error_class
+            result = (
                 "🧠 ИИ: ERROR\n"
                 f"{error_class}: {exc}\n\n"
                 "Проверь OPENAI_API_KEY / OPENAI_MODEL."
             )
+            return result
         finally:
+            latency = int((time.monotonic() - started) * 1000)
+            outcome = str(meta.get("outcome") or ("error" if error_class else "ok"))
+            quality_telemetry.record_reply(
+                intent=intent.intent.value,
+                latency_ms=latency,
+                knowledge=knowledge_name,
+                outcome=outcome,
+                attempts=int(meta.get("attempts") or 1),
+                anti_repeat_retry=bool(meta.get("anti_repeat_retry")),
+            )
             log.info(
                 "bco_reply request_id=%s intent=%s game=%s voice=%s brain=%s model=%s "
-                "latency_ms=%d knowledge=%s error=%s",
+                "latency_ms=%d knowledge=%s attempts=%d anti_repeat=%s outcome=%s response_len=%d error=%s",
                 request_id, intent.intent.value, profile.get("game"), profile.get("voice"),
                 profile.get("difficulty"), getattr(self.settings, "openai_model", "?"),
-                int((time.monotonic() - started) * 1000),
-                (knowledge.confidence.value if knowledge else "UNKNOWN"), error_class or "none",
+                latency, knowledge_name, int(meta.get("attempts") or 1),
+                bool(meta.get("anti_repeat_retry")), outcome, len(result),
+                str(meta.get("error_class") or error_class or "none"),
             )
