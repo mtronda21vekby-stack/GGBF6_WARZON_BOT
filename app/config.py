@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     live_knowledge_ttl_s: int = int(os.getenv("LIVE_KNOWLEDGE_TTL_S", "900"))
     live_knowledge_timeout_s: float = float(os.getenv("LIVE_KNOWLEDGE_TIMEOUT_S", "6"))
 
+    # Real VOD intelligence
+    vod_enabled: bool = os.getenv("VOD_ENABLED", "1") not in ("0", "false", "False", "")
+    vod_max_bytes: int = int(os.getenv("VOD_MAX_BYTES", str(20 * 1024 * 1024)))
+    vod_max_frames: int = int(os.getenv("VOD_MAX_FRAMES", "8"))
+    vod_frame_width: int = int(os.getenv("VOD_FRAME_WIDTH", "1280"))
+    vod_download_timeout_s: float = float(os.getenv("VOD_DOWNLOAD_TIMEOUT_S", "60"))
+    vod_vision_model: str = os.getenv(
+        "VOD_VISION_MODEL",
+        os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+    )
+
     # AI
     ai_enabled: bool = os.getenv("AI_ENABLED", "1") not in ("0", "false", "False", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
