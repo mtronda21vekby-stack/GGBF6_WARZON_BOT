@@ -25,8 +25,6 @@ class Settings(BaseSettings):
     memory_max_turns: int = int(os.getenv("MEMORY_MAX_TURNS", "20"))
     storage_backend: str = os.getenv("STORAGE_BACKEND", "auto")
     storage_timeout_s: float = float(os.getenv("STORAGE_TIMEOUT_S", "8"))
-    # The project URL is public configuration, not a secret. Environment can
-    # override it for staging/other deployments; production defaults to GAME.
     supabase_url: str = os.getenv("SUPABASE_URL", DEFAULT_BCO_SUPABASE_URL)
     supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     supabase_schema: str = os.getenv("SUPABASE_SCHEMA", "public")
@@ -42,10 +40,15 @@ class Settings(BaseSettings):
     vod_max_frames: int = int(os.getenv("VOD_MAX_FRAMES", "8"))
     vod_frame_width: int = int(os.getenv("VOD_FRAME_WIDTH", "1280"))
     vod_download_timeout_s: float = float(os.getenv("VOD_DOWNLOAD_TIMEOUT_S", "60"))
-    vod_vision_model: str = os.getenv(
-        "VOD_VISION_MODEL",
-        os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-    )
+    vod_vision_model: str = os.getenv("VOD_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini"))
+
+    # Free/self-hosted Telegram voice. No paid TTS API is required.
+    voice_enabled: bool = os.getenv("VOICE_ENABLED", "1") not in ("0", "false", "False", "")
+    voice_provider: str = os.getenv("VOICE_PROVIDER", "piper")
+    voice_model_name: str = os.getenv("VOICE_MODEL_NAME", "ru_RU-denis-medium")
+    voice_model_dir: str = os.getenv("VOICE_MODEL_DIR", ".bco_voice")
+    voice_model_timeout_s: float = float(os.getenv("VOICE_MODEL_TIMEOUT_S", "120"))
+    voice_max_chars: int = int(os.getenv("VOICE_MAX_CHARS", "1600"))
 
     # AI
     ai_enabled: bool = os.getenv("AI_ENABLED", "1") not in ("0", "false", "False", "")
