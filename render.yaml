@@ -3,7 +3,7 @@ services:
     name: GGBF6_WARZON_BOT
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python -m app.services.voice.prepare
     startCommand: uvicorn app.webhook:app --host 0.0.0.0 --port 10000
     envVars:
       - key: PYTHONPATH
@@ -26,5 +26,15 @@ services:
         value: "8"
       - key: VOD_FRAME_WIDTH
         value: "1280"
+      - key: VOICE_ENABLED
+        value: "1"
+      - key: VOICE_PROVIDER
+        value: piper
+      - key: VOICE_MODEL_NAME
+        value: ru_RU-denis-medium
+      - key: VOICE_MODEL_DIR
+        value: .bco_voice
+      - key: VOICE_MAX_CHARS
+        value: "1600"
       # OPENAI_API_KEY и SUPABASE_SERVICE_ROLE_KEY не хранить в публичном репозитории.
       # Добавить их только как server-side secrets в Render Dashboard.
