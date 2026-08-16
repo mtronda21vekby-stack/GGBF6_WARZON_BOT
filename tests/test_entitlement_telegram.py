@@ -68,7 +68,9 @@ def test_premium_hub_shows_authoritative_server_status():
     _, text, keyboard = tg.messages[-1]
     assert "Premium: ACTIVE" in text
     assert "bco_premium" in text
-    assert keyboard and keyboard["keyboard"][0][0]["text"] == "🔗 Связать с сайтом"
+    labels = [button["text"] for row in keyboard["keyboard"] for button in row]
+    assert labels[:2] == ["💳 Premium статус", "🔗 Связать с сайтом"]
+    assert "🔓 Отвязать сайт" in labels
 
 
 def test_link_uses_telegram_from_id_and_sends_fragment_url_button():
