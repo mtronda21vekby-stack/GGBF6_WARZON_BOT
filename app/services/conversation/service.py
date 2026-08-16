@@ -7,9 +7,26 @@ from typing import Any
 from app.services.player_memory.service import PlayerMemoryService
 
 
+def _same_user_tail(history: list[dict], text: str) -> bool:
+    if not history:
+        return False
+    last = history[-1]
+    if not isinstance(last, dict):
+        return False
+    return (
+        str(last.get("role") or "").lower() == "user"
+        and str(last.get("content") or "").strip() == str(text or "").strip()
+    )
+
+
 @dataclass
 class ConversationService:
-    """Single intelligence entrypoint for Telegram and Mini App."""
+    """Single intelligence entrypoint for Telegram and Mini App.
+
+    Telegram Router already writes the user/assistant pair around this call.
+    Verified Mini App calls do not, so this service fills that gap without
+    duplicating Telegram history.
+    """
 
     brain: Any
     store: Any = None
@@ -36,6 +53,15 @@ class ConversationService:
             except Exception:
                 chat_id = None
 
+        # Telegram Router inserts current user text before calling the brain.
+        # Mini App server context does not. This flag distinguishes the paths.
+        caller_manages_working_memory = _same_user_tail(history or [], text)
+        if trusted and chat_id is not None and not caller_manages_working_memory and self.store is not None:
+            try:
+                self.store.add(chat_id, "user", text)
+            except Exception:
+                pass
+
         player_context = dict(profile or {})
         if trusted and chat_id is not None and self.player_memory is not None:
             try:
@@ -49,6 +75,12 @@ class ConversationService:
             history=history,
             player_context=player_context,
         )
+
+        if trusted and chat_id is not None and not caller_manages_working_memory and self.store is not None:
+            try:
+                self.store.add(chat_id, "assistant", str(result))
+            except Exception:
+                pass
 
         if trusted and chat_id is not None and self.player_memory is not None:
             try:

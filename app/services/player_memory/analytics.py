@@ -11,13 +11,27 @@ class PlayerAnalytics:
     store: Any
 
     @staticmethod
-    def _numeric(events: list[dict], key: str) -> list[float]:
+    def _metric_from_event(event: dict, key: str):
+        if key in event:
+            return event.get(key)
+        metrics = event.get("metrics")
+        if isinstance(metrics, dict) and key in metrics:
+            return metrics.get(key)
+        payload = event.get("payload")
+        if isinstance(payload, dict):
+            if key in payload:
+                return payload.get(key)
+            nested = payload.get("metrics")
+            if isinstance(nested, dict) and key in nested:
+                return nested.get(key)
+        return None
+
+    @classmethod
+    def _numeric(cls, events: list[dict], key: str) -> list[float]:
         values: list[float] = []
         for event in events:
-            value = event.get(key)
-            if value is None and isinstance(event.get("metrics"), dict):
-                value = event["metrics"].get(key)
             try:
+                value = cls._metric_from_event(event, key)
                 if value is not None:
                     values.append(float(value))
             except Exception:
@@ -39,37 +53,22 @@ class PlayerAnalytics:
         return {"previous_avg": round(a, 3), "recent_avg": round(b, 3), "delta": round(b - a, 3)}
 
     def snapshot(self, chat_id: int) -> dict[str, Any]:
-        mistakes = []
-        fn = getattr(self.store, "list_mistake_stats", None)
-        if callable(fn):
-            try:
-                mistakes = list(fn(chat_id) or [])[:5]
-            except Exception:
-                mistakes = []
-
-        progression = []
-        fn = getattr(self.store, "list_progression_events", None)
-        if callable(fn):
-            try:
-                progression = list(fn(chat_id) or [])[:20]
-            except Exception:
-                progression = []
-
-        training = []
-        fn = getattr(self.store, "list_training_sessions", None)
-        if callable(fn):
-            try:
-                training = list(fn(chat_id) or [])[:10]
-            except Exception:
-                training = []
-
-        episodes = []
-        fn = getattr(self.store, "list_episodes", None)
-        if callable(fn):
-            try:
-                episodes = list(fn(chat_id, 20) or [])
-            except Exception:
-                episodes = []
+        try:
+            mistakes = list(self.store.list_mistake_stats(chat_id) or [])[:5]
+        except Exception:
+            mistakes = []
+        try:
+            progression = list(self.store.list_progression_events(chat_id) or [])[:20]
+        except Exception:
+            progression = []
+        try:
+            training = list(self.store.list_training_sessions(chat_id) or [])[:10]
+        except Exception:
+            training = []
+        try:
+            episodes = list(self.store.list_episodes(chat_id, 20) or [])
+        except Exception:
+            episodes = []
 
         trends: dict[str, Any] = {}
         for key in ("kills", "placement", "accuracy_pct"):
