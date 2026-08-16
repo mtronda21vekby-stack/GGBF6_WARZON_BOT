@@ -47,6 +47,7 @@ class PlayerIntelligence:
     bf6_class: str | None = None
     zombies_map: str | None = None
     tts_mode: str | None = None
+    tts_voice: str | None = None
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any] | None) -> "PlayerIntelligence":

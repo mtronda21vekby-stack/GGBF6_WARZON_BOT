@@ -82,7 +82,7 @@ class PiperModelManager:
                 url,
                 follow_redirects=True,
                 timeout=timeout,
-                headers={"User-Agent": "BLACK-CROWN-OPS/voice-v5"},
+                headers={"User-Agent": "BLACK-CROWN-OPS/voice-v17"},
             ) as response:
                 response.raise_for_status()
                 declared = int(response.headers.get("content-length") or 0)
@@ -141,6 +141,10 @@ class PiperBackend:
         self._voice_key: tuple[str, str] | None = None
         self._lock = threading.Lock()
 
+    @property
+    def model_name(self) -> str:
+        return self.manager.model_name
+
     def ensure_model(self) -> tuple[Path, Path]:
         return self.manager.ensure()
 
@@ -155,23 +159,36 @@ class PiperBackend:
         self._voice_key = key
         return self._voice
 
+    @staticmethod
+    def _synthesis_values(profile: Mapping[str, Any]) -> tuple[float, float, float]:
+        persona = str(profile.get("voice") or profile.get("voice_mode") or "TEAMMATE").upper()
+        brain = str(profile.get("difficulty") or profile.get("brain_mode") or "NORMAL").upper()
+
+        if persona == "COACH":
+            length_scale, noise_scale, noise_w = 1.03, 0.64, 0.78
+        else:
+            length_scale, noise_scale, noise_w = 0.94, 0.65, 0.79
+
+        if brain == "DEMON":
+            length_scale = max(0.90, length_scale - 0.02)
+            noise_scale = max(0.60, noise_scale - 0.02)
+            noise_w = max(0.74, noise_w - 0.02)
+        return length_scale, noise_scale, noise_w
+
     def synthesize_wav(self, text: str, output_path: str | Path, profile: Mapping[str, Any] | None = None) -> Path:
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
-        profile = profile or {}
-        conversational_voice = str(profile.get("voice") or "TEAMMATE").upper()
-        brain = str(profile.get("difficulty") or "Normal").upper()
-
-        length_scale = 0.94 if conversational_voice == "TEAMMATE" else 1.03
-        if brain == "DEMON":
-            length_scale = max(0.90, length_scale - 0.03)
+        data = dict(profile or {})
+        length_scale, noise_scale, noise_w = self._synthesis_values(data)
 
         from piper import SynthesisConfig
 
         syn_config = SynthesisConfig(
+            volume=1.0,
             length_scale=length_scale,
-            noise_scale=0.55,
-            noise_w_scale=0.70,
+            noise_scale=noise_scale,
+            noise_w_scale=noise_w,
+            normalize_audio=True,
         )
 
         with self._lock:
