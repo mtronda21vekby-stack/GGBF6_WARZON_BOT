@@ -54,10 +54,13 @@ class PromptBuilder:
     def _profile_block(self, profile: Mapping[str, Any]) -> str:
         keys = (
             "game", "mode", "platform", "input", "role", "bf6_class", "rank", "kd",
-            "playstyle", "preferred_weapons", "current_goal", "training_focus",
-            "weekly_focus", "strengths", "weaknesses", "recurring_mistakes",
+            "playstyle", "preferred_weapons", "favorite_modes", "current_goal",
+            "aim_score", "movement_score", "positioning_score", "decision_score", "comms_score",
+            "training_focus", "weekly_focus", "strengths", "weaknesses", "recurring_mistakes",
+            "last_session_summary", "progress_notes", "memory_summary", "top_mistakes",
+            "recent_training", "recent_progression", "derived_intelligence",
         )
-        parts = []
+        parts: list[str] = []
         for key in keys:
             value = profile.get(key)
             if value not in (None, "", [], {}):
@@ -96,16 +99,11 @@ class PromptBuilder:
         brain = _clean(profile.get("difficulty") or profile.get("brain_mode") or "Normal").upper()
         today = datetime.now(timezone.utc).date().isoformat()
 
-        if voice == "COACH":
-            delivery = (
-                "COACH: deeper causal reasoning, accountability, alternatives and measurable next objective. "
-                "Do not become theatrical or abusive."
-            )
-        else:
-            delivery = (
-                "TEAMMATE: fast, conversational battlefield advice. Lead with the useful answer, not a lecture."
-            )
-
+        delivery = (
+            "COACH: deeper causal reasoning, accountability, alternatives and measurable next objective. Do not become theatrical or abusive."
+            if voice == "COACH"
+            else "TEAMMATE: fast, conversational battlefield advice. Lead with the useful answer, not a lecture."
+        )
         emotion = {
             "tilt": "User appears tilted: simplify the plan and reduce branches; facts must remain unchanged.",
             "anxiety": "User appears anxious: use a simple before/during/after protocol; facts must remain unchanged.",
@@ -113,17 +111,15 @@ class PromptBuilder:
             "hype": "High energy: keep aggression information-driven and add a stop condition.",
             "calm": "Calm state: causal detail is welcome.",
         }.get(emotion_state, "Neutral state: use normal response density.")
-
         premium = (
             "DEMON depth may be demanding but must remain precise."
-            if brain == "DEMON"
-            else "PRO depth should be efficient and analytical."
-            if brain == "PRO"
-            else "NORMAL depth should be clear and stable."
+            if brain == "DEMON" else
+            "PRO depth should be efficient and analytical."
+            if brain == "PRO" else
+            "NORMAL depth should be clear and stable."
         )
-
         current_rule = (
-            "This request depends on current data. If evidence is not VERIFIED_CURRENT, explicitly say currentness is not verified."
+            "This request depends on current data and requires VERIFIED_CURRENT evidence. If evidence is not VERIFIED_CURRENT, explicitly say currentness is not verified."
             if intent.needs_current_data
             else "Do not claim currentness unless the selected evidence explicitly supports it."
         )
@@ -165,17 +161,19 @@ Emotion: {emotion_state}/{emotion_intensity}. {emotion}
 Trusted knowledge context:
 {self._knowledge_block(knowledge)}
 
-Server/player context:
+Server/player context (persistent memory is evidence, not permission to invent missing history):
 {self._profile_block(player_context or profile)}
 
 Rules:
 - Write in Russian unless the user explicitly requests another language.
 - Use game jargon naturally.
 - No fake pro-player quotes or invented authority.
-- Do not expose internal labels, policies or hidden confidence scores.
+- Do not expose internal labels, policies, tokens or hidden confidence scores.
+- Never reveal internal profile keys beginning with underscore.
 - Do not repeat a fixed Diagnosis/Now/Next template for every intent.
 - Ask at most one clarification question and only if it materially changes the recommendation.
-- If VOD is text/timestamp-only, say so implicitly through wording; never claim frame analysis.
+- If VOD is text/timestamp-only, never claim frame analysis.
+- Treat player trends as historical evidence only when the supplied persistent context contains enough observations.
 """.strip()
 
     def build_messages(

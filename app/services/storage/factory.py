@@ -12,13 +12,27 @@ from app.services.storage.supabase import SupabaseStore
 log = logging.getLogger("bco.storage")
 
 
-def build_store(settings: Any):
-    """Build the configured storage backend without making persistence mandatory.
+class PersistentSupabaseStore(SupabaseStore):
+    def purge_player(self, chat_id: int) -> None:
+        self._request(
+            "POST",
+            "rpc/bco_purge_player",
+            json={"p_chat_id": int(chat_id)},
+            extra_headers={"Prefer": "return=minimal"},
+        )
 
-    STORAGE_BACKEND:
-      - memory: always in-process memory
-      - supabase: use Supabase when configured, otherwise memory fallback
-      - auto (default): Supabase when both URL/key exist, otherwise memory
+
+class PersistentResilientStore(ResilientStore):
+    def purge_player(self, chat_id: int) -> None:
+        self._write("purge_player", chat_id)
+
+
+def build_store(settings: Any):
+    """Build persistence without making an external database mandatory.
+
+    STORAGE_BACKEND=memory|supabase|auto. In auto mode the remote backend is
+    enabled only when both Supabase secret values are present. Runtime outages
+    degrade to the mirrored in-process store instead of taking down Telegram.
     """
     memory = InMemoryStore(memory_max_turns=getattr(settings, "memory_max_turns", 20))
     backend = str(getattr(settings, "storage_backend", "auto") or "auto").strip().lower()
@@ -39,7 +53,7 @@ def build_store(settings: Any):
         return memory
 
     try:
-        primary = SupabaseStore(
+        primary = PersistentSupabaseStore(
             url=url,
             service_role_key=key,
             memory_max_turns=getattr(settings, "memory_max_turns", 20),
@@ -47,7 +61,7 @@ def build_store(settings: Any):
             timeout_s=float(getattr(settings, "storage_timeout_s", 8.0) or 8.0),
         )
         log.info("storage backend=supabase resilient_fallback=memory")
-        return ResilientStore(primary=primary, fallback=memory)
+        return PersistentResilientStore(primary=primary, fallback=memory)
     except Exception as exc:
         log.warning("storage init failed backend=supabase error=%s; using memory", type(exc).__name__)
         return memory
