@@ -18,16 +18,24 @@ class TelegramClient:
         await self._client.aclose()
 
     async def send_message(self, chat_id: int, text: str, reply_markup: dict | None = None) -> None:
-        payload: dict = {
-            "chat_id": chat_id,
-            "text": text,
-            "disable_web_page_preview": True,
-        }
+        payload: dict = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
-
         r = await self._client.post(f"{self._base}/sendMessage", json=payload)
         r.raise_for_status()
+
+    async def send_voice_file(self, chat_id: int, file_path: str, caption: str | None = None, reply_markup: dict | None = None) -> None:
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Voice file not found: {file_path}")
+        data = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption
+        if reply_markup is not None:
+            data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+        with open(file_path, "rb") as fh:
+            files = {"voice": (os.path.basename(file_path), fh, "audio/ogg")}
+            response = await self._client.post(f"{self._base}/sendVoice", data=data, files=files)
+            response.raise_for_status()
 
     async def get_file(self, file_id: str) -> dict:
         fid = str(file_id or "").strip()
@@ -44,46 +52,25 @@ class TelegramClient:
             raise RuntimeError("Telegram getFile returned no file_path")
         return result
 
-    async def download_file(
-        self,
-        file_id: str,
-        destination: str,
-        *,
-        max_bytes: int = 20 * 1024 * 1024,
-        timeout_s: float = 60.0,
-    ) -> dict:
+    async def download_file(self, file_id: str, destination: str, *, max_bytes: int = 20 * 1024 * 1024, timeout_s: float = 60.0) -> dict:
         info = await self.get_file(file_id)
         declared_size = int(info.get("file_size") or 0)
         limit = max(1, int(max_bytes or 1))
         if declared_size and declared_size > limit:
             raise ValueError(f"Telegram file is too large: {declared_size} bytes > {limit}")
-
         file_path = str(info.get("file_path") or "").lstrip("/")
         if not file_path:
             raise RuntimeError("Telegram file_path is empty")
-
         target = Path(destination)
         target.parent.mkdir(parents=True, exist_ok=True)
         total = 0
-
-        timeout = httpx.Timeout(
-            connect=min(max(float(timeout_s), 5.0), 30.0),
-            read=max(float(timeout_s), 10.0),
-            write=max(float(timeout_s), 10.0),
-            pool=max(float(timeout_s), 10.0),
-        )
-
+        timeout = httpx.Timeout(connect=min(max(float(timeout_s), 5.0), 30.0), read=max(float(timeout_s), 10.0), write=max(float(timeout_s), 10.0), pool=max(float(timeout_s), 10.0))
         try:
-            async with self._client.stream(
-                "GET",
-                f"{self._file_base}/{file_path}",
-                timeout=timeout,
-            ) as response:
+            async with self._client.stream("GET", f"{self._file_base}/{file_path}", timeout=timeout) as response:
                 response.raise_for_status()
                 header_size = int(response.headers.get("content-length") or 0)
                 if header_size and header_size > limit:
                     raise ValueError(f"Telegram file is too large: {header_size} bytes > {limit}")
-
                 with target.open("wb") as fh:
                     async for chunk in response.aiter_bytes(64 * 1024):
                         if not chunk:
@@ -98,63 +85,35 @@ class TelegramClient:
             except Exception:
                 pass
             raise
-
         if total <= 0:
             try:
                 target.unlink(missing_ok=True)
             except Exception:
                 pass
             raise RuntimeError("Telegram downloaded an empty file")
+        return {**info, "downloaded_bytes": total, "destination": str(target)}
 
-        return {
-            **info,
-            "downloaded_bytes": total,
-            "destination": str(target),
-        }
-
-    async def send_animation_file(
-        self,
-        chat_id: int,
-        file_path: str,
-        caption: str | None = None,
-        reply_markup: dict | None = None,
-    ) -> None:
-        """
-        Отправляет mp4/gif как animation (то, что выглядит как “баннер/анимация”).
-        """
+    async def send_animation_file(self, chat_id: int, file_path: str, caption: str | None = None, reply_markup: dict | None = None) -> None:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Animation file not found: {file_path}")
-
         data = {"chat_id": str(chat_id)}
         if caption:
             data["caption"] = caption
         if reply_markup is not None:
             data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-
         with open(file_path, "rb") as f:
             files = {"animation": (os.path.basename(file_path), f, "video/mp4")}
             r = await self._client.post(f"{self._base}/sendAnimation", data=data, files=files)
             r.raise_for_status()
 
-    async def send_video_file(
-        self,
-        chat_id: int,
-        file_path: str,
-        caption: str | None = None,
-        reply_markup: dict | None = None,
-    ) -> None:
-        """
-        Если animation вдруг не понравится — можно слать как video.
-        """
+    async def send_video_file(self, chat_id: int, file_path: str, caption: str | None = None, reply_markup: dict | None = None) -> None:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Video file not found: {file_path}")
-
         data = {"chat_id": str(chat_id)}
         if caption:
             data["caption"] = caption
         if reply_markup is not None:
             data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-
         with open(file_path, "rb") as f:
             files = {"video": (os.path.basename(file_path), f, "video/mp4")}
             r = await self._client.post(f"{self._base}/sendVideo", data=data, files=files)
