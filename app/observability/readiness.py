@@ -81,6 +81,7 @@ def readiness_snapshot(
                 "last_error": "readiness_unavailable",
             }
 
+    command_console_enabled = bool(getattr(settings, "telegram_aaa_console_enabled", True))
     features = {
         "ai": ai_enabled and ai_configured,
         "persistent_memory_configured": supabase_secret and supabase_url,
@@ -89,6 +90,9 @@ def readiness_snapshot(
         "voice": bool(getattr(settings, "voice_enabled", True)),
         "mini_app": True,
         "command_center": True,
+        "telegram_aaa_command_console": command_console_enabled,
+        "telegram_inline_navigation": command_console_enabled,
+        "telegram_rich_messages": command_console_enabled,
         "persistence_recovery": bool(recovery_fn),
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
         "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),
