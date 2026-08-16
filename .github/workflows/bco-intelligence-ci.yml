@@ -5,10 +5,12 @@ on:
     branches:
       - feature/bco-aaa-intelligence-v1
       - feature/bco-aaa-player-intelligence-v2
+      - feature/bco-aaa-live-game-intelligence-v3
   pull_request:
     branches:
       - main
       - feature/bco-aaa-intelligence-v1
+      - feature/bco-aaa-player-intelligence-v2
 
 jobs:
   test:
