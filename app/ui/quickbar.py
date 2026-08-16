@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Iterable
 
+from app.ui.native_buttons import decorate_reply_markup
+
 
 # =========================
 # MINI APP URL (Telegram WebApp)
@@ -100,20 +102,21 @@ def _row(*buttons: str | dict) -> list[dict]:
 
 
 def _keyboard(rows: Iterable[list[dict]], *, placeholder: str = "Команда или ситуация…") -> dict:
-    return {
+    markup = {
         "keyboard": list(rows),
         "resize_keyboard": True,
         "is_persistent": True,
         "one_time_keyboard": False,
         "input_field_placeholder": placeholder[:64],
     }
+    return decorate_reply_markup(markup) or markup
 
 
 # =========================
-# MAIN — TACTICAL COMMAND DECK
+# MAIN — NATIVE TACTICAL COMMAND DECK
 # =========================
 def kb_main() -> dict:
-    """Primary deck: frequent actions first, destructive actions are nested."""
+    """Primary deck using Bot API 9.4+ native colored button styles."""
     return _keyboard(
         [
             _row("🧠 ИИ", "🎯 Тренировка"),
