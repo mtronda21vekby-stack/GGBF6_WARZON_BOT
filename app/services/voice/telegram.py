@@ -21,18 +21,29 @@ _SPEAK_BUTTONS = {"🔊 Озвучить ответ", "/speak"}
 
 
 def _message(raw: dict) -> dict:
+    callback = raw.get("callback_query") or {}
+    if isinstance(callback, dict) and callback:
+        msg = callback.get("message") or {}
+        return msg if isinstance(msg, dict) else {}
     msg = raw.get("message") or raw.get("edited_message") or {}
     return msg if isinstance(msg, dict) else {}
 
 
 def _chat_id_text(raw: dict) -> tuple[int | None, str]:
-    msg = _message(raw)
+    callback = raw.get("callback_query") or {}
+    if isinstance(callback, dict) and callback:
+        msg = callback.get("message") or {}
+        text = str(callback.get("data") or "").strip()
+    else:
+        msg = _message(raw)
+        text = str(msg.get("text") or "").strip()
+    msg = msg if isinstance(msg, dict) else {}
     chat = msg.get("chat") if isinstance(msg.get("chat"), dict) else {}
     try:
         chat_id = int(chat.get("id"))
     except Exception:
         chat_id = None
-    return chat_id, str(msg.get("text") or "").strip()
+    return chat_id, text
 
 
 def _last_assistant(history: list[dict]) -> str:
