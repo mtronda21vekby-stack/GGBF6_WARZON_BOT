@@ -15,6 +15,8 @@ from app.services.profiles.service import ProfileService
 from app.services.storage.factory import build_store
 from app.services.vod.service import VODAnalysisService
 from app.services.vod.telegram import VODTelegramIngress
+from app.services.voice.service import VoiceService
+from app.services.voice.telegram import VoiceTelegramController
 
 log = get_logger("webhook")
 
@@ -23,13 +25,21 @@ def create_app() -> FastAPI:
     settings = get_settings()
     setup_logging(settings.log_level)
 
-    app = FastAPI(title="GGBF6 WARZON BOT", version="4.2.0")
+    app = FastAPI(title="GGBF6 WARZON BOT", version="5.0.0")
 
     tg = TelegramClient(settings.bot_token)
     store = build_store(settings)
     profiles = ProfileService(store=store)
     core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
     conversation = ConversationService(brain=core_brain, store=store, profiles=profiles)
+
+    voice_service = VoiceService(settings=settings)
+    voice_controller = VoiceTelegramController(
+        tg=tg,
+        profiles=profiles,
+        store=store,
+        voice=voice_service,
+    )
 
     vod_service = VODAnalysisService(
         api_key=settings.openai_api_key,
@@ -107,6 +117,14 @@ def create_app() -> FastAPI:
         raw = await request.json()
         upd = Update.parse(raw)
 
+        # Voice controls are a narrow pre-handler. Existing persona buttons
+        # (TEAMMATE/COACH) still fall through to the legacy Router.
+        try:
+            if await voice_controller.maybe_handle_command(upd):
+                return JSONResponse({"ok": True})
+        except Exception as exc:
+            log.exception("voice command pre-handler crashed: %s", type(exc).__name__)
+
         # Media/VOD gets a dedicated capability boundary before the legacy
         # text router. This keeps the large existing Router stable.
         try:
@@ -116,15 +134,9 @@ def create_app() -> FastAPI:
             log.exception("VOD pre-handler crashed: %s", type(exc).__name__)
 
         try:
-            msg = getattr(upd, "message", None)
-            web_app_data = getattr(msg, "web_app_data", None) if msg else None
-
-            data_raw = None
-            if web_app_data:
-                if isinstance(web_app_data, dict):
-                    data_raw = web_app_data.get("data")
-                else:
-                    data_raw = getattr(web_app_data, "data", None)
+            msg = (upd.get("message") or upd.get("edited_message") or {}) if isinstance(upd, dict) else {}
+            web_app_data = msg.get("web_app_data") if isinstance(msg, dict) else None
+            data_raw = web_app_data.get("data") if isinstance(web_app_data, dict) else None
 
             if data_raw:
                 handler = getattr(router, "handle_webapp_data", None)
@@ -139,10 +151,21 @@ def create_app() -> FastAPI:
         except Exception as exc:
             log.exception("web_app_data pre-handler crashed: %s", exc)
 
+        chat_id = voice_controller.extract_chat_id(upd) if isinstance(upd, dict) else None
+        before_voice_signature = voice_controller.history_signature(chat_id)
+
         try:
             await router.handle_update(upd)
         except Exception as exc:
             log.exception("Unhandled error: %s", exc)
+
+        # AUTO speaks only when Router/ConversationService actually appended a
+        # new assistant turn. Menu responses do not mutate working memory and
+        # therefore do not trigger TTS.
+        try:
+            await voice_controller.maybe_auto(chat_id, before_voice_signature)
+        except Exception as exc:
+            log.warning("voice auto post-handler failed: %s", type(exc).__name__)
 
         return JSONResponse({"ok": True})
 
