@@ -82,13 +82,37 @@ class Settings(BaseSettings):
     vod_download_timeout_s: float = float(os.getenv("VOD_DOWNLOAD_TIMEOUT_S", "60"))
     vod_vision_model: str = os.getenv("VOD_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini"))
 
-    # Free/self-hosted Telegram voice. No paid TTS API is required.
+    # Hybrid voice: steerable cloud TTS first, local Piper fallback always ready.
+    # Legacy VOICE_PROVIDER=piper is treated as hybrid for a safe production
+    # upgrade. Use VOICE_HIGH_FIDELITY_ENABLED=0 or VOICE_PROVIDER=piper-only
+    # to force the fully local path.
     voice_enabled: bool = os.getenv("VOICE_ENABLED", "1") not in ("0", "false", "False", "")
-    voice_provider: str = os.getenv("VOICE_PROVIDER", "piper")
+    voice_provider: str = os.getenv("VOICE_PROVIDER", "auto")
+    voice_high_fidelity_enabled: bool = os.getenv("VOICE_HIGH_FIDELITY_ENABLED", "1") not in (
+        "0",
+        "false",
+        "False",
+        "off",
+        "OFF",
+        "",
+    )
+    voice_local_fallback_enabled: bool = os.getenv("VOICE_LOCAL_FALLBACK_ENABLED", "1") not in (
+        "0",
+        "false",
+        "False",
+        "off",
+        "OFF",
+        "",
+    )
     voice_model_name: str = os.getenv("VOICE_MODEL_NAME", "ru_RU-denis-medium")
     voice_model_dir: str = os.getenv("VOICE_MODEL_DIR", ".bco_voice")
     voice_model_timeout_s: float = float(os.getenv("VOICE_MODEL_TIMEOUT_S", "120"))
-    voice_max_chars: int = int(os.getenv("VOICE_MAX_CHARS", "1600"))
+    voice_max_chars: int = int(os.getenv("VOICE_MAX_CHARS", "1800"))
+    voice_opus_bitrate_kbps: int = int(os.getenv("VOICE_OPUS_BITRATE_KBPS", "48"))
+    voice_openai_model: str = os.getenv("VOICE_OPENAI_MODEL", "gpt-4o-mini-tts")
+    voice_openai_voice: str = os.getenv("VOICE_OPENAI_VOICE", "cedar")
+    voice_openai_timeout_s: float = float(os.getenv("VOICE_OPENAI_TIMEOUT_S", "45"))
+    voice_openai_max_bytes: int = int(os.getenv("VOICE_OPENAI_MAX_BYTES", str(20 * 1024 * 1024)))
 
     # AI
     ai_enabled: bool = os.getenv("AI_ENABLED", "1") not in ("0", "false", "False", "")
