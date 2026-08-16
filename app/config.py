@@ -10,6 +10,9 @@ except Exception:
     from pydantic import BaseSettings  # type: ignore
 
 
+DEFAULT_BCO_SUPABASE_URL = "https://wqriwhciqvrbhkkiuhxb.supabase.co"
+
+
 class Settings(BaseSettings):
     # Telegram
     bot_token: str = os.getenv("BOT_TOKEN", "")
@@ -22,7 +25,9 @@ class Settings(BaseSettings):
     memory_max_turns: int = int(os.getenv("MEMORY_MAX_TURNS", "20"))
     storage_backend: str = os.getenv("STORAGE_BACKEND", "auto")
     storage_timeout_s: float = float(os.getenv("STORAGE_TIMEOUT_S", "8"))
-    supabase_url: str = os.getenv("SUPABASE_URL", "")
+    # The project URL is public configuration, not a secret. Environment can
+    # override it for staging/other deployments; production defaults to GAME.
+    supabase_url: str = os.getenv("SUPABASE_URL", DEFAULT_BCO_SUPABASE_URL)
     supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     supabase_schema: str = os.getenv("SUPABASE_SCHEMA", "public")
 
