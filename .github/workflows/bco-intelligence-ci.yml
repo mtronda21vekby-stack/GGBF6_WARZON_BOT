@@ -13,6 +13,7 @@ on:
       - feature/bco-aaa-quality-v7
       - feature/bco-aaa-persistence-recovery-v8
       - feature/bco-aaa-production-readiness-v9
+      - feature/bco-aaa-deployment-gate-v10
   pull_request:
     branches:
       - main
@@ -45,4 +46,64 @@ jobs:
         run: pytest -q
 
       - name: Import smoke
-        run: python -c "from app.webhook import app; print(app.title)"
+        run: python -c "from app.webhook import app; print(app.title, app.version)"
+
+  production-smoke:
+    name: production-smoke
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PRODUCTION_URL: https://ggbf6-warzon-bot.onrender.com
+    steps:
+      - name: Checkout release contract
+        uses: actions/checkout@v4
+
+      - name: Wait for Render release and persistent readiness
+        shell: bash
+        run: |
+          set -u
+          EXPECTED_VERSION="$(python -c 'from app.release import APP_VERSION; print(APP_VERSION)')"
+          echo "Waiting for BLACK CROWN OPS ${EXPECTED_VERSION} at ${PRODUCTION_URL}"
+          rm -f /tmp/bco-health.json
+
+          for attempt in $(seq 1 60); do
+            http_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-health.json -w '%{http_code}' "${PRODUCTION_URL}/health/details" || true)"
+            if [ "${http_code}" = "200" ]; then
+              if EXPECTED_VERSION="${EXPECTED_VERSION}" python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          try:
+              payload = json.loads(Path('/tmp/bco-health.json').read_text(encoding='utf-8'))
+          except Exception:
+              raise SystemExit(1)
+
+          recovery = ((payload.get('storage') or {}).get('recovery') or {})
+          features = payload.get('features') or {}
+          release = payload.get('release') or {}
+          ok = (
+              release.get('version') == os.environ['EXPECTED_VERSION']
+              and payload.get('status') == 'ready'
+              and features.get('persistent_memory_configured') is True
+              and recovery.get('last_probe_ok') is True
+              and recovery.get('primary_available') is True
+          )
+          raise SystemExit(0 if ok else 1)
+          PY
+              then
+                echo "Production verified: version=${EXPECTED_VERSION}, Supabase startup probe=OK"
+                cat /tmp/bco-health.json
+                exit 0
+              fi
+            fi
+
+            echo "attempt=${attempt}/60 http=${http_code:-000} release not ready yet"
+            sleep 10
+          done
+
+          echo "Production deployment gate failed after 10 minutes. Last response:"
+          cat /tmp/bco-health.json 2>/dev/null || true
+          exit 1
