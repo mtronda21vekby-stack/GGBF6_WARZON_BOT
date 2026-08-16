@@ -21,12 +21,11 @@ def enforce_response_limit(text: str, policy: ResponsePolicy) -> str:
 def currentness_blocked_response(knowledge: KnowledgeContext) -> str:
     dated = ""
     if knowledge.last_updated:
-        dated = f"\nПоследняя локальная база датирована: {knowledge.last_updated}."
-    source = f"\nИсточник локальной базы: {knowledge.source}." if knowledge.source else ""
+        dated = f"\nПоследняя доступная база датирована: {knowledge.last_updated}."
+    source = f"\nИсточник: {knowledge.source}." if knowledge.source else ""
     return (
-        "📡 Актуальность не подтверждена.\n"
+        "📡 Актуальность не подтверждена: live-проверка сейчас недоступна.\n"
         "Я не буду выдавать старые данные или память модели за текущую мету/последний патч."
         f"{dated}{source}\n\n"
-        "Могу разобрать тактику или настройки по проверенной локальной базе, "
-        "а live-мету включим отдельным источником данных."
+        "Тактику, настройки и разбор игры могу дать сразу; для current/meta ответа нужен успешный официальный live-источник."
     )

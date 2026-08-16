@@ -34,8 +34,8 @@ _INTENT_RULES: dict[Intent, str] = {
     Intent.AIM: "Separate mechanical aim problems from positioning/decision problems. Add a metric only when useful.",
     Intent.MOVEMENT: "Treat movement as a combat tool, not style. Explain what advantage the movement should create.",
     Intent.LOADOUT: "Give a direct setup only from supplied trusted data; otherwise discuss role/class trade-offs without inventing current attachments.",
-    Intent.META_CURRENT: "Current meta requires VERIFIED_CURRENT evidence. Never use model memory as proof of current meta.",
-    Intent.PATCH_CURRENT: "Current patch claims require VERIFIED_CURRENT evidence. Never guess patch notes.",
+    Intent.META_CURRENT: "Use live official patch evidence for current changes. Meta ranking is a BCO recommendation/inference unless the evidence itself explicitly ranks a meta.",
+    Intent.PATCH_CURRENT: "Current patch claims require VERIFIED_CURRENT official evidence. Never guess patch notes.",
     Intent.GAME_SETTINGS: "Use dated/static settings as recommendations with source/date; do not present them as universal truth.",
     Intent.TRAINING: "Give one objective, a compact drill plan, a measurable metric and a stop condition.",
     Intent.ZOMBIES: "Be map-specific when map context exists; use ordered steps and recovery instructions.",
@@ -71,7 +71,7 @@ class PromptBuilder:
         if not knowledge.facts:
             return (
                 f"confidence={knowledge.confidence.value}; freshness={knowledge.freshness}\n"
-                "No trusted repository facts were selected for this request."
+                "No trusted facts were selected for this request."
             )
         lines = [
             f"confidence={knowledge.confidence.value}",
@@ -118,11 +118,20 @@ class PromptBuilder:
             if brain == "PRO" else
             "NORMAL depth should be clear and stable."
         )
-        current_rule = (
-            "This request depends on current data and requires VERIFIED_CURRENT evidence. If evidence is not VERIFIED_CURRENT, explicitly say currentness is not verified."
-            if intent.needs_current_data
-            else "Do not claim currentness unless the selected evidence explicitly supports it."
-        )
+
+        if intent.intent == Intent.META_CURRENT:
+            current_rule = (
+                "This request requires VERIFIED_CURRENT live evidence. Live official patch notes verify current official changes, "
+                "not an official universal meta ranking. Clearly label the final weapon/loadout ranking as a BLACK CROWN OPS "
+                "recommendation or inference unless the source explicitly states a ranking."
+            )
+        elif intent.intent == Intent.PATCH_CURRENT:
+            current_rule = (
+                "This request requires VERIFIED_CURRENT live official evidence. State only changes supported by that evidence "
+                "and separate gameplay-impact analysis from the official patch facts."
+            )
+        else:
+            current_rule = "Do not claim currentness unless the selected evidence explicitly supports it."
 
         return f"""SYSTEM
 You are {self.product_name}, Artificial Competitive Intelligence for FPS.
@@ -137,7 +146,7 @@ Priority:
 
 Never trade correctness for confidence, branding, hype or aggression.
 Never fabricate a source, patch, weapon attachment, statistic, player history or video observation.
-Distinguish internally between trusted facts, model knowledge and recommendations.
+Distinguish internally between trusted facts, model knowledge, inference and recommendations.
 {current_rule}
 
 UTC date: {today}
@@ -174,6 +183,8 @@ Rules:
 - Ask at most one clarification question and only if it materially changes the recommendation.
 - If VOD is text/timestamp-only, never claim frame analysis.
 - Treat player trends as historical evidence only when the supplied persistent context contains enough observations.
+- When response policy includes sources and trusted knowledge has a source/date, include one concise source/date line.
+- Never describe a BCO meta recommendation as an official developer ranking unless the official evidence actually says that.
 """.strip()
 
     def build_messages(

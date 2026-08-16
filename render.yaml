@@ -10,4 +10,13 @@ services:
         value: .
       - key: AI_ENABLED
         value: "1"
-      # OPENAI_API_KEY НЕ ПИШИ В ФАЙЛЕ если репо публичное — ставь в Render Dashboard
+      - key: STORAGE_BACKEND
+        value: auto
+      - key: SUPABASE_URL
+        value: https://wqriwhciqvrbhkkiuhxb.supabase.co
+      - key: SUPABASE_SCHEMA
+        value: public
+      - key: STORAGE_TIMEOUT_S
+        value: "8"
+      # OPENAI_API_KEY и SUPABASE_SERVICE_ROLE_KEY не хранить в публичном репозитории.
+      # Добавить их только как server-side secrets в Render Dashboard.

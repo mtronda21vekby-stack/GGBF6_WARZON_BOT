@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     supabase_schema: str = os.getenv("SUPABASE_SCHEMA", "public")
 
+    # Live official game intelligence
+    live_knowledge_enabled: bool = os.getenv("LIVE_KNOWLEDGE_ENABLED", "1") not in ("0", "false", "False", "")
+    live_knowledge_ttl_s: int = int(os.getenv("LIVE_KNOWLEDGE_TTL_S", "900"))
+    live_knowledge_timeout_s: float = float(os.getenv("LIVE_KNOWLEDGE_TIMEOUT_S", "6"))
+
     # AI
     ai_enabled: bool = os.getenv("AI_ENABLED", "1") not in ("0", "false", "False", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
