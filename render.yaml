@@ -18,6 +18,10 @@ services:
         value: public
       - key: STORAGE_TIMEOUT_S
         value: "8"
+      - key: STORAGE_OUTBOX_MAX
+        value: "500"
+      - key: STORAGE_REPLAY_BATCH
+        value: "50"
       - key: VOD_ENABLED
         value: "1"
       - key: VOD_MAX_BYTES
