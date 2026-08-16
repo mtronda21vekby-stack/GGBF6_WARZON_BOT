@@ -90,8 +90,9 @@ def _unwrap_plain_card(lines: list[str]) -> tuple[str, list[str]] | None:
     for prefix, channel in PLAIN_CARD_PREFIXES:
         if first.startswith(prefix):
             body = _compact_blank_lines(lines[1:])
-            if not body and first != prefix:
-                body = [first[len(prefix) :].lstrip(" :—-")]
+            remainder = first[len(prefix) :].lstrip(" :—-")
+            if remainder:
+                body.insert(0, remainder)
             return channel, body
     return None
 
