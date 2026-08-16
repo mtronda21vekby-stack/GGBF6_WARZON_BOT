@@ -7,12 +7,28 @@ from app.observability.quality import quality_telemetry
 
 
 def readiness_snapshot(settings: Any, store: Any) -> dict:
-    """Privacy-safe runtime readiness. Never exposes secret values."""
+    """Privacy-safe runtime readiness. Never exposes secret values/content."""
     ai_enabled = bool(getattr(settings, "ai_enabled", True))
     ai_configured = bool(str(getattr(settings, "openai_api_key", "") or "").strip())
     supabase_secret = bool(str(getattr(settings, "supabase_service_role_key", "") or "").strip())
     supabase_url = bool(str(getattr(settings, "supabase_url", "") or "").strip())
     storage_class = type(store).__name__ if store is not None else "None"
+
+    recovery: dict[str, Any] = {}
+    recovery_fn = getattr(store, "recovery_status", None)
+    if callable(recovery_fn):
+        try:
+            raw = dict(recovery_fn() or {})
+            recovery = {
+                "primary_available": bool(raw.get("primary_available", False)),
+                "outbox_pending": int(raw.get("outbox_pending") or 0),
+                "outbox_replayed": int(raw.get("outbox_replayed") or 0),
+                "outbox_dropped": int(raw.get("outbox_dropped") or 0),
+                "last_primary_error": str(raw.get("last_primary_error") or "")[:64],
+                "outbox_max": int(raw.get("outbox_max") or 0),
+            }
+        except Exception:
+            recovery = {"status": "unavailable"}
 
     features = {
         "ai": ai_enabled and ai_configured,
@@ -22,16 +38,20 @@ def readiness_snapshot(settings: Any, store: Any) -> dict:
         "voice": bool(getattr(settings, "voice_enabled", True)),
         "mini_app": True,
         "command_center": True,
+        "persistence_recovery": bool(recovery_fn),
     }
+    primary_degraded = bool(recovery) and recovery.get("primary_available") is False
     required_ok = features["ai"]
+    status = "degraded" if (not required_ok or primary_degraded) else "ready"
     return {
         "ok": required_ok,
-        "status": "ready" if required_ok else "degraded",
+        "status": status,
         "storage": {
             "configured_mode": str(getattr(settings, "storage_backend", "auto") or "auto")[:32],
             "active_adapter": storage_class[:64],
             "persistent_configured": features["persistent_memory_configured"],
             "resilient_fallback": "Resilient" in storage_class,
+            "recovery": recovery,
         },
         "features": features,
         "quality": quality_telemetry.snapshot(),
