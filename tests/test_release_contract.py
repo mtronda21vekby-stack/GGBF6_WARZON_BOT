@@ -38,12 +38,13 @@ def _settings():
         usage_guard_enabled=True,
         telegram_max_update_bytes=256 * 1024,
         premium_link_enabled=True,
+        telegram_aaa_console_enabled=True,
     )
 
 
 def test_release_contract_is_explicit_and_readiness_exposes_version_only():
-    assert APP_VERSION == "15.0.0"
-    assert RELEASE_CONTRACT == "bco-aaa-v15"
+    assert APP_VERSION == "16.0.0"
+    assert RELEASE_CONTRACT == "bco-aaa-v16"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -51,8 +52,11 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "15.0.0", "contract": "bco-aaa-v15"}
+    assert snap["release"] == {"version": "16.0.0", "contract": "bco-aaa-v16"}
     assert snap["features"]["persistent_memory_configured"] is True
+    assert snap["features"]["telegram_aaa_command_console"] is True
+    assert snap["features"]["telegram_inline_navigation"] is True
+    assert snap["features"]["telegram_rich_messages"] is True
     assert snap["storage"]["recovery"]["last_probe_ok"] is True
     rendered = repr(snap)
     assert "configured-but-never-exposed" not in rendered
