@@ -5,45 +5,37 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+from typing import Iterable
 
 
 # =========================
 # MINI APP URL (Telegram WebApp)
 # =========================
-
-# маленький кэш, чтобы не rglob на каждый апдейт (но почти realtime)
 _BUILD_CACHE_VALUE: str | None = None
 _BUILD_CACHE_AT: float = 0.0
 _BUILD_CACHE_TTL_SEC = 2.0
 
 
 def _static_dir() -> Path:
-    """
-    app/ui/quickbar.py -> app/webapp/static
-    """
-    app_dir = Path(__file__).resolve().parents[1]  # .../app
+    """app/ui/quickbar.py -> app/webapp/static"""
+    app_dir = Path(__file__).resolve().parents[1]
     return (app_dir / "webapp" / "static").resolve()
 
 
 def _scan_static_mtime() -> int:
-    """
-    max mtime (секунды) по всем файлам в app/webapp/static/*
-    Меняется при любом обновлении любого файла.
-    """
     static_dir = _static_dir()
     if not static_dir.exists():
         return int(time.time())
 
     newest = 0
     try:
-        for p in static_dir.rglob("*"):
-            if p.is_file():
-                try:
-                    mt = int(p.stat().st_mtime)
-                    if mt > newest:
-                        newest = mt
-                except Exception:
-                    continue
+        for path in static_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                newest = max(newest, int(path.stat().st_mtime))
+            except Exception:
+                continue
     except Exception:
         return int(time.time())
 
@@ -51,311 +43,274 @@ def _scan_static_mtime() -> int:
 
 
 def _webapp_build() -> str:
-    """
-    BUILD берём из:
-      1) WEBAPP_BUILD_ID (ручной override)
-      2) RENDER_GIT_COMMIT (Render deploy)
-      3) max mtime по static/*
-    """
+    """Resolve a short cache-busting build id for Telegram iOS WebApp cache."""
     global _BUILD_CACHE_VALUE, _BUILD_CACHE_AT
 
     now = time.time()
     if _BUILD_CACHE_VALUE and (now - _BUILD_CACHE_AT) < _BUILD_CACHE_TTL_SEC:
         return _BUILD_CACHE_VALUE
 
-    v = (os.getenv("WEBAPP_BUILD_ID") or "").strip()
-    if not v:
-        v = (os.getenv("RENDER_GIT_COMMIT") or "").strip()
+    value = (os.getenv("WEBAPP_BUILD_ID") or "").strip()
+    if not value:
+        value = (os.getenv("RENDER_GIT_COMMIT") or "").strip()
+    if not value:
+        value = str(_scan_static_mtime())
 
-    if not v:
-        v = str(_scan_static_mtime())
-
-    v = v[:12] if len(v) > 12 else v
-
-    _BUILD_CACHE_VALUE = v
+    value = value[:12]
+    _BUILD_CACHE_VALUE = value
     _BUILD_CACHE_AT = now
-    return v
+    return value
 
 
 def _webapp_url() -> str:
-    """
-    Берём URL мини-аппа из ENV:
-      WEBAPP_URL=https://<host>/webapp
-    Если не задан — пробуем собрать из PUBLIC_BASE_URL:
-      PUBLIC_BASE_URL=https://<host>  -> /webapp
-
-    ВАЖНО (Telegram iOS cache):
-      добавляем авто cache-bust параметр v=BUILD
-      BUILD = _webapp_build() (см. выше)
-    """
     url = (os.getenv("WEBAPP_URL") or "").strip()
     if not url:
         base = (os.getenv("PUBLIC_BASE_URL") or "").strip().rstrip("/")
-        url = (base + "/webapp") if base else ""
-
+        url = f"{base}/webapp" if base else ""
     if not url:
         return ""
 
-    # всегда добавляем v=BUILD (если смогли получить build)
     build = _webapp_build().strip()
     if build:
-        sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}v={build}"
-
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}v={build}"
     return url
 
 
 def _miniapp_button() -> dict:
-    """
-    Кнопка MINI APP:
-    - если URL есть -> web_app кнопка
-    - если URL нет -> обычная кнопка (не ломаем UI)
-    """
+    """Open the real Mini App when configured; keep the legacy text fallback."""
     url = _webapp_url()
     if url:
-        return {"text": "🛰 MINI APP", "web_app": {"url": url}}
+        return {"text": "🛰 COMMAND CENTER", "web_app": {"url": url}}
     return {"text": "🛰 MINI APP"}
 
 
 # =========================
-# PREMIUM MAIN QUICKBAR (нижняя клавиатура)
+# KEYBOARD BUILDERS
+# =========================
+def _text_button(text: str) -> dict:
+    return {"text": text}
+
+
+def _row(*buttons: str | dict) -> list[dict]:
+    result: list[dict] = []
+    for button in buttons:
+        result.append(button if isinstance(button, dict) else _text_button(button))
+    return result
+
+
+def _keyboard(rows: Iterable[list[dict]], *, placeholder: str = "Команда или ситуация…") -> dict:
+    return {
+        "keyboard": list(rows),
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": placeholder[:64],
+    }
+
+
+# =========================
+# MAIN — TACTICAL COMMAND DECK
 # =========================
 def kb_main() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🎮 Игра"}, {"text": "⚙️ Настройки"}, {"text": "🎭 Роль/Класс"}],
-            [{"text": "🧠 ИИ"}, {"text": "🎯 Тренировка"}, {"text": "🎬 VOD"}],
-            [{"text": "🧟 Zombies"}, {"text": "📌 Профиль"}, {"text": "📊 Статус"}],
-            [{"text": "💎 Premium"}, {"text": "🧹 Очистить память"}, {"text": "🧨 Сброс"}],
-            [_miniapp_button()],
+    """Primary deck: frequent actions first, destructive actions are nested."""
+    return _keyboard(
+        [
+            _row("🧠 ИИ", "🎯 Тренировка"),
+            _row("🎮 Игра", "🎬 VOD"),
+            _row("🧟 Zombies", "📌 Профиль"),
+            _row("💎 Premium", "⚙️ Настройки"),
+            _row("📊 Статус", _miniapp_button()),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-        "input_field_placeholder": "Опиши ситуацию/смерть одной строкой — разбор как от тиммейта…",
-    }
+        placeholder="Опиши файт: ситуация · ошибка · цель",
+    )
 
 
 # =========================
-# PREMIUM HUB
+# PREMIUM HUB (legacy-compatible)
 # =========================
 def kb_premium() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🎙 Голос: Тиммейт/Коуч"}],
-            [{"text": "😈 Режим мышления"}, {"text": "🧩 Настройки игры"}],
-            [{"text": "🎯 Тренировка: План"}, {"text": "🎬 VOD: Разбор"}],
-            [{"text": "🧠 Память: Статус"}],
-            [_miniapp_button()],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("💳 Premium статус", "🔗 Связать с сайтом"),
+            _row("🎙 Голос: Тиммейт/Коуч", "😈 Режим мышления"),
+            _row("🎯 Тренировка: План", "🎬 VOD: Разбор"),
+            _row("🧩 Настройки игры", "🧠 Память: Статус"),
+            _row("🔓 Отвязать сайт", _miniapp_button()),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-        "input_field_placeholder": "Premium-панель…",
-    }
+        placeholder="Premium · аккаунт · интеллект",
+    )
 
 
 # =========================
-# VOICE MODE
+# VOICE / PERSONA
 # =========================
 def kb_voice() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🤝 Тиммейт"}, {"text": "📚 Коуч"}],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("🤝 Тиммейт", "📚 Коуч"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-        "input_field_placeholder": "Выбери стиль общения…",
-    }
+        placeholder="Выбери стиль ответа",
+    )
 
 
 # =========================
-# SETTINGS ROOT
+# SETTINGS / SYSTEM
 # =========================
 def kb_settings() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🎮 Выбрать игру"}],
-            [{"text": "🖥 Платформа"}, {"text": "⌨️ Input"}],
-            [{"text": "😈 Режим мышления"}],
-            [{"text": "🧩 Настройки игры"}],
-            [{"text": "⬅️ Назад"}],
+    """Secondary deck with profile controls and guarded destructive actions."""
+    return _keyboard(
+        [
+            _row("🎮 Выбрать игру", "🎭 Роль/Класс"),
+            _row("🖥 Платформа", "⌨️ Input"),
+            _row("😈 Режим мышления", "🎙 Голос: Тиммейт/Коуч"),
+            _row("🧩 Настройки игры", "📊 Статус"),
+            _row("🧹 Очистить память", "🧨 Сброс"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-        "input_field_placeholder": "Выбери пункт настроек…",
-    }
+        placeholder="Настройки профиля и системы",
+    )
 
 
 def kb_games() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🔥 Warzone"}, {"text": "💣 BO7"}],
-            [{"text": "🪖 BF6"}],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("🔥 Warzone", "💣 BO7"),
+            _row("🪖 BF6"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-    }
+        placeholder="Выбери игровой мир",
+    )
 
 
 def kb_platform() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🖥 PC"}, {"text": "🎮 PlayStation"}, {"text": "🎮 Xbox"}],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("🖥 PC", "🎮 PlayStation"),
+            _row("🎮 Xbox"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-    }
+        placeholder="Выбери платформу",
+    )
 
 
 def kb_input() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "⌨️ KBM"}, {"text": "🎮 Controller"}],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("⌨️ KBM", "🎮 Controller"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-    }
+        placeholder="Выбери устройство ввода",
+    )
 
 
 def kb_difficulty() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🧠 Normal"}, {"text": "🔥 Pro"}, {"text": "😈 Demon"}],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("🧠 Normal", "🔥 Pro"),
+            _row("😈 Demon"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-    }
+        placeholder="Глубина и жёсткость анализа",
+    )
 
 
 def kb_bf6_classes() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🟥 Assault"}, {"text": "🟦 Recon"}],
-            [{"text": "🟨 Engineer"}, {"text": "🟩 Medic"}],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("🟥 Assault", "🟦 Recon"),
+            _row("🟨 Engineer", "🟩 Medic"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-    }
+        placeholder="Выбери класс BF6",
+    )
 
 
 def kb_roles() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "⚔️ Слэйер"}, {"text": "🚪 Энтри"}, {"text": "🧠 IGL"}],
-            [{"text": "🛡 Саппорт"}, {"text": "🌀 Флекс"}],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("⚔️ Слэйер", "🚪 Энтри"),
+            _row("🧠 IGL", "🛡 Саппорт"),
+            _row("🌀 Флекс"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-    }
+        placeholder="Выбери роль в отряде",
+    )
 
 
 def kb_game_settings_menu(game: str) -> dict:
-    g = (game or "Warzone").strip()
-    g_up = g.upper()
+    game_name = (game or "Warzone").strip()
+    game_upper = game_name.upper()
 
-    if g_up == "BF6":
-        return {
-            "keyboard": [
-                [{"text": "🪖 BF6: Class Settings"}],
-                [{"text": "🎯 BF6: Aim/Sens"}],
-                [{"text": "🎮 BF6: Controller Tuning"}, {"text": "⌨️ BF6: KBM Tuning"}],
-                [{"text": "⬅️ Назад"}],
+    if game_upper == "BF6":
+        return _keyboard(
+            [
+                _row("🪖 BF6: Class Settings", "🎯 BF6: Aim/Sens"),
+                _row("🎮 BF6: Controller Tuning", "⌨️ BF6: KBM Tuning"),
+                _row("⬅️ Назад"),
             ],
-            "resize_keyboard": True,
-            "is_persistent": True,
-            "one_time_keyboard": False,
-            "input_field_placeholder": "BF6 settings (EN)…",
-        }
+            placeholder="BF6 tactical settings",
+        )
 
-    if g_up == "BO7":
-        return {
-            "keyboard": [
-                [{"text": "🎭 BO7: Роль"}],
-                [{"text": "🎯 BO7: Aim/Sens"}],
-                [{"text": "🎮 BO7: Controller"}, {"text": "⌨️ BO7: KBM"}],
-                [{"text": "🧠 BO7: Мувмент/Позиционка"}, {"text": "🎧 BO7: Аудио/Видео"}],
-                [{"text": "⬅️ Назад"}],
+    if game_upper == "BO7":
+        return _keyboard(
+            [
+                _row("🎭 BO7: Роль", "🎯 BO7: Aim/Sens"),
+                _row("🎮 BO7: Controller", "⌨️ BO7: KBM"),
+                _row("🧠 BO7: Мувмент/Позиционка", "🎧 BO7: Аудио/Видео"),
+                _row("⬅️ Назад"),
             ],
-            "resize_keyboard": True,
-            "is_persistent": True,
-            "one_time_keyboard": False,
-            "input_field_placeholder": "Настройки BO7…",
-        }
+            placeholder="Настройки BO7",
+        )
 
-    return {
-        "keyboard": [
-            [{"text": "🎭 Warzone: Роль"}],
-            [{"text": "🎯 Warzone: Aim/Sens"}],
-            [{"text": "🎮 Warzone: Controller"}, {"text": "⌨️ Warzone: KBM"}],
-            [{"text": "🧠 Warzone: Мувмент/Позиционка"}, {"text": "🎧 Warzone: Аудио/Видео"}],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("🎭 Warzone: Роль", "🎯 Warzone: Aim/Sens"),
+            _row("🎮 Warzone: Controller", "⌨️ Warzone: KBM"),
+            _row("🧠 Warzone: Мувмент/Позиционка", "🎧 Warzone: Аудио/Видео"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-        "input_field_placeholder": "Настройки Warzone…",
-    }
+        placeholder="Настройки Warzone",
+    )
 
 
 # =========================================================
-# ZOMBIES (BACKWARD COMPAT)
+# ZOMBIES — BACKWARD COMPATIBILITY
 # =========================================================
 def kb_zombies_home() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🗺 Карты"}, {"text": "🧪 Перки"}],
-            [{"text": "🔫 Оружие"}, {"text": "🥚 Пасхалки"}],
-            [{"text": "🧠 Стратегия раундов"}, {"text": "⚡ Быстрые советы"}],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("🗺 Карты", "🧪 Перки"),
+            _row("🔫 Оружие", "🥚 Пасхалки"),
+            _row("🧠 Стратегия раундов", "⚡ Быстрые советы"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-        "input_field_placeholder": "Zombies: карта | раунд | от чего падаешь | что открыл…",
-    }
+        placeholder="Zombies: карта · раунд · проблема",
+    )
 
 
 def kb_zombies_maps() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🧟 Ashes"}, {"text": "🧟 Astra"}],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("🧟 Ashes", "🧟 Astra"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-        "input_field_placeholder": "Выбери карту…",
-    }
+        placeholder="Выбери карту Zombies",
+    )
 
 
 def kb_zombies_sections() -> dict:
-    return {
-        "keyboard": [
-            [{"text": "🚀 Старт/маршрут"}, {"text": "⚡ Pack-a-Punch"}, {"text": "🔫 Чудо-оружие"}],
-            [{"text": "⚡ Перки (порядок)"}, {"text": "🔫 Оружие (2 слота)"}, {"text": "🧠 Ротации/позиции"}],
-            [{"text": "👹 Спец-зомби/боссы"}, {"text": "🧩 Пасхалка (основная)"}, {"text": "🎁 Мини-пасхалки"}],
-            [{"text": "💀 Ошибки/вайпы"}, {"text": "🧾 Чек-лист раунда"}, {"text": "🆘 Я застрял"}],
-            [{"text": "⬅️ Назад"}],
+    return _keyboard(
+        [
+            _row("🚀 Старт/маршрут", "⚡ Pack-a-Punch"),
+            _row("🔫 Чудо-оружие", "⚡ Перки (порядок)"),
+            _row("🔫 Оружие (2 слота)", "🧠 Ротации/позиции"),
+            _row("👹 Спец-зомби/боссы", "🧩 Пасхалка (основная)"),
+            _row("🎁 Мини-пасхалки", "💀 Ошибки/вайпы"),
+            _row("🧾 Чек-лист раунда", "🆘 Я застрял"),
+            _row("⬅️ Назад"),
         ],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-        "input_field_placeholder": "Напиши ключевое слово или выбери секцию…",
-    }
+        placeholder="Выбери секцию Zombies",
+    )
