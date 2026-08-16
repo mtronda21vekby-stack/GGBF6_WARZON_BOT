@@ -10,6 +10,7 @@ on:
       - feature/bco-aaa-vod-intelligence-v4
       - feature/bco-aaa-voice-v5
       - feature/bco-aaa-command-center-v6
+      - feature/bco-aaa-quality-v7
   pull_request:
     branches:
       - main
