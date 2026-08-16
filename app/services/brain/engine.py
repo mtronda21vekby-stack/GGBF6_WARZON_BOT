@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Tuple
 
@@ -22,6 +23,7 @@ from app.services.brain.response_policy import get_response_policy
 
 
 log = logging.getLogger("bco.intelligence")
+PartialCallback = Callable[[str, dict[str, Any]], None]
 
 
 @dataclass
@@ -61,6 +63,7 @@ class BrainEngine:
         profile: dict[str, Any],
         history: list[dict],
         player_context: Mapping[str, Any] | None = None,
+        on_partial: PartialCallback | None = None,
     ) -> str:
         started = time.monotonic()
         request_id = uuid.uuid4().hex[:12]
@@ -123,9 +126,15 @@ class BrainEngine:
                 policy=policy,
                 knowledge=knowledge,
                 player_context=dict(player_context or profile),
+                on_partial=on_partial,
             )
             meta = dict(ai.last_generation_meta or {})
             result = enforce_response_limit(generated, policy)
+            if on_partial is not None and result != generated:
+                try:
+                    on_partial(result, {"phase": "final", "reset": True, "limited": True})
+                except Exception:
+                    pass
             return result
         except Exception as exc:
             error_class = type(exc).__name__
@@ -151,10 +160,12 @@ class BrainEngine:
             )
             log.info(
                 "bco_reply request_id=%s intent=%s game=%s voice=%s brain=%s model=%s "
-                "latency_ms=%d knowledge=%s attempts=%d anti_repeat=%s outcome=%s response_len=%d error=%s",
+                "latency_ms=%d knowledge=%s attempts=%d anti_repeat=%s streamed=%s chunks=%d "
+                "outcome=%s response_len=%d error=%s",
                 request_id, intent.intent.value, profile.get("game"), profile.get("voice"),
                 profile.get("difficulty"), getattr(self.settings, "openai_model", "?"),
                 latency, knowledge_name, int(meta.get("attempts") or 1),
-                bool(meta.get("anti_repeat_retry")), outcome, len(result),
+                bool(meta.get("anti_repeat_retry")), bool(meta.get("streamed")),
+                int(meta.get("stream_chunks") or 0), outcome, len(result),
                 str(meta.get("error_class") or error_class or "none"),
             )
