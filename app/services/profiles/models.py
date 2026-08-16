@@ -39,6 +39,15 @@ class PlayerIntelligence:
     voice_mode: str | None = None
     brain_mode: str | None = None
 
+    # Backward-compatible runtime fields still consumed by the legacy Router,
+    # Mini App and voice controller. Keeping them in the canonical model stops
+    # ProfileService.patch() from silently dropping working user settings.
+    difficulty: str | None = None
+    voice: str | None = None
+    bf6_class: str | None = None
+    zombies_map: str | None = None
+    tts_mode: str | None = None
+
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any] | None) -> "PlayerIntelligence":
         data = data or {}
