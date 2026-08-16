@@ -14,6 +14,7 @@ on:
       - feature/bco-aaa-persistence-recovery-v8
       - feature/bco-aaa-production-readiness-v9
       - feature/bco-aaa-deployment-gate-v10
+      - feature/bco-render-deploy-recovery-v11
   pull_request:
     branches:
       - main
@@ -48,14 +49,56 @@ jobs:
       - name: Import smoke
         run: python -c "from app.webhook import app; print(app.title, app.version)"
 
+  render-deploy:
+    name: render-deploy
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      mode: ${{ steps.trigger.outputs.mode }}
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      RENDER_DEPLOY_HOOK_FALLBACK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+    steps:
+      - name: Trigger Render deploy when hook is configured
+        id: trigger
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOOK="${RENDER_DEPLOY_HOOK_URL:-${RENDER_DEPLOY_HOOK_FALLBACK:-}}"
+
+          if [ -z "${HOOK}" ]; then
+            echo "Render deploy trigger: none; relying on auto-deploy"
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Render deploy trigger: hook configured"
+          http_code="$(curl -sS -X POST --connect-timeout 10 --max-time 30 \
+            -o /tmp/render-deploy-response.json -w '%{http_code}' "${HOOK}" || true)"
+
+          case "${http_code}" in
+            200|202)
+              echo "Render deploy hook accepted: HTTP ${http_code}"
+              echo "mode=hook" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Render deploy hook failed: HTTP ${http_code:-000}"
+              echo "mode=hook_failed" >> "$GITHUB_OUTPUT"
+              exit 1
+              ;;
+          esac
+
   production-smoke:
     name: production-smoke
-    needs: test
+    needs: [test, render-deploy]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
       PRODUCTION_URL: https://ggbf6-warzon-bot.onrender.com
+      DEPLOY_TRIGGER_MODE: ${{ needs.render-deploy.outputs.mode }}
     steps:
       - name: Checkout release contract
         uses: actions/checkout@v4
@@ -65,6 +108,7 @@ jobs:
         run: |
           set -u
           EXPECTED_VERSION="$(python -c 'from app.release import APP_VERSION; print(APP_VERSION)')"
+          echo "Render deploy trigger mode=${DEPLOY_TRIGGER_MODE:-unknown}"
           echo "Waiting for BLACK CROWN OPS ${EXPECTED_VERSION} at ${PRODUCTION_URL}"
           rm -f /tmp/bco-health.json
 
