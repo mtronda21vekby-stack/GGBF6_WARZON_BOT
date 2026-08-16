@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from app.ui.native_buttons import decorate_reply_markup
 from app.ui.quickbar import _miniapp_button
 
 
 def _keyboard(rows: list[list[dict]], placeholder: str) -> dict:
-    return {
+    markup = {
         "keyboard": rows,
         "resize_keyboard": True,
         "is_persistent": True,
         "one_time_keyboard": False,
         "input_field_placeholder": placeholder[:64],
     }
+    return decorate_reply_markup(markup) or markup
 
 
 def _text(label: str) -> dict:
