@@ -1,0 +1,1156 @@
+/* app/webapp/static/app.js */
+(() => {
+  "use strict";
+
+  // =========================
+  // CONFIG (LUX stable)
+  // =========================
+  const CONFIG = {
+    VERSION: "mini-bridge-2.1.0", // bump
+    STORAGE_KEY: "bco_state_v1",
+    CHAT_KEY: "bco_chat_v1",
+    CHAT_LIMIT: 80,
+    AIM_DURATION_MS: 20000,
+    MAX_PAYLOAD: 15000,
+
+    // UX / iOS hardening
+    TAP_THROTTLE_MS: 70,
+    IOS_PREVENT_DOUBLE_TAP_ZOOM_MS: 360,
+
+    // Mini chat: local reply via your FastAPI route
+    API_ASK_PATH: "/webapp/api/ask",
+    API_TIMEOUT_MS: 14000,
+
+    // Profile progression (display-only for now; game can update later)
+    LEVEL_DEFAULT: 1,
+    XP_DEFAULT: 0
+  };
+
+  const $ = (q) => document.querySelector(q);
+  const $$ = (q) => Array.from(document.querySelectorAll(q));
+  const now = () => Date.now();
+  const safe = (fn) => { try { return fn(); } catch (_) { return undefined; } };
+
+  const tg = safe(() => window.Telegram && window.Telegram.WebApp) || null;
+
+  // =========================
+  // STATE
+  // =========================
+  const State = {
+    tg,
+    currentTab: "home",
+    inGame: false,
+    buildId: window.__BCO_BUILD__ || "dev",
+    lastTapAt: 0,
+    lastTouchEndAt: 0,
+
+    profile: {
+      game: "Warzone",
+      focus: "aim",
+      mode: "Normal",
+      platform: "PC",
+      input: "Controller",
+      voice: "TEAMMATE",
+      role: "Flex",
+      bf6_class: "Assault",
+
+      zombies_map: "Ashes",
+      zombies_mode: "arcade",
+
+      // NEW: premium profile level (UI shows it)
+      level: CONFIG.LEVEL_DEFAULT,
+      xp: CONFIG.XP_DEFAULT
+    },
+
+    chat: {
+      history: [],
+      lastSendAt: 0
+    },
+
+    aim: {
+      running: false,
+      startedAt: 0,
+      shots: 0,
+      hits: 0,
+      timer: null
+    }
+  };
+
+  // =========================
+  // UI: TOAST + HEALTH
+  // =========================
+  function toast(msg, ms = 1400) {
+    const el = $("#toast");
+    if (!el) return;
+    el.textContent = String(msg || "");
+    el.classList.add("show");
+    setTimeout(() => el.classList.remove("show"), ms);
+  }
+
+  function setHealth(text) {
+    const el = $("#jsHealth");
+    if (el) el.textContent = text;
+  }
+
+  function fmtTime(ts) {
+    try {
+      const d = new Date(ts);
+      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    } catch {
+      return "";
+    }
+  }
+
+  function clampStr(s, n) {
+    const x = String(s ?? "");
+    return x.length <= n ? x : (x.slice(0, n - 1) + "…");
+  }
+
+  // =========================
+  // STORAGE (local + TG CloudStorage)
+  // =========================
+  const Storage = {
+    async get(key) {
+      if (tg?.CloudStorage?.getItem) {
+        return await new Promise((resolve) => {
+          tg.CloudStorage.getItem(key, (err, value) => resolve(err ? null : (value || null)));
+        });
+      }
+      return safe(() => localStorage.getItem(key)) || null;
+    },
+
+    async set(key, value) {
+      try { localStorage.setItem(key, value); } catch (_) {}
+      if (tg?.CloudStorage?.setItem) {
+        return await new Promise((resolve) => {
+          tg.CloudStorage.setItem(key, value, (err) => resolve(!err));
+        });
+      }
+      return true;
+    },
+
+    defaults() {
+      return {
+        game: "Warzone",
+        focus: "aim",
+        mode: "Normal",
+        platform: "PC",
+        input: "Controller",
+        voice: "TEAMMATE",
+        role: "Flex",
+        bf6_class: "Assault",
+        zombies_map: "Ashes",
+        zombies_mode: "arcade",
+
+        level: CONFIG.LEVEL_DEFAULT,
+        xp: CONFIG.XP_DEFAULT
+      };
+    },
+
+    sanitize() {
+      const p = State.profile;
+
+      const validMode = ["Normal", "Pro", "Demon"];
+      if (!validMode.includes(p.mode)) p.mode = "Normal";
+
+      const validPlatform = ["PC", "PlayStation", "Xbox"];
+      if (!validPlatform.includes(p.platform)) p.platform = "PC";
+
+      const validInput = ["KBM", "Controller"];
+      if (!validInput.includes(p.input)) p.input = "Controller";
+
+      const validVoice = ["TEAMMATE", "COACH"];
+      if (!validVoice.includes(p.voice)) p.voice = "TEAMMATE";
+
+      const validMap = ["Ashes", "Astra"];
+      if (!validMap.includes(p.zombies_map)) p.zombies_map = "Ashes";
+
+      const validZMode = ["arcade", "roguelike"];
+      if (!validZMode.includes(p.zombies_mode)) p.zombies_mode = "arcade";
+
+      const validGame = ["Warzone", "BO7", "BF6"];
+      if (!validGame.includes(p.game)) p.game = "Warzone";
+
+      const validFocus = ["aim", "movement", "position"];
+      if (!validFocus.includes(p.focus)) p.focus = "aim";
+
+      // level/xp: keep sane
+      p.level = Math.max(1, Number(p.level || 1) | 0);
+      p.xp = Math.max(0, Number(p.xp || 0) | 0);
+    },
+
+    async load() {
+      const raw = await this.get(CONFIG.STORAGE_KEY);
+      let obj = null;
+      try { obj = JSON.parse(raw || ""); } catch (_) {}
+      State.profile = Object.assign(this.defaults(), (obj && typeof obj === "object") ? obj : {});
+      this.sanitize();
+    },
+
+    async save() {
+      this.sanitize();
+      return await this.set(CONFIG.STORAGE_KEY, JSON.stringify(State.profile));
+    },
+
+    async loadChat() {
+      const raw = await this.get(CONFIG.CHAT_KEY);
+      let obj = null;
+      try { obj = JSON.parse(raw || ""); } catch (_) {}
+      const hist = obj?.history;
+      State.chat.history = Array.isArray(hist) ? hist.slice(-CONFIG.CHAT_LIMIT) : [];
+    },
+
+    async saveChat() {
+      const payload = JSON.stringify({ history: State.chat.history.slice(-CONFIG.CHAT_LIMIT), ts: now() });
+      return await this.set(CONFIG.CHAT_KEY, payload);
+    }
+  };
+
+  // =========================
+  // BRIDGE SEND (TG sendData)
+  // =========================
+  function buildProfilePayload() {
+    const p = State.profile;
+    return {
+      game: p.game,
+      platform: p.platform,
+      input: p.input,
+      difficulty: p.mode,
+      mode: p.mode,
+      voice: p.voice,
+      role: p.role,
+      bf6_class: p.bf6_class,
+      zombies_map: p.zombies_map,
+      zombies_mode: p.zombies_mode,
+
+      // NEW: profile progression
+      level: p.level,
+      xp: p.xp
+    };
+  }
+
+  function safeJSONStringify(obj) {
+    try {
+      const s = JSON.stringify(obj);
+      if (s.length > CONFIG.MAX_PAYLOAD) {
+        return JSON.stringify({ truncated: true, keys: Object.keys(obj || {}).slice(0, 60) });
+      }
+      return s;
+    } catch {
+      return "{}";
+    }
+  }
+
+  function sendToBot(payload) {
+    const bridge = window.BCO_BRIDGE || null;
+    const base = Object.assign({}, payload || {});
+    if (base.profile === true) base.profile = buildProfilePayload();
+
+    const raw = safeJSONStringify(base);
+
+    let ok = false;
+    if (bridge?.sendData) ok = !!safe(() => bridge.sendData(base));
+    else if (tg?.sendData) ok = !!safe(() => (tg.sendData(raw), true));
+
+    if (ok) toast("Отправлено в бота 🚀");
+    else toast("sendData недоступен (открой в Telegram)");
+    return ok;
+  }
+
+  // =========================
+  // MINI CHAT: LOCAL REPLY via /webapp/api/ask
+  // =========================
+  function withTimeout(promise, ms) {
+    let t = null;
+    const timeout = new Promise((_, reject) => {
+      t = setTimeout(() => reject(new Error("timeout")), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => { try { clearTimeout(t); } catch (_) {} });
+  }
+
+  function getInitData() {
+    const wa = tg;
+    const init = (safe(() => wa?.initData) || "").trim();
+    return init;
+  }
+
+  async function askLocalAI(text) {
+    const initData = getInitData();
+    const body = {
+      text: String(text || "").trim(),
+      profile: buildProfilePayload(),
+      history: State.chat.history.slice(-CONFIG.CHAT_LIMIT).map((m) => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        text: String(m.text || "").slice(0, 2000),
+        ts: Number(m.ts || now())
+      })),
+      initData
+    };
+
+    const headers = {
+      "Content-Type": "application/json; charset=utf-8",
+      "X-BCO-Version": CONFIG.VERSION
+    };
+    if (initData) headers["X-Telegram-Init-Data"] = initData;
+
+    const req = fetch(CONFIG.API_ASK_PATH, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body)
+    }).then(async (r) => {
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j) throw new Error("bad_response");
+      return j;
+    });
+
+    return await withTimeout(req, CONFIG.API_TIMEOUT_MS);
+  }
+
+  // =========================
+  // TABS
+  // =========================
+  function selectTab(tab) {
+    if (!tab) tab = "home";
+    State.currentTab = tab;
+
+    $$(".tabpane").forEach((pane) => pane.classList.toggle("active", pane.id === `tab-${tab}`));
+    $$(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
+
+    safe(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+    updateTGButtons();
+  }
+
+  // =========================
+  // CHIPS + PREMIUM STATUS
+  // =========================
+  function updatePremiumStats() {
+    // Don’t touch HTML, use existing stat placeholders:
+    // statOnline stays ONLINE, statSession becomes LVL
+    const lvl = Math.max(1, Number(State.profile.level || 1) | 0);
+    const xp = Math.max(0, Number(State.profile.xp || 0) | 0);
+
+    const s = $("#statSession");
+    if (s) s.textContent = `LVL ${lvl} • XP ${xp}`;
+
+    const o = $("#statOnline");
+    if (o) o.textContent = "ONLINE";
+  }
+
+  function updateChips() {
+    const p = State.profile;
+
+    const chipVoice = $("#chipVoice");
+    if (chipVoice) chipVoice.textContent = (p.voice === "COACH") ? "📚 Коуч" : "🤝 Тиммейт";
+
+    const chipMode = $("#chipMode");
+    if (chipMode) chipMode.textContent = p.mode === "Demon" ? "😈 Demon" : (p.mode === "Pro" ? "🔥 Pro" : "🧠 Normal");
+
+    const chipPlatform = $("#chipPlatform");
+    if (chipPlatform) chipPlatform.textContent = p.platform === "PC" ? "🖥 PC" : "🎮 " + p.platform;
+
+    const pillRole = $("#pillRole");
+    if (pillRole) pillRole.textContent = `🎭 Role: ${p.role}`;
+
+    const pillBf6 = $("#pillBf6");
+    if (pillBf6) pillBf6.textContent = `🟩 Class: ${p.bf6_class}`;
+
+    const chatSub = $("#chatSub");
+    if (chatSub) chatSub.textContent = `${p.voice} • ${p.mode} • ${p.platform} • LVL ${Math.max(1, Number(p.level || 1) | 0)}`;
+
+    updatePremiumStats();
+  }
+
+  function cycleMode() {
+    const modes = ["Normal", "Pro", "Demon"];
+    const i = modes.indexOf(State.profile.mode);
+    State.profile.mode = modes[(i + 1) % modes.length];
+  }
+
+  function cyclePlatform() {
+    const arr = ["PC", "PlayStation", "Xbox"];
+    const i = arr.indexOf(State.profile.platform);
+    State.profile.platform = arr[(i + 1) % arr.length];
+  }
+
+  function cycleVoice() {
+    State.profile.voice = (State.profile.voice === "COACH") ? "TEAMMATE" : "COACH";
+  }
+
+  // =========================
+  // SEGMENTS
+  // =========================
+  function applySegment(rootId, value) {
+    const root = $(rootId);
+    if (!root) return;
+    root.querySelectorAll(".seg-btn").forEach((b) => {
+      const on = (b.dataset.value === value);
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+
+  function syncSegmentsFromState() {
+    applySegment("#segGame", State.profile.game);
+    applySegment("#segFocus", State.profile.focus);
+    applySegment("#segMode", State.profile.mode);
+    applySegment("#segPlatform", State.profile.platform);
+    applySegment("#segInput", State.profile.input);
+    applySegment("#segVoice", State.profile.voice);
+    applySegment("#segZMap", State.profile.zombies_map);
+  }
+
+  // =========================
+  // CHAT (LOCAL)
+  // =========================
+  function escapeHtml(s) {
+    const div = document.createElement("div");
+    div.textContent = String(s || "");
+    return div.innerHTML;
+  }
+
+  function chatRender() {
+    const box = $("#chatLog");
+    if (!box) return;
+
+    const h = State.chat.history.slice(-CONFIG.CHAT_LIMIT);
+    if (!h.length) {
+      box.innerHTML = `
+        <div class="chat-row bot">
+          <div>
+            <div class="bubble">🤝 Пиши сюда — я отвечу прямо в Mini App. Команды/меню бота — отдельными кнопками.</div>
+            <div class="chat-meta">BCO • ${fmtTime(now())}</div>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    box.innerHTML = h.map((m) => {
+      const isBot = m.role === "assistant";
+      const cls = isBot ? "bot" : "me";
+      const who = isBot ? "BCO" : "Ты";
+      return `
+        <div class="chat-row ${cls}">
+          <div>
+            <div class="bubble">${escapeHtml(m.text || "")}</div>
+            <div class="chat-meta">${who} • ${fmtTime(m.ts || now())}</div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    setTimeout(() => { box.scrollTop = box.scrollHeight; }, 30);
+  }
+
+  function chatAdd(role, text) {
+    const t = String(text || "").trim();
+    if (!t) return;
+    State.chat.history.push({ role, text: t, ts: now() });
+    if (State.chat.history.length > 180) State.chat.history = State.chat.history.slice(-180);
+    chatRender();
+  }
+
+  function setChatSending(on) {
+    const btn = $("#btnChatSend");
+    const input = $("#chatInput");
+    if (btn) btn.disabled = !!on;
+    if (input) input.disabled = !!on;
+  }
+
+  async function chatSend() {
+    const input = $("#chatInput");
+    const text = (input?.value || "").trim();
+    if (!text) return toast("Напиши текст");
+
+    const ts = now();
+    if (ts - State.chat.lastSendAt < 350) return toast("Чуть пауза…");
+    State.chat.lastSendAt = ts;
+
+    chatAdd("user", text);
+    if (input) input.value = "";
+    await Storage.saveChat();
+
+    // Local answer (your FastAPI /webapp/api/ask)
+    setChatSending(true);
+    chatAdd("assistant", "…"); // placeholder bubble
+
+    try {
+      const res = await askLocalAI(text);
+      // Replace last placeholder
+      const reply = String(res?.reply || "").trim() || "…";
+      // remove last assistant placeholder
+      for (let i = State.chat.history.length - 1; i >= 0; i--) {
+        if (State.chat.history[i]?.role === "assistant" && State.chat.history[i]?.text === "…") {
+          State.chat.history.splice(i, 1);
+          break;
+        }
+      }
+      chatAdd("assistant", reply);
+      toast("Ответил в Mini App 😈");
+    } catch (e) {
+      // If API is down, keep UX alive: fall back to bot sendData (optional)
+      for (let i = State.chat.history.length - 1; i >= 0; i--) {
+        if (State.chat.history[i]?.role === "assistant" && State.chat.history[i]?.text === "…") {
+          State.chat.history.splice(i, 1);
+          break;
+        }
+      }
+      chatAdd("assistant", "⚠️ Mini App AI недоступен. Отправляю в бота как запасной канал…");
+      sendToBot({ type: "chat", text, profile: true });
+      toast("Фолбэк: отправлено в бота");
+    } finally {
+      setChatSending(false);
+      await Storage.saveChat();
+      chatRender();
+    }
+  }
+
+  async function chatClear() {
+    State.chat.history = [];
+    await Storage.saveChat();
+    chatRender();
+    toast("Чат очищен");
+  }
+
+  async function chatExportCopy() {
+    const txt = State.chat.history.map((m) => `${m.role === "assistant" ? "BCO" : "YOU"}: ${m.text}`).join("\n");
+    const out = txt || "—";
+    const ok = await safe(() => navigator.clipboard?.writeText(out));
+    toast(ok ? "Скопировано 📋" : "Не удалось (iOS ограничение)");
+  }
+
+  // =========================
+  // AIM GAME
+  // =========================
+  function aimReset() {
+    State.aim.running = false;
+    State.aim.startedAt = 0;
+    State.aim.shots = 0;
+    State.aim.hits = 0;
+    if (State.aim.timer) { clearInterval(State.aim.timer); State.aim.timer = null; }
+    aimUpdateUI();
+  }
+
+  function aimMoveTarget() {
+    const arena = $("#aimArena");
+    const target = $("#aimTarget");
+    if (!arena || !target) return;
+
+    const ar = arena.getBoundingClientRect();
+    const pad = 14;
+    const w = 46;
+    const h = 46;
+
+    const maxX = Math.max(pad, ar.width - pad - w);
+    const maxY = Math.max(pad, ar.height - pad - h);
+
+    const x = pad + Math.random() * Math.max(0, (maxX - pad));
+    const y = pad + Math.random() * Math.max(0, (maxY - pad));
+
+    target.style.transform = `translate(${x}px, ${y}px)`;
+  }
+
+  function aimUpdateUI() {
+    const stat = $("#aimStat");
+    const btnStart = $("#btnAimStart");
+    const btnStop = $("#btnAimStop");
+    const btnSend = $("#btnAimSend");
+
+    const acc = State.aim.shots ? Math.round((State.aim.hits / State.aim.shots) * 100) : 0;
+    const left = State.aim.running ? Math.max(0, CONFIG.AIM_DURATION_MS - (now() - State.aim.startedAt)) : 0;
+
+    if (stat) {
+      stat.textContent = State.aim.running
+        ? `⏱ ${(left / 1000).toFixed(1)}s • 🎯 ${State.aim.hits}/${State.aim.shots} • Acc ${acc}%`
+        : `🎯 ${State.aim.hits}/${State.aim.shots} • Acc ${acc}%`;
+    }
+    if (btnStart) btnStart.disabled = State.aim.running;
+    if (btnStop) btnStop.disabled = !State.aim.running;
+    if (btnSend) btnSend.disabled = State.aim.running || State.aim.shots < 5;
+  }
+
+  function aimStart() {
+    if (State.aim.running) return;
+    aimReset();
+    State.aim.running = true;
+    State.aim.startedAt = now();
+    aimMoveTarget();
+    aimUpdateUI();
+
+    State.aim.timer = setInterval(() => {
+      aimMoveTarget();
+      aimUpdateUI();
+      if (now() - State.aim.startedAt >= CONFIG.AIM_DURATION_MS) aimStop(true);
+    }, 650);
+
+    toast("AIM: поехали 😈");
+  }
+
+  function aimStop(auto = false) {
+    if (!State.aim.running) return;
+    State.aim.running = false;
+    if (State.aim.timer) { clearInterval(State.aim.timer); State.aim.timer = null; }
+    aimUpdateUI();
+    toast(auto ? "AIM завершён" : "Остановлено");
+  }
+
+  function aimHit() {
+    if (!State.aim.running) return;
+    State.aim.shots += 1;
+    State.aim.hits += 1;
+    aimMoveTarget();
+    aimUpdateUI();
+  }
+
+  function aimMiss() {
+    if (!State.aim.running) return;
+    State.aim.shots += 1;
+    aimUpdateUI();
+  }
+
+  function aimSendResult() {
+    const dur = State.aim.running ? (now() - State.aim.startedAt) : CONFIG.AIM_DURATION_MS;
+    const acc = State.aim.shots ? (State.aim.hits / State.aim.shots) : 0;
+    const score = Math.round(State.aim.hits * 100 + acc * 100);
+    sendToBot({
+      action: "game_result",
+      game: "aim",
+      mode: "arcade",
+      shots: State.aim.shots,
+      hits: State.aim.hits,
+      accuracy: acc,
+      score,
+      duration_ms: dur,
+      profile: true
+    });
+  }
+
+  // =========================
+  // ZOMBIES ENTRY (through facade)
+  // =========================
+  function zombiesSetMode(mode) {
+    State.profile.zombies_mode = (mode === "roguelike") ? "roguelike" : "arcade";
+    Storage.save();
+    syncZModeButtons();
+    toast(`Zombies: ${State.profile.zombies_mode}`);
+  }
+
+  function syncZModeButtons() {
+    const onArc = (State.profile.zombies_mode !== "roguelike");
+    const a1 = $("#btnZModeArcade"); const r1 = $("#btnZModeRogue");
+    const a2 = $("#btnZModeArcade2"); const r2 = $("#btnZModeRogue2");
+    [a1, a2].forEach((b) => b && b.classList.toggle("active", onArc));
+    [r1, r2].forEach((b) => b && b.classList.toggle("active", !onArc));
+  }
+
+  function enterGameTakeover() {
+    if (State.inGame) return;
+    State.inGame = true;
+    document.documentElement.classList.add("bco-game");
+    document.body.classList.add("bco-game");
+
+    safe(() => window.BCO_TG?.hideChrome?.());
+    safe(() => tg?.MainButton?.hide?.());
+    safe(() => tg?.BackButton?.hide?.());
+    safe(() => tg?.setHeaderColor?.("#000000"));
+    safe(() => tg?.setBackgroundColor?.("#000000"));
+  }
+
+  function exitGameTakeover() {
+    if (!State.inGame) return;
+    State.inGame = false;
+    document.documentElement.classList.remove("bco-game");
+    document.body.classList.remove("bco-game");
+    safe(() => window.BCO_TG?.showChrome?.());
+    updateTGButtons();
+  }
+
+  function zombiesEnter() {
+    const engine = window.BCO_ENGINE || null;
+    const map = State.profile.zombies_map || "Ashes";
+    const mode = State.profile.zombies_mode || "arcade";
+
+    if (!engine?.zombies?.enter) {
+      // fallback to legacy globals
+      const z = window.BCO_ZOMBIES || window.BCO_ZOMBIES_CORE || null;
+      if (!z) {
+        toast("Zombies engine не найден (zombies.* не загрузились)");
+        return false;
+      }
+      enterGameTakeover();
+      safe(() => z.setMode?.(mode));
+      safe(() => z.mode?.(mode));
+      safe(() => z.enter?.({ map, mode, onExit: exitGameTakeover }));
+      safe(() => z.open?.({ map, mode, onExit: exitGameTakeover }));
+      safe(() => z.start?.({ map, mode, onExit: exitGameTakeover }));
+      toast("Zombies: старт");
+      return true;
+    }
+
+    enterGameTakeover();
+    safe(() => engine.zombies.setMode?.(mode));
+    safe(() => engine.zombies.enter?.({ map, mode, onExit: exitGameTakeover }));
+    toast("Zombies: старт");
+    return true;
+  }
+
+  // =========================
+  // TELEGRAM BUTTONS (native)
+  // =========================
+  function updateTGButtons() {
+    if (!tg) return;
+
+    safe(() => tg.ready());
+    safe(() => tg.expand());
+    safe(() => window.BCO_TG?.applyInsets?.());
+
+    safe(() => {
+      if (State.inGame) return tg.BackButton.hide();
+      if (State.currentTab !== "home") tg.BackButton.show();
+      else tg.BackButton.hide();
+    });
+
+    safe(() => {
+      if (State.inGame) return tg.MainButton.hide();
+      let text = "💎 Premium";
+      if (State.currentTab === "settings") text = "✅ Применить профиль";
+      if (State.currentTab === "coach") text = "🎯 План тренировки";
+      if (State.currentTab === "vod") text = "🎬 Отправить VOD";
+      if (State.currentTab === "game") text = "▶ Start Zombies";
+      tg.MainButton.setParams({ is_visible: true, text });
+      tg.MainButton.show();
+    });
+  }
+
+  function wireTGButtonsOnce() {
+    if (!tg) return;
+    if (window.__BCO_TG_WIRED__) return;
+    window.__BCO_TG_WIRED__ = true;
+
+    safe(() => tg.MainButton.onClick(() => {
+      if (State.inGame) return;
+
+      if (State.currentTab === "settings") {
+        Storage.save();
+        sendToBot({ type: "set_profile", profile: true });
+      } else if (State.currentTab === "coach") {
+        sendToBot({ type: "training_plan", focus: State.profile.focus, profile: true });
+      } else if (State.currentTab === "vod") {
+        const t1 = ($("#vod1")?.value || "").trim();
+        const t2 = ($("#vod2")?.value || "").trim();
+        const t3 = ($("#vod3")?.value || "").trim();
+        const note = ($("#vodNote")?.value || "").trim();
+        sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
+      } else if (State.currentTab === "game") {
+        zombiesEnter();
+      } else {
+        sendToBot({ type: "nav", target: "premium", profile: true });
+      }
+    }));
+
+    safe(() => tg.BackButton.onClick(() => {
+      if (State.inGame) return;
+      selectTab("home");
+    }));
+  }
+
+  // =========================
+  // HARD ROUTER (iOS “dead taps” fix + safe scroll)
+  // =========================
+  function isTextInput(el) {
+    if (!el) return false;
+    const tag = String(el.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || el.isContentEditable;
+  }
+
+  function isScrollableContext(el) {
+    if (!el) return false;
+    // chat-log (scroll), any modal cards from game, overlay containers
+    return !!el.closest?.(".chat-log, .bco-z-card, .bco-z-modal, .bco-z-overlay, [data-scroll], .scroll, .modal, .sheet");
+  }
+
+  function throttleTap() {
+    const t = now();
+    if (t - State.lastTapAt < CONFIG.TAP_THROTTLE_MS) return true;
+    State.lastTapAt = t;
+    return false;
+  }
+
+  function hardRouteClick(target) {
+    const el = target?.closest?.("button, .nav-btn, .seg-btn, .chip, .chat-send, .aim-target");
+    if (!el) return false;
+
+    if (throttleTap()) return true;
+
+    const id = el.id || "";
+    const tab = el.dataset?.tab || "";
+    const segVal = el.dataset?.value || "";
+
+    // Bottom nav
+    if (el.classList.contains("nav-btn") && tab) {
+      selectTab(tab);
+      return true;
+    }
+
+    // Chips
+    if (id === "chipVoice") {
+      cycleVoice();
+      Storage.save();
+      syncSegmentsFromState();
+      updateChips();
+      toast(State.profile.voice === "COACH" ? "Коуч включён" : "Тиммейт включён");
+      return true;
+    }
+    if (id === "chipMode") {
+      cycleMode();
+      Storage.save();
+      syncSegmentsFromState();
+      updateChips();
+      toast("Mode: " + State.profile.mode);
+      return true;
+    }
+    if (id === "chipPlatform") {
+      cyclePlatform();
+      Storage.save();
+      syncSegmentsFromState();
+      updateChips();
+      toast("Platform: " + State.profile.platform);
+      return true;
+    }
+
+    // Segments (generic)
+    if (el.classList.contains("seg-btn") && segVal) {
+      const root = el.closest(".seg");
+      const rootId = root?.id || "";
+
+      if (rootId === "segGame") State.profile.game = segVal;
+      else if (rootId === "segFocus") State.profile.focus = segVal;
+      else if (rootId === "segMode") State.profile.mode = segVal;
+      else if (rootId === "segPlatform") State.profile.platform = segVal;
+      else if (rootId === "segInput") State.profile.input = segVal;
+      else if (rootId === "segVoice") State.profile.voice = segVal;
+      else if (rootId === "segZMap") State.profile.zombies_map = segVal;
+
+      Storage.save();
+      syncSegmentsFromState();
+      updateChips();
+      return true;
+    }
+
+    // Aim clicks
+    if (id === "aimTarget") {
+      aimHit();
+      return true;
+    }
+
+    // Buttons by id
+    switch (id) {
+      // Header actions
+      case "btnShare":
+        sendToBot({ type: "nav", target: "share", profile: true });
+        return true;
+      case "btnClose":
+        safe(() => tg?.close?.());
+        toast("Закрываю…");
+        return true;
+
+      // Home actions
+      case "btnOpenBot":
+        sendToBot({ type: "nav", target: "menu", profile: true });
+        return true;
+      case "btnSync":
+        Storage.save();
+        sendToBot({ type: "set_profile", profile: true });
+        toast("Профиль синхнут ✅");
+        return true;
+      case "btnPremium":
+        sendToBot({ type: "nav", target: "premium", profile: true });
+        return true;
+      case "btnPlayZombies":
+      case "btnZQuickPlay":
+      case "btnZEnterGame":
+        zombiesEnter();
+        return true;
+
+      // Premium buys
+      case "btnBuyMonth":
+        sendToBot({ type: "nav", target: "premium_month", profile: true });
+        return true;
+      case "btnBuyLife":
+        sendToBot({ type: "nav", target: "premium_lifetime", profile: true });
+        return true;
+
+      // Chat
+      case "btnChatSend":
+        chatSend();
+        return true;
+      case "btnChatClear":
+        chatClear();
+        return true;
+      case "btnChatExport":
+        chatExportCopy();
+        return true;
+
+      // Coach
+      case "btnSendPlan":
+        sendToBot({ type: "training_plan", focus: State.profile.focus, profile: true });
+        return true;
+      case "btnOpenTraining":
+        sendToBot({ type: "nav", target: "training", profile: true });
+        return true;
+
+      // VOD
+      case "btnSendVod": {
+        const t1 = ($("#vod1")?.value || "").trim();
+        const t2 = ($("#vod2")?.value || "").trim();
+        const t3 = ($("#vod3")?.value || "").trim();
+        const note = ($("#vodNote")?.value || "").trim();
+        sendToBot({ type: "vod", times: [t1, t2, t3].filter(Boolean), note, profile: true });
+        return true;
+      }
+      case "btnOpenVod":
+        sendToBot({ type: "nav", target: "vod", profile: true });
+        return true;
+
+      // Settings
+      case "btnApplyProfile":
+        Storage.save();
+        sendToBot({ type: "set_profile", profile: true });
+        toast("Профиль сохранён ✅");
+        return true;
+      case "btnOpenSettings":
+        sendToBot({ type: "nav", target: "settings", profile: true });
+        return true;
+
+      // Aim
+      case "btnAimStart":
+        aimStart();
+        return true;
+      case "btnAimStop":
+        aimStop(false);
+        return true;
+      case "btnAimSend":
+        aimSendResult();
+        return true;
+
+      // Zombies mode buttons
+      case "btnZModeArcade":
+      case "btnZModeArcade2":
+        zombiesSetMode("arcade");
+        return true;
+      case "btnZModeRogue":
+      case "btnZModeRogue2":
+        zombiesSetMode("roguelike");
+        return true;
+
+      // Zombies quick “shop” hotkeys (command bot; real shop in-game)
+      case "btnZBuyJug":
+        sendToBot({ type: "zombies_hotkey", buy: "jug", profile: true });
+        return true;
+      case "btnZBuySpeed":
+        sendToBot({ type: "zombies_hotkey", buy: "speed", profile: true });
+        return true;
+      case "btnZBuyAmmo":
+        sendToBot({ type: "zombies_hotkey", buy: "ammo", profile: true });
+        return true;
+
+      // Zombies HQ / guides (bot)
+      case "btnZOpenHQ":
+      case "btnOpenZombies":
+        sendToBot({ type: "nav", target: "zombies", profile: true });
+        return true;
+      case "btnZPerks":
+        sendToBot({ type: "zombies", action: "perks", profile: true });
+        return true;
+      case "btnZLoadout":
+        sendToBot({ type: "zombies", action: "loadout", profile: true });
+        return true;
+      case "btnZEggs":
+        sendToBot({ type: "zombies", action: "easter_eggs", profile: true });
+        return true;
+      case "btnZRound":
+        sendToBot({ type: "zombies", action: "round_strategy", profile: true });
+        return true;
+      case "btnZTips":
+        sendToBot({ type: "zombies", action: "quick_tips", profile: true });
+        return true;
+
+      // Launcher send (optional)
+      case "btnZGameSend":
+      case "btnZGameSend2":
+        sendToBot({
+          action: "game_result",
+          game: "zombies",
+          mode: State.profile.zombies_mode,
+          map: State.profile.zombies_map,
+          note: "launcher_send",
+          profile: true
+        });
+        return true;
+
+      default:
+        break;
+    }
+
+    return false;
+  }
+
+  // =========================
+  // iOS ANTI-ZOOM (overall + in-game)
+  // =========================
+  function wireAntiZoomIOS() {
+    document.addEventListener("gesturestart", (e) => {
+      try { e.preventDefault(); } catch (_) {}
+    }, { passive: false });
+
+    document.addEventListener("touchmove", (e) => {
+      if (!State.inGame) return;
+      if (e.touches && e.touches.length > 1) {
+        try { e.preventDefault(); } catch (_) {}
+      }
+    }, { passive: false });
+
+    document.addEventListener("touchend", (e) => {
+      const t = now();
+      const dt = t - (State.lastTouchEndAt || 0);
+      State.lastTouchEndAt = t;
+      if (!State.inGame) return;
+      if (dt > 0 && dt < CONFIG.IOS_PREVENT_DOUBLE_TAP_ZOOM_MS) {
+        try { e.preventDefault(); } catch (_) {}
+      }
+    }, { passive: false });
+  }
+
+  // =========================
+  // WIRE EVENTS (RELIABLE + SCROLL SAFE)
+  // =========================
+  function wireHardRouter() {
+    // pointerdown capture: kills iOS "dead taps" BUT does not break scroll/text input
+    document.addEventListener("pointerdown", (e) => {
+      const t = e.target;
+      if (isTextInput(t)) return;
+
+      const handled = hardRouteClick(t);
+      if (!handled) return;
+
+      // If user tapped inside scrollable context, do NOT prevent default (let it scroll)
+      if (isScrollableContext(t)) return;
+
+      try { e.preventDefault(); } catch (_) {}
+    }, { capture: true, passive: false });
+
+    // click fallback
+    document.addEventListener("click", (e) => {
+      const t = e.target;
+      if (isTextInput(t)) return;
+      if (hardRouteClick(t)) {
+        try { e.preventDefault(); } catch (_) {}
+      }
+    }, { capture: true });
+
+    // Aim miss: tap arena but not target => miss
+    const arena = $("#aimArena");
+    if (arena) {
+      arena.addEventListener("pointerdown", (e) => {
+        const tgt = e.target;
+        if (tgt && (tgt.id === "aimTarget" || tgt.closest?.("#aimTarget"))) return;
+        if (State.aim.running) {
+          aimMiss();
+          try { e.preventDefault(); } catch (_) {}
+        }
+      }, { passive: false });
+    }
+
+    // Chat send on Enter (desktop/web)
+    const input = $("#chatInput");
+    if (input) {
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          chatSend();
+        }
+      });
+    }
+  }
+
+  // =========================
+  // DEBUG INFO
+  // =========================
+  function fillDebug() {
+    const wa = tg;
+    const userId = safe(() => wa?.initDataUnsafe?.user?.id) || "—";
+    const chatId = safe(() => wa?.initDataUnsafe?.chat?.id) || "—";
+    const theme = safe(() => wa?.colorScheme) || "—";
+    const init = (safe(() => wa?.initData) || "").trim();
+
+    const dbgUser = $("#dbgUser");
+    const dbgChat = $("#dbgChat");
+    const dbgTheme = $("#dbgTheme");
+    const dbgInit = $("#dbgInit");
+
+    if (dbgUser) dbgUser.textContent = String(userId);
+    if (dbgChat) dbgChat.textContent = String(chatId);
+    if (dbgTheme) dbgTheme.textContent = String(theme);
+    if (dbgInit) dbgInit.textContent = init ? ("ok • " + clampStr(init, 18)) : "empty";
+
+    const bt = $("#buildTag");
+    if (bt) bt.textContent = "build: " + State.buildId;
+  }
+
+  // =========================
+  // INIT
+  // =========================
+  async function init() {
+    setHealth("js: init…");
+
+    if (tg) {
+      safe(() => tg.ready());
+      safe(() => tg.expand());
+      safe(() => window.BCO_TG?.applyInsets?.());
+    }
+
+    await Storage.load();
+    await Storage.loadChat();
+
+    syncSegmentsFromState();
+    syncZModeButtons();
+    updateChips();
+    chatRender();
+    aimUpdateUI();
+
+    wireAntiZoomIOS();
+    wireHardRouter();
+    wireTGButtonsOnce();
+    updateTGButtons();
+    fillDebug();
+
+    // Public API for game/engine (do NOT bind game to mini UI)
+    safe(() => {
+      window.BCO_APP = window.BCO_APP || {};
+      window.BCO_APP.enterGameTakeover = enterGameTakeover;
+      window.BCO_APP.exitGameTakeover = exitGameTakeover;
+      window.BCO_APP.sendToBot = sendToBot;
+
+      // Profile getters/setters for engines (3D-ready)
+      window.BCO_APP.getProfile = () => ({ ...State.profile });
+
+      window.BCO_APP.setProfileProgress = async (patch) => {
+        // patch: { level, xp } from game loop
+        if (!patch || typeof patch !== "object") return false;
+        if (typeof patch.level !== "undefined") State.profile.level = Math.max(1, Number(patch.level || 1) | 0);
+        if (typeof patch.xp !== "undefined") State.profile.xp = Math.max(0, Number(patch.xp || 0) | 0);
+        await Storage.save();
+        updateChips();
+        return true;
+      };
+    });
+
+    setHealth("js: OK (app) • build=" + State.buildId);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
+  }
+})();
