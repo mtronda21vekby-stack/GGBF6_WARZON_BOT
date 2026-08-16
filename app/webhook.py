@@ -55,6 +55,17 @@ def create_app() -> FastAPI:
 
     router = Router(tg=tg, brain=conversation, profiles=profiles, store=store, settings=settings)
 
+    # Register the trusted intelligence API before the Mini App GET catch-all.
+    try:
+        from app.webapp.command_center_router import bind_runtime as command_center_bind_runtime
+        from app.webapp.command_center_router import router as command_center_router
+
+        app.include_router(command_center_router)
+        command_center_bind_runtime(store=store, profiles=profiles)
+        log.info("Command Center runtime bind: OK")
+    except Exception as exc:
+        log.exception("Command Center runtime bind FAILED: %s", type(exc).__name__)
+
     try:
         from app.webapp.webapp_router import bind_runtime as webapp_bind_runtime
         from app.webapp.webapp_router import router as webapp_router
@@ -65,18 +76,6 @@ def create_app() -> FastAPI:
             log.info("Mini App runtime bind: OK")
         except Exception as exc:
             log.exception("Mini App runtime bind FAILED: %s", exc)
-
-        # Separate server-authoritative analytics surface. It has its own
-        # Telegram initData gate and does not trust client-side profile state.
-        try:
-            from app.webapp.command_center_router import bind_runtime as command_center_bind_runtime
-            from app.webapp.command_center_router import router as command_center_router
-
-            app.include_router(command_center_router)
-            command_center_bind_runtime(store=store, profiles=profiles)
-            log.info("Command Center runtime bind: OK")
-        except Exception as exc:
-            log.exception("Command Center runtime bind FAILED: %s", type(exc).__name__)
 
         log.info("Mini App router loaded")
     except Exception as exc:
