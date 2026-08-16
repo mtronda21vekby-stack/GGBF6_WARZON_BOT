@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.services.entitlements.service import EntitlementStatus, PremiumEntitlementService
-from app.ui.quickbar import kb_premium, kb_premium_unlink_confirm
+from app.ui.entitlement_kb import kb_premium_bridge, kb_premium_unlink_confirm
 
 log = logging.getLogger("bco.entitlements.telegram")
 
@@ -83,14 +83,14 @@ class EntitlementTelegramController:
             + "Связать аккаунты: нажми «🔗 Связать с сайтом».\n"
             + "Premium учитывается только из общего Supabase GAME."
         )
-        await self.tg.send_message(chat_id, body, kb_premium())
+        await self.tg.send_message(chat_id, body, kb_premium_bridge())
 
     async def _private_required(self, chat_id: int) -> None:
         await self.tg.send_message(
             chat_id,
             "🔐 Привязка доступна только в личном чате с ботом.\n"
             "Открой @GGBF6_WARZON_BOT напрямую и повтори команду.",
-            kb_premium(),
+            kb_premium_bridge(),
         )
 
     async def _create_link(
@@ -107,7 +107,7 @@ class EntitlementTelegramController:
             await self.tg.send_message(
                 chat_id,
                 "⚠️ ACCOUNT BRIDGE сейчас не настроен. Текущие функции бота продолжают работать.",
-                kb_premium(),
+                kb_premium_bridge(),
             )
             return
 
@@ -122,7 +122,7 @@ class EntitlementTelegramController:
             await self.tg.send_message(
                 chat_id,
                 "⚠️ Не удалось создать одноразовую ссылку. Повтори через несколько секунд.",
-                kb_premium(),
+                kb_premium_bridge(),
             )
             return
 
