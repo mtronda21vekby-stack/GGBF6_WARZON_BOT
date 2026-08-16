@@ -11,6 +11,7 @@ from app.ui.native_buttons import (
     contains_advanced_button_fields,
     decorate_reply_markup,
     strip_advanced_button_fields,
+    upgrade_reply_keyboard_to_inline,
 )
 from app.ui.presentation import polish_telegram_text
 from app.ui.rich_messages import tactical_rich_message
@@ -30,6 +31,11 @@ class TelegramClient:
         return await self._client.post(f"{self._base}/{method}", json=payload)
 
     @staticmethod
+    def _prepare_markup(reply_markup: dict | None) -> dict | None:
+        inline = upgrade_reply_keyboard_to_inline(reply_markup)
+        return decorate_reply_markup(inline)
+
+    @staticmethod
     def _is_not_modified(response: httpx.Response) -> bool:
         if response.status_code != 400:
             return False
@@ -41,7 +47,7 @@ class TelegramClient:
 
     async def send_message(self, chat_id: int, text: str, reply_markup: dict | None = None) -> None:
         polished = polish_telegram_text(text)
-        styled_markup = decorate_reply_markup(reply_markup)
+        styled_markup = self._prepare_markup(reply_markup)
 
         # Bot API 10.1+ renders BLACK CROWN cards as native structured rich
         # messages. A 400/404 falls back to ordinary text for compatibility
@@ -94,7 +100,7 @@ class TelegramClient:
     ) -> None:
         """Edit one console message in place, preserving rich/native UI when supported."""
         polished = polish_telegram_text(text)
-        styled_markup = decorate_reply_markup(reply_markup)
+        styled_markup = self._prepare_markup(reply_markup)
         rich_message = tactical_rich_message(polished)
 
         if rich_message is not None:
@@ -232,7 +238,7 @@ class TelegramClient:
         data = {"chat_id": str(chat_id)}
         if caption:
             data["caption"] = caption
-        styled_markup = decorate_reply_markup(reply_markup)
+        styled_markup = self._prepare_markup(reply_markup)
         if styled_markup is not None:
             data["reply_markup"] = json.dumps(styled_markup, ensure_ascii=False)
         with open(file_path, "rb") as file_handle:
@@ -327,7 +333,7 @@ class TelegramClient:
         data = {"chat_id": str(chat_id)}
         if caption:
             data["caption"] = caption
-        styled_markup = decorate_reply_markup(reply_markup)
+        styled_markup = self._prepare_markup(reply_markup)
         if styled_markup is not None:
             data["reply_markup"] = json.dumps(styled_markup, ensure_ascii=False)
         with open(file_path, "rb") as file_handle:
@@ -347,7 +353,7 @@ class TelegramClient:
         data = {"chat_id": str(chat_id)}
         if caption:
             data["caption"] = caption
-        styled_markup = decorate_reply_markup(reply_markup)
+        styled_markup = self._prepare_markup(reply_markup)
         if styled_markup is not None:
             data["reply_markup"] = json.dumps(styled_markup, ensure_ascii=False)
         with open(file_path, "rb") as file_handle:
