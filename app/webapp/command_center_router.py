@@ -32,7 +32,7 @@ def _identity(meta: dict) -> int | None:
         return None
 
 
-@router.get("/webapp/api/intelligence")
+@router.post("/webapp/api/intelligence")
 def command_center_intelligence(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ):
@@ -48,10 +48,6 @@ def command_center_intelligence(
 
     snapshot = CommandCenterService(store=APP_STORE, profiles=APP_PROFILES).snapshot(chat_id)
     return JSONResponse(
-        {
-            "ok": True,
-            "trusted": True,
-            "player": snapshot,
-        },
+        {"ok": True, "trusted": True, "player": snapshot},
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
