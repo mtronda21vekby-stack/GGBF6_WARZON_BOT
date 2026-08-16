@@ -8,6 +8,7 @@ def test_legacy_defaults_remain():
     assert profile["game"] == "Warzone"
     assert profile["voice"] == "TEAMMATE"
     assert profile["difficulty"] == "Normal"
+    assert profile["tts_voice"] == "cedar"
 
 
 def test_new_player_fields_do_not_get_invented_defaults():
@@ -43,9 +44,18 @@ def test_mode_aliases_stay_synchronized_for_legacy_and_new_brains():
 
 def test_voice_tts_and_zombies_runtime_fields_survive_intelligence_projection():
     service = ProfileService(InMemoryStore())
-    service.patch(1, {"tts_mode": "auto", "zombies_map": "Astra", "bf6_class": "Recon"})
+    service.patch(
+        1,
+        {
+            "tts_mode": "auto",
+            "tts_voice": "marin",
+            "zombies_map": "Astra",
+            "bf6_class": "Recon",
+        },
+    )
     intelligence = service.get_intelligence(1).to_dict()
 
     assert intelligence["tts_mode"] == "auto"
+    assert intelligence["tts_voice"] == "marin"
     assert intelligence["zombies_map"] == "Astra"
     assert intelligence["bf6_class"] == "Recon"
