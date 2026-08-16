@@ -29,6 +29,7 @@ class SupabaseStore:
             "Content-Type": "application/json",
             "Accept-Profile": self.schema,
             "Content-Profile": self.schema,
+            "User-Agent": "BLACK-CROWN-OPS/storage-v9",
         }
         if extra:
             headers.update(dict(extra))
@@ -61,6 +62,21 @@ class SupabaseStore:
             if tail.isdigit():
                 return int(tail)
         return len(self._rows(response))
+
+    def ping(self) -> bool:
+        """Read-only PostgREST connectivity/auth/schema probe.
+
+        HEAD is intentionally used so startup does not fetch or mutate player
+        rows. A successful response proves the configured service role can see
+        the expected BCO schema surface.
+        """
+        self._request(
+            "HEAD",
+            "bco_players",
+            params={"select": "chat_id", "limit": "1"},
+            extra_headers={"X-BCO-Storage-Probe": "startup-v9"},
+        )
+        return True
 
     def _append(self, table: str, payload: dict[str, Any], operation_id: str | None = None) -> None:
         body = dict(payload)

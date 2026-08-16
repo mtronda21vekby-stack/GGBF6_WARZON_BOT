@@ -26,6 +26,10 @@ def readiness_snapshot(settings: Any, store: Any) -> dict:
                 "outbox_dropped": int(raw.get("outbox_dropped") or 0),
                 "last_primary_error": str(raw.get("last_primary_error") or "")[:64],
                 "outbox_max": int(raw.get("outbox_max") or 0),
+                "last_probe_ok": raw.get("last_probe_ok") if isinstance(raw.get("last_probe_ok"), bool) else None,
+                "last_probe_at": str(raw.get("last_probe_at") or "")[:64],
+                "probe_successes": int(raw.get("probe_successes") or 0),
+                "probe_failures": int(raw.get("probe_failures") or 0),
             }
         except Exception:
             recovery = {"status": "unavailable"}
@@ -39,10 +43,12 @@ def readiness_snapshot(settings: Any, store: Any) -> dict:
         "mini_app": True,
         "command_center": True,
         "persistence_recovery": bool(recovery_fn),
+        "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
     }
     primary_degraded = bool(recovery) and recovery.get("primary_available") is False
+    probe_failed = bool(recovery) and recovery.get("last_probe_ok") is False
     required_ok = features["ai"]
-    status = "degraded" if (not required_ok or primary_degraded) else "ready"
+    status = "degraded" if (not required_ok or primary_degraded or probe_failed) else "ready"
     return {
         "ok": required_ok,
         "status": status,

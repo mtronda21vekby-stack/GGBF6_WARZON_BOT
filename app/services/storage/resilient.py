@@ -8,6 +8,7 @@ import threading
 import uuid
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 
@@ -23,16 +24,7 @@ class PendingWrite:
 
 
 class ResilientStore:
-    """Persistent primary + memory mirror + bounded FIFO write recovery.
-
-    Once a primary write fails, later writes remain ordered behind it. Appends
-    receive stable operation IDs so replay after ambiguous network failures is
-    idempotent when the primary adapter supports operation_id.
-
-    The outbox is intentionally in-process: it recovers transient outages while
-    this service instance remains alive. It is not described as durable across
-    a process/container restart.
-    """
+    """Persistent primary + memory mirror + bounded FIFO write recovery."""
 
     def __init__(self, primary: Any, fallback: Any, *, outbox_max: int = 500, replay_batch: int = 50) -> None:
         self.primary = primary
@@ -45,6 +37,10 @@ class ResilientStore:
         self._last_primary_error = ""
         self._replayed = 0
         self._dropped = 0
+        self._last_probe_ok: bool | None = None
+        self._last_probe_at = ""
+        self._probe_successes = 0
+        self._probe_failures = 0
 
     @staticmethod
     def _new_operation_id() -> str:
@@ -57,6 +53,10 @@ class ResilientStore:
             return any(p.name == "operation_id" or p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
         except Exception:
             return False
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
 
     def _primary_call(self, op: PendingWrite):
         fn = getattr(self.primary, op.method)
@@ -97,6 +97,36 @@ class ResilientStore:
             log.info("storage recovery replayed=%d pending=%d", replayed_now, len(self._pending))
         return replayed_now
 
+    def probe_primary(self) -> bool:
+        """Probe only the configured persistent primary; never writes user data."""
+        with self._lock:
+            self._last_probe_at = self._now_iso()
+            if self._pending:
+                self._flush_locked()
+                if self._pending:
+                    self._last_probe_ok = False
+                    self._probe_failures += 1
+                    return False
+            try:
+                ping = getattr(self.primary, "ping", None)
+                if callable(ping):
+                    ping()
+                else:
+                    # Generic persistent adapters may not implement ping yet.
+                    getattr(self.primary, "get_profile")(0)
+                self._primary_available = True
+                self._last_primary_error = ""
+                self._last_probe_ok = True
+                self._probe_successes += 1
+                log.info("storage primary probe=ok adapter=%s", type(self.primary).__name__)
+                return True
+            except Exception as exc:
+                self._remember_failure("probe", exc)
+                self._last_probe_ok = False
+                self._probe_failures += 1
+                log.warning("storage primary probe=failed error=%s", type(exc).__name__)
+                return False
+
     def _read(self, name: str, *args, **kwargs):
         with self._lock:
             if self._pending:
@@ -113,8 +143,6 @@ class ResilientStore:
                 return getattr(self.fallback, name)(*args, **kwargs)
 
     def _write(self, name: str, *args, **kwargs) -> None:
-        # Capture immutable-enough snapshots before caller-owned dicts can be
-        # mutated after the request returns.
         try:
             frozen_args = tuple(copy.deepcopy(args))
             frozen_kwargs = dict(copy.deepcopy(kwargs))
@@ -233,6 +261,10 @@ class ResilientStore:
                 "outbox_dropped": self._dropped,
                 "last_primary_error": self._last_primary_error,
                 "outbox_max": self.outbox_max,
+                "last_probe_ok": self._last_probe_ok,
+                "last_probe_at": self._last_probe_at,
+                "probe_successes": self._probe_successes,
+                "probe_failures": self._probe_failures,
             }
 
     def close(self) -> None:

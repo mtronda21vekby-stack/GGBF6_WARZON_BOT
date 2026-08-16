@@ -1,6 +1,7 @@
 # app/webhook.py
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -33,6 +34,15 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        probe = getattr(store, "probe_primary", None)
+        if callable(probe):
+            try:
+                ok = await asyncio.to_thread(probe)
+                log.info("storage startup probe result=%s adapter=%s", "ok" if ok else "failed", type(store).__name__)
+            except Exception as exc:
+                log.warning("storage startup probe crashed error=%s", type(exc).__name__)
+        else:
+            log.info("storage startup probe skipped adapter=%s", type(store).__name__)
         try:
             yield
         finally:
@@ -44,7 +54,7 @@ def create_app() -> FastAPI:
                 except Exception as exc:
                     log.warning("storage shutdown failed: %s", type(exc).__name__)
 
-    app = FastAPI(title="GGBF6 WARZON BOT", version="7.0.0", lifespan=lifespan)
+    app = FastAPI(title="GGBF6 WARZON BOT", version="9.0.0", lifespan=lifespan)
 
     profiles = ProfileService(store=store)
     core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
@@ -72,8 +82,6 @@ def create_app() -> FastAPI:
 
     router = Router(tg=tg, brain=conversation, profiles=profiles, store=store, settings=settings)
 
-    # Trusted/private Mini App APIs must be registered before the legacy
-    # /webapp/{path} static catch-all.
     try:
         from app.webapp.command_center_router import bind_runtime as command_center_bind_runtime
         from app.webapp.command_center_router import router as command_center_router
