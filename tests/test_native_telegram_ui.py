@@ -12,6 +12,7 @@ from app.ui.native_buttons import (
     clear_native_button_cache,
     decorate_reply_markup,
     strip_advanced_button_fields,
+    upgrade_reply_keyboard_to_inline,
 )
 from app.ui.presentation import tactical_card
 from app.ui.quickbar import kb_main, kb_settings
@@ -29,18 +30,12 @@ def _by_text(markup: dict) -> dict[str, dict]:
     return {str(button.get("text") or ""): button for button in _buttons(markup)}
 
 
-def test_main_command_deck_uses_native_color_semantics():
+def test_main_response_bar_is_native_inline_console():
     buttons = _by_text(kb_main())
 
-    assert buttons["🧠 ИИ"]["style"] == "primary"
-    assert buttons["🎯 Тренировка"]["style"] == "success"
-    assert buttons["🧟 Zombies"]["style"] == "danger"
-    assert buttons["💎 Premium"]["style"] == "success"
-    command_center = buttons.get("🛰 COMMAND CENTER") or buttons.get("🛰 MINI APP")
-    assert command_center is not None
-    assert command_center["style"] == "primary"
-    assert "style" not in buttons["⚙️ Настройки"]
-
+    assert buttons["◼ COMMAND CONSOLE"]["style"] == "primary"
+    assert buttons["◼ COMMAND CONSOLE"]["callback_data"] == "bco:home"
+    assert "keyboard" not in kb_main()
     for button in buttons.values():
         if "style" in button:
             assert button["style"] in VALID_BUTTON_STYLES
@@ -67,23 +62,47 @@ def test_legacy_keyboard_modules_are_styled_at_transport_boundary():
     assert zombies["🧪 Перки"]["style"] == "success"
 
 
+def test_reply_keyboard_is_upgraded_to_inline_callbacks(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_AAA_CONSOLE_ENABLED", "1")
+    source = {
+        "keyboard": [[{"text": "🎮 Игра"}, {"text": "⚙️ Настройки"}]],
+        "resize_keyboard": True,
+        "input_field_placeholder": "old",
+    }
+    upgraded = upgrade_reply_keyboard_to_inline(source) or {}
+
+    assert "keyboard" not in upgraded
+    assert "input_field_placeholder" not in upgraded
+    buttons = _by_text(upgraded)
+    assert buttons["🎮 Игра"]["callback_data"] == "🎮 Игра"
+    assert buttons["⚙️ Настройки"]["callback_data"] == "⚙️ Настройки"
+
+
+def test_reply_keyboard_upgrade_has_emergency_rollback(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_AAA_CONSOLE_ENABLED", "0")
+    source = {"keyboard": [[{"text": "🎮 Игра"}]], "resize_keyboard": True}
+    assert upgrade_reply_keyboard_to_inline(source) == source
+
+
 def test_optional_custom_emoji_ids_are_exact_label_scoped(monkeypatch):
     monkeypatch.setenv(
         "TELEGRAM_BUTTON_CUSTOM_EMOJI_JSON",
-        json.dumps({"🧠 ИИ": "5368324170671202286", "bad": "not-an-id"}),
+        json.dumps({"◼ COMMAND CONSOLE": "5368324170671202286", "bad": "not-an-id"}),
     )
     clear_native_button_cache()
     try:
-        markup = decorate_reply_markup({"keyboard": [[{"text": "🧠 ИИ"}, {"text": "bad"}]]}) or {}
+        markup = decorate_reply_markup(
+            {"inline_keyboard": [[{"text": "◼ COMMAND CONSOLE", "callback_data": "bco:home"}, {"text": "bad", "callback_data": "bad"}]]}
+        ) or {}
         buttons = _by_text(markup)
-        assert buttons["🧠 ИИ"]["icon_custom_emoji_id"] == "5368324170671202286"
+        assert buttons["◼ COMMAND CONSOLE"]["icon_custom_emoji_id"] == "5368324170671202286"
         assert "icon_custom_emoji_id" not in buttons["bad"]
     finally:
         clear_native_button_cache()
 
 
 def test_advanced_button_fields_can_be_removed_for_legacy_api_fallback():
-    styled = decorate_reply_markup({"keyboard": [[{"text": "🧠 ИИ"}]]}) or {}
+    styled = decorate_reply_markup({"inline_keyboard": [[{"text": "🧠 ИИ", "callback_data": "🧠 ИИ"}]]}) or {}
     clean = strip_advanced_button_fields(styled) or {}
 
     assert _by_text(styled)["🧠 ИИ"]["style"] == "primary"
@@ -100,7 +119,8 @@ def test_tactical_rich_message_escapes_untrusted_text():
     assert rich["skip_entity_detection"] is True
 
 
-def test_client_prefers_rich_message_and_preserves_native_styles():
+def test_client_prefers_rich_message_and_upgrades_legacy_keyboard_to_inline(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_AAA_CONSOLE_ENABLED", "1")
     requests: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -127,12 +147,15 @@ def test_client_prefers_rich_message_and_preserves_native_styles():
 
     assert [item["path"] for item in requests] == ["/botTEST/sendRichMessage"]
     payload = requests[0]["payload"]
-    assert payload["reply_markup"]["keyboard"][0][0]["style"] == "primary"
-    assert payload["reply_markup"]["keyboard"][0][1]["style"] == "success"
+    assert "keyboard" not in payload["reply_markup"]
+    assert payload["reply_markup"]["inline_keyboard"][0][0]["style"] == "primary"
+    assert payload["reply_markup"]["inline_keyboard"][0][1]["style"] == "success"
+    assert payload["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "🧠 ИИ"
     assert "&lt;left&gt;" in payload["rich_message"]["html"]
 
 
-def test_client_falls_back_to_plain_text_and_legacy_buttons():
+def test_client_falls_back_to_plain_text_and_legacy_button_fields(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_AAA_CONSOLE_ENABLED", "1")
     requests: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -140,7 +163,7 @@ def test_client_falls_back_to_plain_text_and_legacy_buttons():
         requests.append({"path": request.url.path, "payload": payload})
         if request.url.path.endswith("/sendRichMessage"):
             return httpx.Response(404, json={"ok": False, "description": "method not found"})
-        button = payload.get("reply_markup", {}).get("keyboard", [[{}]])[0][0]
+        button = payload.get("reply_markup", {}).get("inline_keyboard", [[{}]])[0][0]
         if "style" in button:
             return httpx.Response(400, json={"ok": False, "description": "unknown field style"})
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 2}})
@@ -165,5 +188,5 @@ def test_client_falls_back_to_plain_text_and_legacy_buttons():
         "/botTEST/sendMessage",
         "/botTEST/sendMessage",
     ]
-    assert requests[1]["payload"]["reply_markup"]["keyboard"][0][0]["style"] == "primary"
-    assert "style" not in requests[2]["payload"]["reply_markup"]["keyboard"][0][0]
+    assert requests[1]["payload"]["reply_markup"]["inline_keyboard"][0][0]["style"] == "primary"
+    assert "style" not in requests[2]["payload"]["reply_markup"]["inline_keyboard"][0][0]
