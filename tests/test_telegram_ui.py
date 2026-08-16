@@ -21,17 +21,16 @@ from app.ui.quickbar import (
 )
 
 
-def _labels(keyboard: dict) -> list[str]:
-    return [
-        str(button.get("text") or "")
-        for row in keyboard.get("keyboard") or []
-        for button in row
-    ]
+def _rows(markup: dict) -> list[list[dict]]:
+    return list(markup.get("inline_keyboard") or markup.get("keyboard") or [])
 
 
-def _all_keyboards() -> list[dict]:
+def _labels(markup: dict) -> list[str]:
+    return [str(button.get("text") or "") for row in _rows(markup) for button in row]
+
+
+def _reply_keyboards() -> list[dict]:
     return [
-        kb_main(),
         kb_premium(),
         kb_premium_bridge(),
         kb_voice(),
@@ -51,21 +50,22 @@ def _all_keyboards() -> list[dict]:
     ]
 
 
-def test_main_deck_is_compact_and_keeps_dangerous_actions_nested(monkeypatch):
+def test_main_response_bar_is_inline_and_does_not_recreate_bottom_keyboard(monkeypatch):
     monkeypatch.delenv("WEBAPP_URL", raising=False)
     monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
     quickbar._BUILD_CACHE_VALUE = None
 
-    keyboard = kb_main()
-    labels = _labels(keyboard)
+    markup = kb_main()
+    labels = _labels(markup)
 
-    assert len(keyboard["keyboard"]) == 5
-    assert all(1 <= len(row) <= 2 for row in keyboard["keyboard"])
-    assert labels[:4] == ["🧠 ИИ", "🎯 Тренировка", "🎮 Игра", "🎬 VOD"]
+    assert "keyboard" not in markup
+    assert len(markup["inline_keyboard"]) == 1
+    assert labels == ["◼ COMMAND CONSOLE"]
+    button = markup["inline_keyboard"][0][0]
+    assert button["callback_data"] == "bco:home"
+    assert button["style"] == "primary"
     assert "🧹 Очистить память" not in labels
     assert "🧨 Сброс" not in labels
-    assert "📊 Статус" in labels
-    assert "🛰 MINI APP" in labels
 
 
 def test_settings_deck_preserves_role_and_guarded_system_actions():
@@ -80,21 +80,21 @@ def test_settings_deck_preserves_role_and_guarded_system_actions():
 def test_configured_miniapp_is_branded_as_command_center(monkeypatch):
     monkeypatch.setenv("WEBAPP_URL", "https://example.test/webapp")
     monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
-    monkeypatch.setenv("WEBAPP_BUILD_ID", "ui-v14")
+    monkeypatch.setenv("WEBAPP_BUILD_ID", "ui-v16")
     quickbar._BUILD_CACHE_VALUE = None
 
-    keyboard = kb_main()
-    buttons = [button for row in keyboard["keyboard"] for button in row]
+    markup = kb_main()
+    buttons = [button for row in _rows(markup) for button in row]
     command_center = next(button for button in buttons if button["text"] == "🛰 COMMAND CENTER")
-    assert command_center["web_app"]["url"] == "https://example.test/webapp?v=ui-v14"
+    assert command_center["web_app"]["url"] == "https://example.test/webapp?v=ui-v16"
 
 
-def test_all_reply_keyboards_respect_telegram_button_and_placeholder_limits(monkeypatch):
+def test_legacy_submenus_respect_telegram_button_and_placeholder_limits(monkeypatch):
     monkeypatch.delenv("WEBAPP_URL", raising=False)
     monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
     quickbar._BUILD_CACHE_VALUE = None
 
-    for keyboard in _all_keyboards():
+    for keyboard in _reply_keyboards():
         assert keyboard["resize_keyboard"] is True
         assert keyboard["is_persistent"] is True
         assert len(keyboard["input_field_placeholder"]) <= 64
