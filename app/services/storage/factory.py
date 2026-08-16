@@ -16,8 +16,8 @@ class PersistentSupabaseStore(SupabaseStore):
     """Server-only Supabase adapter compatible with legacy and new API keys.
 
     New `sb_secret_...` keys are API keys, not JWTs, and therefore must not be
-    copied into `Authorization: Bearer`. Legacy service_role JWTs still use the
-    bearer header for PostgREST role propagation.
+    copied into `Authorization: Bearer`. Legacy/older server keys keep the
+    bearer header for backward compatibility.
     """
 
     def _headers(self, extra: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -29,8 +29,10 @@ class PersistentSupabaseStore(SupabaseStore):
             "Content-Profile": self.schema,
             "User-Agent": "BLACK-CROWN-OPS/storage-v12",
         }
-        # Legacy service_role keys are JWTs. New sb_secret_* keys are not.
-        if self.key.count(".") == 2 and not self.key.startswith("sb_"):
+        # Supabase's new sb_secret_* keys are not JWTs. Legacy/older server
+        # keys remain bearer-compatible and existing integrations/tests depend
+        # on that behavior.
+        if not self.key.startswith("sb_"):
             headers["Authorization"] = f"Bearer {self.key}"
         if extra:
             headers.update(dict(extra))
