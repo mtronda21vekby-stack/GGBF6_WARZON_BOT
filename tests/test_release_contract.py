@@ -35,6 +35,13 @@ def _settings():
         live_knowledge_enabled=True,
         vod_enabled=True,
         voice_enabled=True,
+        voice_provider="auto",
+        voice_high_fidelity_enabled=True,
+        voice_local_fallback_enabled=True,
+        voice_openai_model="gpt-4o-mini-tts",
+        voice_openai_voice="cedar",
+        voice_model_name="ru_RU-denis-medium",
+        voice_opus_bitrate_kbps=48,
         usage_guard_enabled=True,
         telegram_max_update_bytes=256 * 1024,
         premium_link_enabled=True,
@@ -43,8 +50,8 @@ def _settings():
 
 
 def test_release_contract_is_explicit_and_readiness_exposes_version_only():
-    assert APP_VERSION == "16.0.0"
-    assert RELEASE_CONTRACT == "bco-aaa-v16"
+    assert APP_VERSION == "17.0.0"
+    assert RELEASE_CONTRACT == "bco-voice-hifi-v17"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -52,11 +59,25 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "16.0.0", "contract": "bco-aaa-v16"}
+    assert snap["release"] == {"version": "17.0.0", "contract": "bco-voice-hifi-v17"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_inline_navigation"] is True
     assert snap["features"]["telegram_rich_messages"] is True
+    assert snap["features"]["voice_high_fidelity"] is True
+    assert snap["features"]["voice_local_fallback"] is True
+    assert snap["voice_runtime"] == {
+        "enabled": True,
+        "requested_provider": "auto",
+        "active_strategy": "cloud_first_local_fallback",
+        "high_fidelity_enabled": True,
+        "cloud_tts_configured": True,
+        "local_fallback_enabled": True,
+        "cloud_model": "gpt-4o-mini-tts",
+        "default_voice": "cedar",
+        "local_model": "ru_RU-denis-medium",
+        "opus_bitrate_kbps": 48,
+    }
     assert snap["storage"]["recovery"]["last_probe_ok"] is True
     rendered = repr(snap)
     assert "configured-but-never-exposed" not in rendered
