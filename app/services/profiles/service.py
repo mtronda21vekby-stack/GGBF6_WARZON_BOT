@@ -1,7 +1,10 @@
 # app/services/profiles/service.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+import hmac
+import secrets
+from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping
 
 from app.services.profiles.models import PlayerIntelligence
@@ -25,6 +28,10 @@ DEFAULT_PROFILE: Dict[str, str] = {
 @dataclass
 class ProfileService:
     store: Any
+    _context_secret: bytes = field(default_factory=lambda: secrets.token_bytes(32), repr=False)
+
+    def _context_token(self, chat_id: int) -> str:
+        return hmac.new(self._context_secret, str(int(chat_id)).encode("utf-8"), hashlib.sha256).hexdigest()
 
     def get(self, chat_id: int) -> Dict[str, Any]:
         prof: Dict[str, Any] = {}
@@ -39,7 +46,20 @@ class ProfileService:
             out[str(key)] = value
         for key, value in DEFAULT_PROFILE.items():
             out.setdefault(key, value)
+
+        # Internal context proof: generated server-side and never persisted.
+        out["_chat_id"] = int(chat_id)
+        out["_context_token"] = self._context_token(chat_id)
         return out
+
+    def is_trusted_context(self, profile: Mapping[str, Any] | None) -> bool:
+        profile = profile or {}
+        try:
+            chat_id = int(profile.get("_chat_id"))
+            token = str(profile.get("_context_token") or "")
+        except Exception:
+            return False
+        return bool(token) and hmac.compare_digest(token, self._context_token(chat_id))
 
     def get_intelligence(self, chat_id: int) -> PlayerIntelligence:
         data = self.get(chat_id)
@@ -48,7 +68,10 @@ class ProfileService:
         return PlayerIntelligence.from_mapping(data)
 
     def patch(self, chat_id: int, patch: Mapping[str, Any]) -> None:
-        clean = {str(k): v for k, v in (patch or {}).items() if v is not None}
+        clean = {
+            str(k): v for k, v in (patch or {}).items()
+            if v is not None and not str(k).startswith("_")
+        }
         if not clean or not self.store:
             return
         if hasattr(self.store, "set_profile"):
@@ -94,8 +117,18 @@ class ProfileService:
         self.set_field(chat_id, "zombies_search_last", str(query))
 
     def reset(self, chat_id: int) -> None:
-        if self.store and hasattr(self.store, "reset_profile"):
+        if not self.store:
+            return
+        purge = getattr(self.store, "purge_player", None)
+        if callable(purge):
             try:
-                self.store.reset_profile(chat_id)
+                purge(chat_id)
+                return
+            except Exception:
+                pass
+        reset = getattr(self.store, "reset_profile", None)
+        if callable(reset):
+            try:
+                reset(chat_id)
             except Exception:
                 pass

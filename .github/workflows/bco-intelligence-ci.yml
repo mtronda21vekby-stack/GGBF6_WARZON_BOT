@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - feature/bco-aaa-intelligence-v1
+      - feature/bco-aaa-player-intelligence-v2
   pull_request:
     branches:
       - main
+      - feature/bco-aaa-intelligence-v1
 
 jobs:
   test:
