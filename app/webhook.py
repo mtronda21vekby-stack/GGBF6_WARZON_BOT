@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.core.router import Router
 from app.observability.log import get_logger, setup_logging
 from app.observability.readiness import readiness_snapshot
+from app.release import APP_VERSION, RELEASE_CONTRACT
 from app.services.brain.engine import BrainEngine
 from app.services.conversation.service import ConversationService
 from app.services.profiles.service import ProfileService
@@ -54,7 +55,7 @@ def create_app() -> FastAPI:
                 except Exception as exc:
                     log.warning("storage shutdown failed: %s", type(exc).__name__)
 
-    app = FastAPI(title="GGBF6 WARZON BOT", version="9.0.0", lifespan=lifespan)
+    app = FastAPI(title="GGBF6 WARZON BOT", version=APP_VERSION, lifespan=lifespan)
 
     profiles = ProfileService(store=store)
     core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
@@ -135,7 +136,12 @@ def create_app() -> FastAPI:
 
     @app.get("/health/details", include_in_schema=False)
     async def health_details():
-        return readiness_snapshot(settings, store)
+        return readiness_snapshot(
+            settings,
+            store,
+            app_version=APP_VERSION,
+            release_contract=RELEASE_CONTRACT,
+        )
 
     @app.post("/tg/webhook", include_in_schema=False)
     async def telegram_webhook(
