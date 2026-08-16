@@ -15,6 +15,7 @@ on:
       - feature/bco-aaa-production-readiness-v9
       - feature/bco-aaa-deployment-gate-v10
       - feature/bco-render-deploy-recovery-v11
+      - feature/bco-aaa-abuse-guard-v12
   pull_request:
     branches:
       - main
@@ -134,11 +135,13 @@ jobs:
               and features.get('persistent_memory_configured') is True
               and recovery.get('last_probe_ok') is True
               and recovery.get('primary_available') is True
+              and features.get('abuse_guard') is True
+              and features.get('telegram_replay_dedupe') is True
           )
           raise SystemExit(0 if ok else 1)
           PY
               then
-                echo "Production verified: version=${EXPECTED_VERSION}, Supabase startup probe=OK"
+                echo "Production verified: version=${EXPECTED_VERSION}, Supabase startup probe=OK, abuse guard=ON"
                 cat /tmp/bco-health.json
                 exit 0
               fi

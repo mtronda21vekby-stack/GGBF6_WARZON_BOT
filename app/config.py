@@ -20,6 +20,26 @@ class Settings(BaseSettings):
     # Telegram
     bot_token: str = os.getenv("BOT_TOKEN", "")
     webhook_secret: str = os.getenv("WEBHOOK_SECRET", "")
+    telegram_max_update_bytes: int = int(os.getenv("TELEGRAM_MAX_UPDATE_BYTES", str(256 * 1024)))
+    telegram_update_dedupe_ttl_s: int = int(os.getenv("TELEGRAM_UPDATE_DEDUPE_TTL_S", "900"))
+    telegram_update_dedupe_max_entries: int = int(os.getenv("TELEGRAM_UPDATE_DEDUPE_MAX_ENTRIES", "20000"))
+
+    # Abuse / cost guard. Limits are intentionally generous for legitimate use
+    # but cap burst/flood cost at the actual expensive capability boundaries.
+    usage_guard_enabled: bool = os.getenv("USAGE_GUARD_ENABLED", "1") not in ("0", "false", "False", "")
+    usage_guard_max_buckets: int = int(os.getenv("USAGE_GUARD_MAX_BUCKETS", "10000"))
+    ai_rate_limit_1m: int = int(os.getenv("AI_RATE_LIMIT_1M", "12"))
+    ai_rate_limit_1h: int = int(os.getenv("AI_RATE_LIMIT_1H", "120"))
+    ai_global_rate_limit_1m: int = int(os.getenv("AI_GLOBAL_RATE_LIMIT_1M", "180"))
+    ai_global_rate_limit_1h: int = int(os.getenv("AI_GLOBAL_RATE_LIMIT_1H", "1800"))
+    vod_rate_limit_10m: int = int(os.getenv("VOD_RATE_LIMIT_10M", "3"))
+    vod_rate_limit_1h: int = int(os.getenv("VOD_RATE_LIMIT_1H", "12"))
+    vod_global_rate_limit_10m: int = int(os.getenv("VOD_GLOBAL_RATE_LIMIT_10M", "30"))
+    vod_global_rate_limit_1h: int = int(os.getenv("VOD_GLOBAL_RATE_LIMIT_1H", "120"))
+    voice_rate_limit_1m: int = int(os.getenv("VOICE_RATE_LIMIT_1M", "10"))
+    voice_rate_limit_1h: int = int(os.getenv("VOICE_RATE_LIMIT_1H", "60"))
+    voice_global_rate_limit_1m: int = int(os.getenv("VOICE_GLOBAL_RATE_LIMIT_1M", "120"))
+    voice_global_rate_limit_1h: int = int(os.getenv("VOICE_GLOBAL_RATE_LIMIT_1H", "1200"))
 
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO")

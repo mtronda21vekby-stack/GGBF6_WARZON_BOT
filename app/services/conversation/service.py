@@ -19,6 +19,14 @@ def _same_user_tail(history: list[dict], text: str) -> bool:
     )
 
 
+def _rate_limit_text(seconds: int) -> str:
+    wait = max(1, int(seconds or 1))
+    return (
+        "⏳ Слишком много AI-запросов подряд. "
+        f"Подожди примерно {wait} сек. и отправь следующий запрос."
+    )
+
+
 @dataclass
 class ConversationService:
     """Single intelligence entrypoint for Telegram and Mini App.
@@ -31,6 +39,7 @@ class ConversationService:
     brain: Any
     store: Any = None
     profiles: Any = None
+    usage_guard: Any = None
 
     def __post_init__(self) -> None:
         self.player_memory = (
@@ -52,6 +61,18 @@ class ConversationService:
                 chat_id = int(profile.get("_chat_id"))
             except Exception:
                 chat_id = None
+
+        # Enforce cost limits at the canonical AI generation boundary. This
+        # protects both Telegram and verified Mini App calls and deliberately
+        # happens before Mini App working-memory writes.
+        if trusted and chat_id is not None and self.usage_guard is not None:
+            try:
+                decision = self.usage_guard.check(chat_id, "ai")
+                if not bool(getattr(decision, "allowed", True)):
+                    return _rate_limit_text(int(getattr(decision, "retry_after_s", 1) or 1))
+            except Exception:
+                # Guard failures must not take the coaching service down.
+                pass
 
         # Telegram Router inserts current user text before calling the brain.
         # Mini App server context does not. This flag distinguishes the paths.
