@@ -1,0 +1,701 @@
+/* BLACK CROWN OPS v18 — Cinematic Technical Design System */
+:root {
+  --bg0: #02070a;
+  --bg1: #061017;
+  --panel: rgba(7, 20, 28, .78);
+  --panel2: rgba(8, 28, 38, .88);
+  --stroke: rgba(111, 221, 255, .14);
+  --stroke2: rgba(111, 221, 255, .26);
+  --text: rgba(235, 249, 255, .96);
+  --muted: rgba(181, 215, 228, .72);
+  --hint: rgba(151, 189, 202, .54);
+  --accent: #22d3ee;
+  --accent2: #3b82f6;
+  --danger: #ff496d;
+  --success: #24e0a4;
+  --warning: #ffb648;
+  --shadow: 0 28px 90px rgba(0, 0, 0, .58);
+  --shadow2: 0 16px 48px rgba(0, 0, 0, .42);
+  --tech-glow: 0 0 0 1px rgba(34, 211, 238, .10), 0 0 34px rgba(34, 211, 238, .08);
+  --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+html.bco-v18,
+html.bco-v18 body {
+  background: #02070a;
+  color: var(--text);
+}
+
+html.bco-v18 body::before {
+  background:
+    radial-gradient(880px 650px at 94% -8%, rgba(0, 210, 255, .13), transparent 62%),
+    radial-gradient(780px 620px at -8% 22%, rgba(25, 105, 255, .11), transparent 64%),
+    radial-gradient(1000px 520px at 50% 118%, rgba(16, 204, 160, .07), transparent 68%),
+    linear-gradient(165deg, #010508 0%, #061018 50%, #02070a 100%);
+}
+
+html.bco-v18 body::after {
+  inset: 0;
+  opacity: .34;
+  filter: none;
+  background-image:
+    linear-gradient(rgba(75, 198, 230, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(75, 198, 230, .035) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(circle at 50% 30%, #000 0%, transparent 78%);
+  transform: translateZ(0);
+}
+
+html.bco-v18 .bg .stars {
+  opacity: .18;
+  background:
+    radial-gradient(1px 1px at 12% 22%, rgba(190, 242, 255, .72), transparent 70%),
+    radial-gradient(1px 1px at 41% 76%, rgba(190, 242, 255, .42), transparent 70%),
+    radial-gradient(1px 1px at 72% 18%, rgba(94, 223, 255, .52), transparent 70%),
+    radial-gradient(1px 1px at 88% 82%, rgba(118, 158, 255, .46), transparent 70%);
+}
+
+html.bco-v18 .bg .nebula {
+  opacity: .22;
+  filter: blur(32px) saturate(.9);
+  background:
+    radial-gradient(820px 520px at 22% 8%, rgba(25, 112, 255, .15), transparent 65%),
+    radial-gradient(920px 620px at 87% 30%, rgba(0, 214, 255, .12), transparent 66%);
+}
+
+html.bco-v18 .bg .gridfx {
+  opacity: .055;
+  background-size: 36px 36px;
+}
+
+/* ---------- cinematic boot ---------- */
+.bco-boot-sequence {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: grid;
+  place-items: center;
+  padding: calc(28px + env(safe-area-inset-top)) 24px calc(28px + env(safe-area-inset-bottom));
+  background:
+    radial-gradient(circle at 50% 42%, rgba(11, 54, 69, .42), transparent 42%),
+    linear-gradient(165deg, #010508, #041017 62%, #010508);
+  transition: opacity .5s ease, visibility .5s ease;
+  overflow: hidden;
+}
+
+.bco-boot-sequence::before,
+.bco-boot-sequence::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.bco-boot-sequence::before {
+  background-image:
+    linear-gradient(rgba(45, 213, 244, .05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 213, 244, .05) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(circle at center, #000, transparent 76%);
+}
+
+.bco-boot-sequence::after {
+  height: 2px;
+  top: -2px;
+  bottom: auto;
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, .86), transparent);
+  box-shadow: 0 0 28px rgba(34, 211, 238, .55);
+  animation: bcoBootScan 2.1s linear infinite;
+}
+
+.bco-boot-sequence.is-complete {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.bco-boot-panel {
+  position: relative;
+  width: min(100%, 430px);
+  padding: 28px;
+  border: 1px solid rgba(80, 220, 255, .22);
+  background: linear-gradient(150deg, rgba(8, 24, 32, .92), rgba(3, 12, 18, .84));
+  box-shadow: 0 35px 110px rgba(0, 0, 0, .72), inset 0 1px 0 rgba(255, 255, 255, .04);
+  clip-path: polygon(0 14px, 14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%);
+}
+
+.bco-boot-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.bco-boot-mark,
+.bco-core-mark {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+  border: 1px solid rgba(94, 225, 255, .55);
+  background: linear-gradient(145deg, rgba(29, 118, 150, .24), rgba(3, 15, 22, .92));
+  box-shadow: inset 0 0 22px rgba(34, 211, 238, .08), 0 0 26px rgba(34, 211, 238, .13);
+  clip-path: polygon(50% 0, 92% 22%, 92% 76%, 50% 100%, 8% 76%, 8% 22%);
+}
+
+.bco-boot-mark::before,
+.bco-core-mark::before {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  border: 1px solid rgba(115, 231, 255, .72);
+  clip-path: polygon(50% 0, 100% 30%, 82% 100%, 18% 100%, 0 30%);
+}
+
+.bco-boot-mark::after,
+.bco-core-mark::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b8f4ff;
+  box-shadow: 0 0 18px #22d3ee, 0 0 34px rgba(34, 211, 238, .7);
+  transform: translate(-50%, -50%);
+}
+
+.bco-boot-title {
+  font-weight: 900;
+  letter-spacing: .14em;
+  font-size: 15px;
+}
+
+.bco-boot-sub {
+  margin-top: 4px;
+  color: rgba(166, 218, 234, .62);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.bco-boot-modules {
+  margin-top: 24px;
+  display: grid;
+  gap: 9px;
+}
+
+.bco-boot-module {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  color: rgba(184, 220, 232, .72);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.bco-boot-module i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(127, 158, 168, .5);
+}
+
+.bco-boot-module.is-ready i {
+  background: var(--success);
+  box-shadow: 0 0 12px rgba(36, 224, 164, .7);
+}
+
+.bco-boot-module span:last-child {
+  color: rgba(92, 221, 251, .9);
+}
+
+.bco-boot-progress {
+  height: 2px;
+  margin-top: 22px;
+  overflow: hidden;
+  background: rgba(95, 177, 200, .12);
+}
+
+.bco-boot-progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #1b74ff, #22d3ee, #24e0a4);
+  box-shadow: 0 0 18px rgba(34, 211, 238, .6);
+  transition: width .35s ease;
+}
+
+/* ---------- header / telemetry ---------- */
+html.bco-v18 .app-header {
+  background: linear-gradient(180deg, rgba(2, 9, 13, .94), rgba(2, 9, 13, .78));
+  border-bottom: 1px solid rgba(75, 211, 244, .12);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .22);
+  backdrop-filter: blur(22px) saturate(1.15);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+}
+
+html.bco-v18 .logo {
+  width: 46px;
+  height: 46px;
+  border-radius: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  overflow: visible;
+}
+
+html.bco-v18 .brand-title {
+  font-size: 14px;
+  letter-spacing: .12em;
+}
+
+html.bco-v18 .brand-sub {
+  color: rgba(123, 207, 229, .68);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.bco-telemetry-rail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 11px;
+}
+
+.bco-telemetry-cell {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(67, 205, 239, .10);
+  background: rgba(4, 18, 25, .56);
+  font-family: var(--mono);
+  text-transform: uppercase;
+}
+
+.bco-telemetry-cell small {
+  display: block;
+  overflow: hidden;
+  color: rgba(144, 189, 203, .48);
+  font-size: 7px;
+  letter-spacing: .12em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bco-telemetry-cell strong {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: rgba(210, 245, 255, .86);
+  font-size: 9px;
+  letter-spacing: .06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bco-signal-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 11px rgba(36, 224, 164, .72);
+}
+
+html.bco-offline .bco-signal-dot {
+  background: var(--danger);
+  box-shadow: 0 0 11px rgba(255, 73, 109, .72);
+}
+
+/* ---------- cards ---------- */
+html.bco-v18 .card,
+html.bco-v18 .chat-shell,
+html.bco-v18 .cardlite,
+html.bco-v18 .bco-cc-card,
+html.bco-v18 .bco-cc-hero {
+  border-color: rgba(75, 211, 244, .13);
+  background:
+    linear-gradient(145deg, rgba(8, 25, 34, .78), rgba(3, 12, 18, .74));
+  box-shadow: var(--shadow2), inset 0 1px 0 rgba(255, 255, 255, .025), var(--tech-glow);
+}
+
+html.bco-v18 .card,
+html.bco-v18 .chat-shell {
+  position: relative;
+  overflow: hidden;
+}
+
+html.bco-v18 .card::after,
+html.bco-v18 .chat-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 0 72%, rgba(34, 211, 238, .025) 82%, transparent 90%);
+  transform: translateX(-100%);
+  animation: bcoPanelSweep 11s ease-in-out infinite;
+}
+
+html.bco-v18 .card > *,
+html.bco-v18 .chat-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+html.bco-v18 .hero-title,
+html.bco-v18 .bco-cc-title {
+  background: linear-gradient(100deg, #f4fcff 0%, #a9eaff 55%, #69b9ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  letter-spacing: -.035em;
+}
+
+html.bco-v18 .hero-kicker,
+html.bco-v18 .bco-cc-eyebrow,
+html.bco-v18 .card-title {
+  color: rgba(113, 222, 249, .84);
+  letter-spacing: .08em;
+}
+
+html.bco-v18 .btn,
+html.bco-v18 .seg-btn,
+html.bco-v18 .chip,
+html.bco-v18 .nav-btn,
+html.bco-v18 .bco-cc-btn {
+  border-color: rgba(93, 213, 241, .14);
+  background: linear-gradient(180deg, rgba(13, 39, 50, .78), rgba(5, 20, 28, .84));
+  color: rgba(226, 247, 255, .9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
+}
+
+html.bco-v18 .btn.primary,
+html.bco-v18 .seg-btn.active,
+html.bco-v18 .chip.active,
+html.bco-v18 .bco-cc-btn.primary {
+  border-color: rgba(58, 211, 244, .40);
+  background: linear-gradient(135deg, rgba(13, 105, 144, .78), rgba(20, 67, 130, .72));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 0 26px rgba(34, 211, 238, .10);
+}
+
+html.bco-v18 button:active {
+  transform: translateY(1px) scale(.992);
+}
+
+/* ---------- live intelligence chat ---------- */
+.bco-live-status {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(34, 211, 238, .16);
+  background: rgba(4, 18, 25, .72);
+  color: rgba(157, 219, 235, .7);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.bco-live-status.is-active {
+  display: flex;
+}
+
+.bco-live-status strong {
+  color: rgba(203, 245, 255, .94);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.bco-live-bars {
+  display: inline-flex;
+  align-items: end;
+  gap: 2px;
+  height: 11px;
+}
+
+.bco-live-bars i {
+  width: 2px;
+  height: 4px;
+  background: var(--accent);
+  box-shadow: 0 0 7px rgba(34, 211, 238, .5);
+  animation: bcoLiveBar .85s ease-in-out infinite;
+}
+
+.bco-live-bars i:nth-child(2) { animation-delay: .12s; }
+.bco-live-bars i:nth-child(3) { animation-delay: .24s; }
+.bco-live-bars i:nth-child(4) { animation-delay: .36s; }
+
+html.bco-v18 .chat-shell {
+  border-radius: 16px;
+}
+
+html.bco-v18 .chat-head {
+  border-bottom: 1px solid rgba(72, 209, 242, .10);
+  background: rgba(3, 14, 20, .62);
+}
+
+html.bco-v18 .chat-badge {
+  background: none;
+  color: transparent;
+  width: 34px;
+  height: 34px;
+  position: relative;
+}
+
+html.bco-v18 .chat-badge::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border: 1px solid rgba(63, 218, 252, .52);
+  clip-path: polygon(50% 0, 93% 26%, 82% 100%, 18% 100%, 7% 26%);
+}
+
+html.bco-v18 .chat-badge::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 14px rgba(34, 211, 238, .88);
+  transform: translate(-50%, -50%);
+}
+
+html.bco-v18 .chat-title {
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+html.bco-v18 .chat-sub {
+  font-family: var(--mono);
+  letter-spacing: .04em;
+}
+
+html.bco-v18 .chat-log {
+  background:
+    linear-gradient(180deg, rgba(1, 7, 10, .42), rgba(4, 17, 24, .26)),
+    repeating-linear-gradient(0deg, transparent 0 28px, rgba(76, 205, 238, .022) 29px);
+}
+
+html.bco-v18 .chat-row.bot .bubble {
+  border: 1px solid rgba(66, 210, 243, .15);
+  background: linear-gradient(145deg, rgba(7, 29, 39, .94), rgba(4, 17, 24, .90));
+  box-shadow: inset 3px 0 0 rgba(34, 211, 238, .54);
+}
+
+html.bco-v18 .chat-row.me .bubble {
+  border: 1px solid rgba(74, 137, 255, .24);
+  background: linear-gradient(145deg, rgba(14, 55, 98, .82), rgba(8, 31, 58, .88));
+}
+
+html.bco-v18 .bubble.is-streaming {
+  min-height: 54px;
+  white-space: pre-wrap;
+}
+
+html.bco-v18 .bubble.is-streaming::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 13px;
+  margin-left: 5px;
+  vertical-align: -2px;
+  background: var(--accent);
+  box-shadow: 0 0 12px rgba(34, 211, 238, .7);
+  animation: bcoCursor .72s steps(2, end) infinite;
+}
+
+html.bco-v18 .chat-compose {
+  border-top: 1px solid rgba(72, 209, 242, .10);
+  background: rgba(2, 11, 16, .82);
+}
+
+html.bco-v18 .chat-compose .input {
+  border-color: rgba(82, 210, 239, .14);
+  background: rgba(3, 15, 21, .86);
+}
+
+html.bco-v18 .chat-send {
+  background: linear-gradient(145deg, #0a8eba, #195fbe);
+  box-shadow: 0 10px 28px rgba(9, 143, 190, .20), inset 0 1px 0 rgba(255, 255, 255, .14);
+}
+
+/* ---------- command palette ---------- */
+.bco-command-palette {
+  position: fixed;
+  inset: 0;
+  z-index: 8000;
+  display: grid;
+  align-items: start;
+  justify-items: center;
+  padding: calc(72px + env(safe-area-inset-top)) 14px calc(24px + env(safe-area-inset-bottom));
+  background: rgba(1, 6, 9, .76);
+  backdrop-filter: blur(16px) saturate(.8);
+  -webkit-backdrop-filter: blur(16px) saturate(.8);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .22s ease, visibility .22s ease;
+}
+
+.bco-command-palette.is-open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.bco-command-panel {
+  width: min(100%, 540px);
+  max-height: min(72vh, 620px);
+  overflow: auto;
+  border: 1px solid rgba(74, 217, 250, .24);
+  background: linear-gradient(155deg, rgba(7, 25, 34, .98), rgba(2, 10, 15, .98));
+  box-shadow: 0 38px 120px rgba(0, 0, 0, .74), 0 0 50px rgba(34, 211, 238, .08);
+  clip-path: polygon(0 14px, 14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%);
+}
+
+.bco-command-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 17px 18px;
+  border-bottom: 1px solid rgba(74, 217, 250, .12);
+}
+
+.bco-command-head strong {
+  font-size: 11px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.bco-command-head span {
+  color: rgba(135, 198, 215, .56);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: .10em;
+}
+
+.bco-command-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 14px;
+}
+
+.bco-command-action {
+  min-height: 64px;
+  padding: 12px;
+  border: 1px solid rgba(72, 207, 240, .12);
+  background: rgba(6, 23, 31, .76);
+  color: rgba(224, 247, 255, .9);
+  text-align: left;
+}
+
+.bco-command-action small {
+  display: block;
+  margin-top: 5px;
+  color: rgba(139, 190, 205, .56);
+  font-family: var(--mono);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+/* ---------- navigation ---------- */
+html.bco-v18 .bottom-nav {
+  border-top-color: rgba(72, 209, 242, .12);
+  background: linear-gradient(180deg, rgba(2, 10, 15, .82), rgba(1, 7, 11, .96));
+  box-shadow: 0 -18px 50px rgba(0, 0, 0, .42);
+  backdrop-filter: blur(24px) saturate(1.1);
+  -webkit-backdrop-filter: blur(24px) saturate(1.1);
+}
+
+html.bco-v18 .nav-btn.active {
+  color: #dff8ff;
+  background: linear-gradient(180deg, rgba(24, 119, 148, .32), rgba(4, 21, 29, .34));
+  box-shadow: inset 0 2px 0 rgba(34, 211, 238, .72);
+}
+
+html.bco-v18 .toast {
+  border: 1px solid rgba(73, 218, 250, .22);
+  background: rgba(3, 19, 27, .94);
+  color: rgba(226, 248, 255, .94);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, .55), 0 0 28px rgba(34, 211, 238, .09);
+}
+
+/* ---------- dynamic transitions ---------- */
+html.bco-v18 .tabpane.active {
+  animation: bcoPaneEnter .34s cubic-bezier(.22, .75, .25, 1) both;
+}
+
+html.bco-v18:not(.bco-low-power) .card:hover,
+html.bco-v18:not(.bco-low-power) .bco-cc-card:hover {
+  border-color: rgba(75, 211, 244, .21);
+}
+
+html.bco-low-power .bg,
+html.bco-low-power body::after,
+html.bco-low-power .card::after,
+html.bco-low-power .chat-shell::after {
+  display: none !important;
+}
+
+html.bco-low-power .card,
+html.bco-low-power .chat-shell,
+html.bco-low-power .app-header,
+html.bco-low-power .bottom-nav {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+@keyframes bcoBootScan {
+  from { transform: translateY(0); }
+  to { transform: translateY(100vh); }
+}
+
+@keyframes bcoPanelSweep {
+  0%, 72% { transform: translateX(-115%); }
+  84%, 100% { transform: translateX(115%); }
+}
+
+@keyframes bcoLiveBar {
+  0%, 100% { height: 3px; opacity: .45; }
+  50% { height: 11px; opacity: 1; }
+}
+
+@keyframes bcoCursor {
+  0%, 45% { opacity: 1; }
+  46%, 100% { opacity: 0; }
+}
+
+@keyframes bcoPaneEnter {
+  from { opacity: 0; transform: translateY(9px) scale(.995); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 390px) {
+  .bco-telemetry-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bco-command-grid { grid-template-columns: 1fr; }
+  .bco-boot-panel { padding: 23px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bco-boot-sequence::after,
+  .bco-live-bars i,
+  html.bco-v18 .card::after,
+  html.bco-v18 .chat-shell::after,
+  html.bco-v18 .bubble.is-streaming::after {
+    animation: none !important;
+  }
+}
