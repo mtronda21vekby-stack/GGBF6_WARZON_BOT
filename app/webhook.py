@@ -19,6 +19,7 @@ from app.security.usage_guard import UpdateReplayGuard, UsageGuard
 from app.services.brain.engine import BrainEngine
 from app.services.conversation.service import ConversationService
 from app.services.entitlements.service import PremiumEntitlementService
+from app.services.entitlements.site_bridge import SiteEntitlementBridgeAPI
 from app.services.entitlements.telegram import EntitlementTelegramController
 from app.services.profiles.service import ProfileService
 from app.services.storage.factory import build_store
@@ -38,6 +39,10 @@ def create_app() -> FastAPI:
     store = build_store(settings)
     entitlement_service = PremiumEntitlementService(settings)
     entitlement_controller = EntitlementTelegramController(tg=tg, service=entitlement_service)
+    site_entitlement_bridge = SiteEntitlementBridgeAPI(
+        settings=settings,
+        entitlements=entitlement_service,
+    )
     usage_guard = UsageGuard.from_settings(settings)
     replay_guard = UpdateReplayGuard(
         ttl_s=settings.telegram_update_dedupe_ttl_s,
@@ -59,6 +64,10 @@ def create_app() -> FastAPI:
             yield
         finally:
             try:
+                await site_entitlement_bridge.close()
+            except Exception as exc:
+                log.warning("site entitlement bridge shutdown failed: %s", type(exc).__name__)
+            try:
                 await entitlement_service.close()
             except Exception as exc:
                 log.warning("entitlement service shutdown failed: %s", type(exc).__name__)
@@ -71,6 +80,7 @@ def create_app() -> FastAPI:
                     log.warning("storage shutdown failed: %s", type(exc).__name__)
 
     app = FastAPI(title="GGBF6 WARZON BOT", version=APP_VERSION, lifespan=lifespan)
+    app.include_router(site_entitlement_bridge.router)
 
     profiles = ProfileService(store=store)
     core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
