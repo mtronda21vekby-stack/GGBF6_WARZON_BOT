@@ -16,8 +16,16 @@ _MODE_BUTTONS = {
     "🔊 Voice AUTO": TTSMode.AUTO,
     "🎧 Voice ON-DEMAND": TTSMode.ON_DEMAND,
 }
+_VOICE_BUTTONS = {
+    "🎙 CEDAR": "cedar",
+    "🎙 MARIN": "marin",
+}
 _OPEN_BUTTONS = {"🎙 Голос: Тиммейт/Коуч", "🔊 Озвучка", "/voice"}
 _SPEAK_BUTTONS = {"🔊 Озвучить ответ", "/speak"}
+_TEST_BUTTONS = {"🧪 Тест голоса", "/voice_test"}
+_TEST_LINE = (
+    "Связь установлена. Я вижу твой профиль, помню ошибки и готов дать короткий тактический разбор."
+)
 
 
 def _message(raw: dict) -> dict:
@@ -88,20 +96,47 @@ class VoiceTelegramController:
             return ""
         return _signature(self._history(chat_id))
 
+    def _voice_details(self, profile: dict) -> dict[str, Any]:
+        describe = getattr(self.voice, "describe", None)
+        if callable(describe):
+            try:
+                return dict(describe(profile) or {})
+            except Exception:
+                pass
+        return {
+            "provider": "SYNTHETIC VOICE",
+            "voice": str(profile.get("tts_voice") or "CEDAR").upper(),
+            "local_fallback": False,
+        }
+
     async def _send_panel(self, chat_id: int, prefix: str = "") -> None:
         profile = self._profile(chat_id)
         mode = normalize_tts_mode(profile.get("tts_mode"))
         state = {
             TTSMode.OFF: "OFF — только текст",
-            TTSMode.AUTO: "AUTO — текст + voice после AI-ответа",
-            TTSMode.ON_DEMAND: "ON-DEMAND — voice только по кнопке",
+            TTSMode.AUTO: "AUTO — voice после каждого нового AI-ответа",
+            TTSMode.ON_DEMAND: "ON-DEMAND — voice только по команде",
         }[mode]
+        details = self._voice_details(profile)
+        fallback = " · LOCAL FALLBACK READY" if details.get("local_fallback") else ""
         body = (prefix + "\n\n" if prefix else "") + (
             "🔊 BLACK CROWN VOICE\n"
-            f"Режим: {state}\n\n"
-            "Текст всегда остаётся основным ответом. Голос — дополнительный канал."
+            f"Режим: {state}\n"
+            f"Движок: {str(details.get('provider') or 'VOICE').upper()}{fallback}\n"
+            f"Голос: {str(details.get('voice') or 'CEDAR').upper()}\n\n"
+            "CEDAR — собранный тактический тембр. MARIN — более мягкая и живая подача.\n"
+            "Текст всегда остаётся основным ответом. Голос синтетический и сгенерирован ИИ."
         )
         await self.tg.send_message(chat_id, body, kb_voice_panel())
+
+    async def _chat_action(self, chat_id: int, action: str) -> None:
+        sender = getattr(self.tg, "send_chat_action", None)
+        if not callable(sender):
+            return
+        try:
+            await sender(chat_id, action)
+        except Exception:
+            pass
 
     async def _speak(self, chat_id: int, text: str, *, explicit: bool) -> bool:
         if self.usage_guard is not None:
@@ -120,9 +155,22 @@ class VoiceTelegramController:
 
         profile = self._profile(chat_id)
         try:
+            await self._chat_action(chat_id, "record_voice")
             artifact = await self.voice.synthesize(text, profile)
             try:
-                await self.tg.send_voice_file(chat_id, str(artifact.path))
+                await self._chat_action(chat_id, "upload_voice")
+                caption = "Синтетический AI-голос · BLACK CROWN OPS"
+                await self.tg.send_voice_file(
+                    chat_id,
+                    str(artifact.path),
+                    caption=caption,
+                )
+                log.info(
+                    "voice delivered chat_id=%s provider=%s voice=%s",
+                    chat_id,
+                    str(getattr(artifact, "provider", "unknown"))[:24],
+                    str(getattr(artifact, "voice_name", ""))[:32],
+                )
             finally:
                 artifact.cleanup()
             return True
@@ -151,6 +199,19 @@ class VoiceTelegramController:
             except Exception:
                 pass
             await self._send_panel(chat_id, f"✅ Voice mode = {mode.value}")
+            return True
+
+        if text in _VOICE_BUTTONS:
+            voice_name = _VOICE_BUTTONS[text]
+            try:
+                self.profiles.patch(chat_id, {"tts_voice": voice_name})
+            except Exception:
+                pass
+            await self._send_panel(chat_id, f"✅ Голос переключён: {voice_name.upper()}")
+            return True
+
+        if text in _TEST_BUTTONS:
+            await self._speak(chat_id, _TEST_LINE, explicit=True)
             return True
 
         if text in _SPEAK_BUTTONS:
