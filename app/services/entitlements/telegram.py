@@ -20,11 +20,20 @@ _CANCEL_UNLINK = {"Отмена", "⬅️ Назад"}
 
 
 def _extract(raw: dict) -> tuple[int | None, int | None, str | None, str, str]:
-    message = raw.get("message") or raw.get("edited_message") or {}
+    callback = raw.get("callback_query") or {}
+    if isinstance(callback, dict) and callback:
+        message = callback.get("message") or {}
+        sender = callback.get("from") or {}
+        text = str(callback.get("data") or "").strip()
+    else:
+        message = raw.get("message") or raw.get("edited_message") or {}
+        sender = message.get("from") if isinstance(message, dict) else {}
+        text = str(message.get("text") or "").strip() if isinstance(message, dict) else ""
+
     if not isinstance(message, dict):
         return None, None, None, "", ""
     chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
-    sender = message.get("from") if isinstance(message.get("from"), dict) else {}
+    sender = sender if isinstance(sender, dict) else {}
     try:
         chat_id = int(chat.get("id"))
     except Exception:
@@ -35,7 +44,6 @@ def _extract(raw: dict) -> tuple[int | None, int | None, str | None, str, str]:
         user_id = None
     username = str(sender.get("username") or "").strip() or None
     chat_type = str(chat.get("type") or "").strip().lower()
-    text = str(message.get("text") or "").strip()
     return chat_id, user_id, username, chat_type, text
 
 
