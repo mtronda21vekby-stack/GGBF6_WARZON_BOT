@@ -5,7 +5,7 @@ import hashlib
 import logging
 import secrets
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote, urlsplit
 
@@ -16,8 +16,17 @@ log = logging.getLogger("bco.entitlements")
 _EXPECTED_SUPABASE_HOST = "wqriwhciqvrbhkkiuhxb.supabase.co"
 _EXPECTED_SITE_HOSTS = {"blackcrown.work", "www.blackcrown.work"}
 _RPC_CREATE_LINK = "blackcrown_create_telegram_link_challenge"
-_RPC_STATUS = "blackcrown_get_telegram_entitlement_status"
+_RPC_COMPLETE_LINK = "blackcrown_complete_telegram_link"
+_RPC_TELEGRAM_STATUS = "blackcrown_get_telegram_entitlement_status"
+_RPC_SITE_STATUS = "blackcrown_get_site_telegram_status"
 _RPC_UNLINK = "blackcrown_unlink_telegram"
+_ALLOWED_RPCS = {
+    _RPC_CREATE_LINK,
+    _RPC_COMPLETE_LINK,
+    _RPC_TELEGRAM_STATUS,
+    _RPC_SITE_STATUS,
+    _RPC_UNLINK,
+}
 
 
 @dataclass(frozen=True)
@@ -106,7 +115,7 @@ class PremiumEntitlementService:
         return headers
 
     async def _rpc(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if name not in {_RPC_CREATE_LINK, _RPC_STATUS, _RPC_UNLINK}:
+        if name not in _ALLOWED_RPCS:
             raise ValueError("premium_rpc_not_allowed")
         try:
             response = await self._client.post(
@@ -122,7 +131,7 @@ class PremiumEntitlementService:
                 reason = str(raw.get("reason") or "premium_rpc_rejected")[:80]
                 raise RuntimeError(reason)
             self._last_error = ""
-            self._last_success_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+            self._last_success_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             return raw
         except Exception as exc:
             self._last_error = type(exc).__name__
@@ -132,6 +141,24 @@ class PremiumEntitlementService:
     def _safe_username(value: str | None) -> str | None:
         text = "".join(ch for ch in str(value or "") if ch.isalnum() or ch == "_")[:64]
         return text or None
+
+    @staticmethod
+    def _safe_site_user_id(value: Any) -> str:
+        text = str(value or "").strip()
+        if not 1 <= len(text) <= 160:
+            return ""
+        if not all(ch.isalnum() or ch in "_.:@-" for ch in text):
+            return ""
+        return text
+
+    @staticmethod
+    def _safe_code(value: Any) -> str:
+        text = str(value or "").strip()
+        if not 32 <= len(text) <= 128:
+            return ""
+        if not all(ch.isalnum() or ch in "-_" for ch in text):
+            return ""
+        return text
 
     @staticmethod
     def _normalize_entitlements(value: Any) -> tuple[str, ...]:
@@ -149,6 +176,18 @@ class PremiumEntitlementService:
                 seen.add(key)
                 result.append(key)
         return tuple(result)
+
+    @classmethod
+    def _status_from_raw(cls, raw: dict[str, Any]) -> EntitlementStatus:
+        entitlements = cls._normalize_entitlements(raw.get("entitlements"))
+        site_user_id = cls._safe_site_user_id(raw.get("site_user_id")) or None
+        return EntitlementStatus(
+            linked=raw.get("linked") is True,
+            premium=raw.get("premium") is True and "bco_premium" in entitlements,
+            entitlements=entitlements,
+            site_user_id=site_user_id,
+            linked_at=(str(raw.get("linked_at") or "")[:64] or None),
+        )
 
     async def create_link_challenge(
         self,
@@ -188,15 +227,28 @@ class PremiumEntitlementService:
         user_id = int(telegram_user_id)
         if user_id <= 0:
             raise ValueError("invalid_telegram_identity")
-        raw = await self._rpc(_RPC_STATUS, {"p_telegram_user_id": user_id})
-        entitlements = self._normalize_entitlements(raw.get("entitlements"))
-        return EntitlementStatus(
-            linked=raw.get("linked") is True,
-            premium=raw.get("premium") is True and "bco_premium" in entitlements,
-            entitlements=entitlements,
-            site_user_id=(str(raw.get("site_user_id") or "")[:160] or None),
-            linked_at=(str(raw.get("linked_at") or "")[:64] or None),
+        raw = await self._rpc(_RPC_TELEGRAM_STATUS, {"p_telegram_user_id": user_id})
+        return self._status_from_raw(raw)
+
+    async def complete_site_link(self, *, code: str, site_user_id: str) -> EntitlementStatus:
+        safe_code = self._safe_code(code)
+        safe_user = self._safe_site_user_id(site_user_id)
+        if not safe_code:
+            raise ValueError("invalid_or_expired_code")
+        if not safe_user:
+            raise ValueError("invalid_site_user")
+        raw = await self._rpc(
+            _RPC_COMPLETE_LINK,
+            {"p_code": safe_code, "p_site_user_id": safe_user},
         )
+        return self._status_from_raw({**raw, "site_user_id": safe_user})
+
+    async def get_site_status(self, site_user_id: str) -> EntitlementStatus:
+        safe_user = self._safe_site_user_id(site_user_id)
+        if not safe_user:
+            raise ValueError("invalid_site_user")
+        raw = await self._rpc(_RPC_SITE_STATUS, {"p_site_user_id": safe_user})
+        return self._status_from_raw({**raw, "site_user_id": safe_user})
 
     async def unlink(self, telegram_user_id: int) -> bool:
         user_id = int(telegram_user_id)
