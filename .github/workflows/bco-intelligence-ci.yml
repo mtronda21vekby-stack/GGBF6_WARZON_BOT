@@ -9,6 +9,7 @@ on:
       - feature/bco-aaa-live-game-intelligence-v3
       - feature/bco-aaa-vod-intelligence-v4
       - feature/bco-aaa-voice-v5
+      - feature/bco-aaa-command-center-v6
   pull_request:
     branches:
       - main
