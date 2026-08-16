@@ -1,58 +1,20 @@
 [
-  {
-    "text": "Привет",
-    "intent": "CASUAL",
-    "must_not_claim_current_meta": true,
-    "should_be_actionable": false,
-    "max_clarifying_questions": 0
-  },
-  {
-    "text": "Почему я постоянно умираю при ротации?",
-    "intent": "DEATH_ANALYSIS",
-    "must_not_claim_current_meta": true,
-    "should_be_actionable": true,
-    "max_clarifying_questions": 1
-  },
-  {
-    "text": "Какая сейчас мета в Warzone?",
-    "intent": "META_CURRENT",
-    "must_not_claim_current_meta": true,
-    "should_be_actionable": true,
-    "max_clarifying_questions": 1
-  },
-  {
-    "text": "Настрой сенсу под Xbox controller",
-    "intent": "GAME_SETTINGS",
-    "must_not_claim_current_meta": true,
-    "should_be_actionable": true,
-    "max_clarifying_questions": 1
-  },
-  {
-    "text": "Я в тильте, слил пять игр",
-    "intent": "GAME_TACTICS",
-    "must_not_claim_current_meta": true,
-    "should_be_actionable": true,
-    "max_clarifying_questions": 1
-  },
-  {
-    "text": "Что брать первым на Ashes?",
-    "intent": "ZOMBIES",
-    "must_not_claim_current_meta": true,
-    "should_be_actionable": true,
-    "max_clarifying_questions": 1
-  },
-  {
-    "text": "Я Entry, постоянно умираю первым",
-    "intent": "DEATH_ANALYSIS",
-    "must_not_claim_current_meta": true,
-    "should_be_actionable": true,
-    "max_clarifying_questions": 1
-  },
-  {
-    "text": "Разбери: умер в топ-5, полез за киллом из сильной позиции",
-    "intent": "DEATH_ANALYSIS",
-    "must_not_claim_current_meta": true,
-    "should_be_actionable": true,
-    "max_clarifying_questions": 1
-  }
+  {"text":"Привет","intent":"CASUAL","needs_current_data":false,"should_be_actionable":false,"max_clarifying_questions":0},
+  {"text":"Почему я постоянно умираю при ротации?","intent":"DEATH_ANALYSIS","needs_current_data":false,"should_be_actionable":true,"max_clarifying_questions":1},
+  {"text":"Какая сейчас мета в Warzone?","intent":"META_CURRENT","needs_current_data":true,"must_refuse_unverified_currentness":true,"should_be_actionable":true,"max_clarifying_questions":1},
+  {"text":"Настрой сенсу под Xbox controller","intent":"GAME_SETTINGS","needs_current_data":false,"should_be_actionable":true,"max_clarifying_questions":1},
+  {"text":"Я в тильте, слил пять игр","intent":"GAME_TACTICS","needs_current_data":false,"should_be_actionable":true,"max_clarifying_questions":1},
+  {"text":"Что брать первым на Ashes?","intent":"ZOMBIES","needs_current_data":false,"should_be_actionable":true,"max_clarifying_questions":1},
+  {"text":"Я Entry, постоянно умираю первым","intent":"DEATH_ANALYSIS","needs_current_data":false,"should_be_actionable":true,"max_clarifying_questions":1},
+  {"text":"Разбери: умер в топ-5, полез за киллом из сильной позиции","intent":"DEATH_ANALYSIS","needs_current_data":false,"should_be_actionable":true,"max_clarifying_questions":1},
+  {"text":"Что изменили сегодня в Warzone?","intent":"PATCH_CURRENT","needs_current_data":true,"must_refuse_unverified_currentness":true,"max_clarifying_questions":1},
+  {"text":"Какая пушка сейчас лучшая?","intent":"META_CURRENT","needs_current_data":true,"must_refuse_unverified_currentness":true,"max_clarifying_questions":1},
+  {"text":"Дай тренировку на аим на 20 минут","intent":"TRAINING","needs_current_data":false,"should_be_actionable":true,"max_clarifying_questions":1},
+  {"text":"Как лучше двигаться в ближнем файте?","intent":"MOVEMENT","needs_current_data":false,"should_be_actionable":true,"max_clarifying_questions":1},
+  {"text":"Какой лоадаут под Entry?","intent":"LOADOUT","needs_current_data":false,"should_be_actionable":true,"max_clarifying_questions":1},
+  {"text":"Разбери VOD: 00:42 вышел из сильной позиции за киллом","intent":"VOD_TEXT_ANALYSIS","needs_current_data":false,"must_not_claim_video_frames":true,"max_clarifying_questions":1},
+  {"text":"Покажи мой профиль","intent":"PROFILE","needs_current_data":false,"must_not_invent_player_fields":true,"max_clarifying_questions":0},
+  {"text":"Есть ли у меня прогресс за последние сессии?","intent":"PLAYER_PROGRESS","needs_current_data":false,"must_use_player_evidence":true,"max_clarifying_questions":1},
+  {"text":"Что ты умеешь?","intent":"SYSTEM_HELP","needs_current_data":false,"max_clarifying_questions":0},
+  {"text":"Как держать позицию в топ-5?","intent":"POSITIONING","needs_current_data":false,"should_be_actionable":true,"max_clarifying_questions":1}
 ]

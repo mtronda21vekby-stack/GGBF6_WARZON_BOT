@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 import certifi
@@ -40,9 +40,7 @@ def detect_emotion(user_text: str) -> tuple[str, str]:
     letters = [c for c in (user_text or "") if c.isalpha()]
     caps = sum(1 for c in letters if c.isupper())
     ratio = caps / max(1, len(letters))
-
     intensity = "high" if exclamations >= 3 or ratio > 0.28 else "mid" if exclamations == 2 or ratio > 0.18 else "low"
-
     if any(x in text for x in _TILT_WORDS):
         if any(x in text for x in ("паник", "страш", "руки тряс")):
             return "anxiety", intensity
@@ -82,6 +80,7 @@ class AIHook:
     max_attempts: int = 4
     base_sleep: float = 0.7
     prompt_builder: PromptBuilder | None = None
+    last_generation_meta: dict[str, Any] = field(default_factory=dict, init=False)
 
     def _client(self) -> OpenAI:
         timeout = httpx.Timeout(connect=20.0, read=75.0, write=45.0, pool=75.0)
@@ -128,12 +127,17 @@ class AIHook:
         knowledge: KnowledgeContext | None = None,
         player_context: Mapping[str, Any] | None = None,
     ) -> str:
+        self.last_generation_meta = {
+            "attempts": 0,
+            "anti_repeat_retry": False,
+            "outcome": "unknown",
+            "error_class": "",
+        }
         intent_result = intent_result or classify_intent(user_text, profile)
         policy = policy or get_response_policy(intent_result, profile)
         knowledge = knowledge or KnowledgeContext.unknown()
         emotion_state, emotion_intensity = detect_emotion(user_text)
         builder = self.prompt_builder or PromptBuilder()
-
         messages = builder.build_messages(
             profile=profile,
             history=history or [],
@@ -151,15 +155,13 @@ class AIHook:
         last_error: Exception | None = None
 
         for attempt in range(1, self.max_attempts + 1):
+            self.last_generation_meta["attempts"] = attempt
             try:
-                response = client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=temp,
-                )
+                response = client.chat.completions.create(model=self.model, messages=messages, temperature=temp)
                 output = (response.choices[0].message.content or "").strip()
 
                 if output and self._looks_like_repeat(history or [], output):
+                    self.last_generation_meta["anti_repeat_retry"] = True
                     retry_messages = [*messages, self._anti_repeat_hint()]
                     retry = client.chat.completions.create(
                         model=self.model,
@@ -169,17 +171,21 @@ class AIHook:
                     output = (retry.choices[0].message.content or "").strip()
 
                 if output:
+                    self.last_generation_meta["outcome"] = "ok"
                     return output
 
+                self.last_generation_meta["outcome"] = "empty"
                 return (
                     "🧠 Пустой ответ от модели.\n"
                     "Напиши ситуацию ещё раз одной строкой — без потери текущего профиля."
                 )
             except Exception as exc:
                 last_error = exc
+                self.last_generation_meta["error_class"] = type(exc).__name__
                 if attempt < self.max_attempts:
                     time.sleep(self.base_sleep * attempt)
 
+        self.last_generation_meta["outcome"] = "error"
         return (
             "🧠 ИИ временно недоступен после повторных попыток.\n"
             f"Ошибка: {type(last_error).__name__ if last_error else 'unknown'}.\n"

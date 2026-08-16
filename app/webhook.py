@@ -1,6 +1,8 @@
 # app/webhook.py
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -9,6 +11,7 @@ from app.adapters.telegram.types import Update
 from app.config import get_settings
 from app.core.router import Router
 from app.observability.log import get_logger, setup_logging
+from app.observability.readiness import readiness_snapshot
 from app.services.brain.engine import BrainEngine
 from app.services.conversation.service import ConversationService
 from app.services.profiles.service import ProfileService
@@ -25,10 +28,24 @@ def create_app() -> FastAPI:
     settings = get_settings()
     setup_logging(settings.log_level)
 
-    app = FastAPI(title="GGBF6 WARZON BOT", version="6.0.0")
-
     tg = TelegramClient(settings.bot_token)
     store = build_store(settings)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            await tg.close()
+            close_store = getattr(store, "close", None)
+            if callable(close_store):
+                try:
+                    close_store()
+                except Exception as exc:
+                    log.warning("storage shutdown failed: %s", type(exc).__name__)
+
+    app = FastAPI(title="GGBF6 WARZON BOT", version="7.0.0", lifespan=lifespan)
+
     profiles = ProfileService(store=store)
     core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
     conversation = ConversationService(brain=core_brain, store=store, profiles=profiles)
@@ -55,16 +72,25 @@ def create_app() -> FastAPI:
 
     router = Router(tg=tg, brain=conversation, profiles=profiles, store=store, settings=settings)
 
-    # Register the trusted intelligence API before the Mini App GET catch-all.
+    # Trusted/private Mini App APIs must be registered before the legacy
+    # /webapp/{path} static catch-all.
     try:
         from app.webapp.command_center_router import bind_runtime as command_center_bind_runtime
         from app.webapp.command_center_router import router as command_center_router
-
         app.include_router(command_center_router)
         command_center_bind_runtime(store=store, profiles=profiles)
         log.info("Command Center runtime bind: OK")
     except Exception as exc:
         log.exception("Command Center runtime bind FAILED: %s", type(exc).__name__)
+
+    try:
+        from app.webapp.quality_router import bind_runtime as quality_bind_runtime
+        from app.webapp.quality_router import router as quality_router
+        app.include_router(quality_router)
+        quality_bind_runtime(store=store)
+        log.info("Quality feedback runtime bind: OK")
+    except Exception as exc:
+        log.exception("Quality feedback runtime bind FAILED: %s", type(exc).__name__)
 
     try:
         from app.webapp.webapp_router import bind_runtime as webapp_bind_runtime
@@ -76,7 +102,6 @@ def create_app() -> FastAPI:
             log.info("Mini App runtime bind: OK")
         except Exception as exc:
             log.exception("Mini App runtime bind FAILED: %s", exc)
-
         log.info("Mini App router loaded")
     except Exception as exc:
         log.exception("Mini App router NOT loaded: %s", exc)
@@ -99,6 +124,10 @@ def create_app() -> FastAPI:
     @app.get("/health", include_in_schema=False)
     async def health():
         return {"ok": True, "status": "alive"}
+
+    @app.get("/health/details", include_in_schema=False)
+    async def health_details():
+        return readiness_snapshot(settings, store)
 
     @app.post("/tg/webhook", include_in_schema=False)
     async def telegram_webhook(
@@ -154,16 +183,6 @@ def create_app() -> FastAPI:
             log.warning("voice auto post-handler failed: %s", type(exc).__name__)
 
         return JSONResponse({"ok": True})
-
-    @app.on_event("shutdown")
-    async def _shutdown():
-        await tg.close()
-        close_store = getattr(store, "close", None)
-        if callable(close_store):
-            try:
-                close_store()
-            except Exception as exc:
-                log.warning("storage shutdown failed: %s", type(exc).__name__)
 
     return app
 

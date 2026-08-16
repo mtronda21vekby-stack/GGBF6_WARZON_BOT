@@ -32,15 +32,18 @@
 
   window.BCO_ENGINE = { zombies };
 
-  // Premium Command Center is an isolated additive module. Loading it here
-  // avoids editing the large legacy index/app bootstrap chain.
-  safe(() => {
-    if (document.querySelector('script[data-bco-command-center]')) return;
-    const script = document.createElement("script");
-    script.dataset.bcoCommandCenter = "1";
-    script.async = false;
-    const build = window.__BCO_BUILD__ || Date.now();
-    script.src = "/webapp/command-center.js?build=" + encodeURIComponent(build);
-    document.body.appendChild(script);
-  });
+  function loadModule(marker, path) {
+    safe(() => {
+      if (document.querySelector(`script[data-bco-module="${marker}"]`)) return;
+      const script = document.createElement("script");
+      script.dataset.bcoModule = marker;
+      script.async = false;
+      const build = window.__BCO_BUILD__ || Date.now();
+      script.src = `${path}?build=${encodeURIComponent(build)}`;
+      document.body.appendChild(script);
+    });
+  }
+
+  loadModule("command-center", "/webapp/command-center.js");
+  loadModule("quality-feedback", "/webapp/quality-feedback.js");
 })();
