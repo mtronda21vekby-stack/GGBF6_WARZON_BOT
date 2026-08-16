@@ -11,6 +11,7 @@ on:
       - feature/bco-aaa-voice-v5
       - feature/bco-aaa-command-center-v6
       - feature/bco-aaa-quality-v7
+      - feature/bco-aaa-persistence-recovery-v8
   pull_request:
     branches:
       - main
