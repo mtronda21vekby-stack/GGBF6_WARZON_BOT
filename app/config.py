@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     memory_max_turns: int = int(os.getenv("MEMORY_MAX_TURNS", "20"))
     storage_backend: str = os.getenv("STORAGE_BACKEND", "auto")
     storage_timeout_s: float = float(os.getenv("STORAGE_TIMEOUT_S", "8"))
+    storage_outbox_max: int = int(os.getenv("STORAGE_OUTBOX_MAX", "500"))
+    storage_replay_batch: int = int(os.getenv("STORAGE_REPLAY_BATCH", "50"))
     supabase_url: str = os.getenv("SUPABASE_URL", DEFAULT_BCO_SUPABASE_URL)
     supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     supabase_schema: str = os.getenv("SUPABASE_SCHEMA", "public")
