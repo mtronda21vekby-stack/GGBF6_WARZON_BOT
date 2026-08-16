@@ -32,11 +32,8 @@ def _identity(meta: dict) -> int | None:
         return None
 
 
-@router.post("/webapp/api/intelligence")
-def command_center_intelligence(
-    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
-):
-    trusted, meta = verify_init_data((x_telegram_init_data or "").strip())
+def _snapshot_response(init_data: str):
+    trusted, meta = verify_init_data((init_data or "").strip())
     if not trusted:
         raise HTTPException(status_code=401, detail="trusted_telegram_context_required")
 
@@ -51,3 +48,17 @@ def command_center_intelligence(
         {"ok": True, "trusted": True, "player": snapshot},
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
+
+
+@router.get("/webapp/api/intelligence")
+def command_center_intelligence_get(
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    return _snapshot_response(x_telegram_init_data or "")
+
+
+@router.post("/webapp/api/intelligence")
+def command_center_intelligence_post(
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    return _snapshot_response(x_telegram_init_data or "")
