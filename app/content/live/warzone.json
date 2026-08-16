@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "game": "warzone",
+  "title": "Call of Duty: Warzone Season 05 Patch Notes",
+  "publisher": "Raven Software",
+  "source_kind": "official_patch_notes",
+  "source_url": "https://www.callofduty.com/patchnotes/2026/07/call-of-duty-bo7-warzone-season-05-patch-notes",
+  "published_at": "2026-07-22T00:00:00Z",
+  "verified_at": "2026-08-16T08:00:00Z",
+  "facts": [
+    {
+      "text": "Season 05 official Warzone patch notes were published July 22, 2026 by Raven Software.",
+      "tags": ["patch", "meta_context"]
+    },
+    {
+      "text": "Raven described AR and SMG weapon choice as broadly healthy and said Season 05 makes targeted adjustments intended to open the meta rather than establish one official best weapon.",
+      "tags": ["meta_context", "weapon_balance"]
+    },
+    {
+      "text": "FG42 was added as a new Assault Rifle in Season 05.",
+      "tags": ["weapon", "weapon_balance"]
+    },
+    {
+      "text": "AK-27 was nerfed: maximum damage 39→38, maximum-damage range 40m→36m, medium damage 35→32 with that range ending at 52m, and BR/Resurgence bullet velocity 920→900 m/s.",
+      "tags": ["weapon_balance", "weapon"]
+    },
+    {
+      "text": "AN-94 minimum damage beyond 60m increased from 30 to 32 in the Season 05 Warzone tuning.",
+      "tags": ["weapon_balance", "weapon"]
+    },
+    {
+      "text": "Carbon 57 was nerfed at close/medium range: maximum damage 35→34, maximum range 13.8m→12.4m, medium damage 31→30, and headshot multiplier 1.20x→1.13x.",
+      "tags": ["weapon_balance", "weapon"]
+    },
+    {
+      "text": "Sturmwolf 45 received close/medium damage buffs: maximum damage 45→47 and medium damage 41→42.",
+      "tags": ["weapon_balance", "weapon"]
+    },
+    {
+      "text": "VST medium-damage range was extended to 22.5m.",
+      "tags": ["weapon_balance", "weapon"]
+    },
+    {
+      "text": "Swordfish A1 burst-fire delay increased from 280ms to 300ms; its MFS Penta Burst Mod also received more recoil and a smaller burst-delay improvement.",
+      "tags": ["weapon_balance", "weapon"]
+    },
+    {
+      "text": "Verdansk received the Drone Labs POI in Season 05.",
+      "tags": ["patch", "map"]
+    }
+  ]
+}
