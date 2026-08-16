@@ -6,7 +6,13 @@ from pathlib import Path
 
 import httpx
 
+from app.ui.native_buttons import (
+    contains_advanced_button_fields,
+    decorate_reply_markup,
+    strip_advanced_button_fields,
+)
 from app.ui.presentation import polish_telegram_text
+from app.ui.rich_messages import tactical_rich_message
 
 
 class TelegramClient:
@@ -19,15 +25,53 @@ class TelegramClient:
     async def close(self) -> None:
         await self._client.aclose()
 
+    async def _post_json(self, method: str, payload: dict) -> httpx.Response:
+        return await self._client.post(f"{self._base}/{method}", json=payload)
+
     async def send_message(self, chat_id: int, text: str, reply_markup: dict | None = None) -> None:
+        polished = polish_telegram_text(text)
+        styled_markup = decorate_reply_markup(reply_markup)
+
+        # Bot API 10.1+ renders BLACK CROWN cards as native structured rich
+        # messages. A 400/404 falls back to ordinary text for compatibility
+        # with an outdated self-hosted Bot API server.
+        rich_message = tactical_rich_message(polished)
+        if rich_message is not None:
+            rich_payload: dict = {
+                "chat_id": chat_id,
+                "rich_message": rich_message,
+            }
+            if styled_markup is not None:
+                rich_payload["reply_markup"] = styled_markup
+            rich_response = await self._post_json("sendRichMessage", rich_payload)
+            if rich_response.is_success:
+                return
+            if rich_response.status_code not in (400, 404):
+                rich_response.raise_for_status()
+
         payload: dict = {
             "chat_id": chat_id,
-            "text": polish_telegram_text(text),
+            "text": polished,
             "disable_web_page_preview": True,
         }
-        if reply_markup is not None:
-            payload["reply_markup"] = reply_markup
-        response = await self._client.post(f"{self._base}/sendMessage", json=payload)
+        if styled_markup is not None:
+            payload["reply_markup"] = styled_markup
+
+        response = await self._post_json("sendMessage", payload)
+        if response.is_success:
+            return
+
+        # Public Telegram already supports these fields. This retry protects a
+        # private/local Bot API deployment that has not yet reached Bot API 9.4.
+        if response.status_code == 400 and contains_advanced_button_fields(styled_markup):
+            fallback_payload = dict(payload)
+            fallback_markup = strip_advanced_button_fields(styled_markup)
+            if fallback_markup is not None:
+                fallback_payload["reply_markup"] = fallback_markup
+            fallback = await self._post_json("sendMessage", fallback_payload)
+            fallback.raise_for_status()
+            return
+
         response.raise_for_status()
 
     async def send_voice_file(
@@ -42,8 +86,9 @@ class TelegramClient:
         data = {"chat_id": str(chat_id)}
         if caption:
             data["caption"] = caption
-        if reply_markup is not None:
-            data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+        styled_markup = decorate_reply_markup(reply_markup)
+        if styled_markup is not None:
+            data["reply_markup"] = json.dumps(styled_markup, ensure_ascii=False)
         with open(file_path, "rb") as file_handle:
             files = {"voice": (os.path.basename(file_path), file_handle, "audio/ogg")}
             response = await self._client.post(f"{self._base}/sendVoice", data=data, files=files)
@@ -136,8 +181,9 @@ class TelegramClient:
         data = {"chat_id": str(chat_id)}
         if caption:
             data["caption"] = caption
-        if reply_markup is not None:
-            data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+        styled_markup = decorate_reply_markup(reply_markup)
+        if styled_markup is not None:
+            data["reply_markup"] = json.dumps(styled_markup, ensure_ascii=False)
         with open(file_path, "rb") as file_handle:
             files = {"animation": (os.path.basename(file_path), file_handle, "video/mp4")}
             response = await self._client.post(f"{self._base}/sendAnimation", data=data, files=files)
@@ -155,8 +201,9 @@ class TelegramClient:
         data = {"chat_id": str(chat_id)}
         if caption:
             data["caption"] = caption
-        if reply_markup is not None:
-            data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+        styled_markup = decorate_reply_markup(reply_markup)
+        if styled_markup is not None:
+            data["reply_markup"] = json.dumps(styled_markup, ensure_ascii=False)
         with open(file_path, "rb") as file_handle:
             files = {"video": (os.path.basename(file_path), file_handle, "video/mp4")}
             response = await self._client.post(f"{self._base}/sendVideo", data=data, files=files)
