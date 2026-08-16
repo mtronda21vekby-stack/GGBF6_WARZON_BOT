@@ -42,8 +42,8 @@ def _settings():
 
 
 def test_release_contract_is_explicit_and_readiness_exposes_version_only():
-    assert APP_VERSION == "13.0.0"
-    assert RELEASE_CONTRACT == "bco-aaa-v13"
+    assert APP_VERSION == "14.0.0"
+    assert RELEASE_CONTRACT == "bco-aaa-v14"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -51,7 +51,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "13.0.0", "contract": "bco-aaa-v13"}
+    assert snap["release"] == {"version": "14.0.0", "contract": "bco-aaa-v14"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["storage"]["recovery"]["last_probe_ok"] is True
     rendered = repr(snap)
