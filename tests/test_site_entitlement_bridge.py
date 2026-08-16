@@ -10,6 +10,9 @@ from app.services.entitlements.service import EntitlementStatus
 from app.services.entitlements.site_bridge import SiteEntitlementBridgeAPI, SiteSessionVerifier
 
 
+SESSION_TOKEN = f"v1.{'p' * 24}.{'s' * 43}"
+
+
 class FakeVerifier:
     def __init__(self):
         self.calls: list[tuple[str, str]] = []
@@ -62,7 +65,7 @@ def make_app(verifier: FakeVerifier, entitlements: FakeEntitlements):
 
 def request_headers(user_id: str = "site-user-a"):
     return {
-        "x-bc-session-token": "v1.payload.signature",
+        "x-bc-session-token": SESSION_TOKEN,
         "x-bc-site-user": user_id,
     }
 
@@ -89,7 +92,7 @@ def test_link_requires_independently_verified_site_identity():
             }
 
     run(scenario())
-    assert verifier.calls == [("v1.payload.signature", "site-user-authoritative")]
+    assert verifier.calls == [(SESSION_TOKEN, "site-user-authoritative")]
     assert entitlements.completed == [("A" * 32, "site-user-authoritative")]
 
 
@@ -152,7 +155,7 @@ def test_site_session_verifier_forwards_only_the_signed_cookie_and_matches_id():
         verifier = SiteSessionVerifier(SimpleNamespace(), client=client)
         try:
             verified = await verifier.verify(
-                token="v1.payload.signature",
+                token=SESSION_TOKEN,
                 expected_user_id="site-user-c",
             )
             assert verified == "site-user-c"
@@ -162,5 +165,5 @@ def test_site_session_verifier_forwards_only_the_signed_cookie_and_matches_id():
     run(scenario())
     assert observed == {
         "url": "https://blackcrown.work/api/me",
-        "cookie": "bc_session=v1.payload.signature",
+        "cookie": f"bc_session={SESSION_TOKEN}",
     }
