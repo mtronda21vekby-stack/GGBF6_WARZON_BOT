@@ -81,13 +81,45 @@ def readiness_snapshot(
                 "last_error": "readiness_unavailable",
             }
 
+    voice_enabled = bool(getattr(settings, "voice_enabled", True))
+    voice_provider = str(getattr(settings, "voice_provider", "auto") or "auto").strip().casefold()
+    voice_high_fidelity_enabled = bool(getattr(settings, "voice_high_fidelity_enabled", True))
+    voice_local_fallback_enabled = bool(getattr(settings, "voice_local_fallback_enabled", True))
+    local_only = voice_provider in {
+        "local",
+        "offline",
+        "piper_only",
+        "piper-only",
+        "local_only",
+    }
+    cloud_tts_configured = (
+        voice_enabled
+        and voice_high_fidelity_enabled
+        and ai_configured
+        and not local_only
+    )
+    voice_snapshot = {
+        "enabled": voice_enabled,
+        "requested_provider": voice_provider[:32],
+        "active_strategy": "cloud_first_local_fallback" if cloud_tts_configured else "local_only",
+        "high_fidelity_enabled": voice_high_fidelity_enabled,
+        "cloud_tts_configured": cloud_tts_configured,
+        "local_fallback_enabled": voice_local_fallback_enabled,
+        "cloud_model": str(getattr(settings, "voice_openai_model", "gpt-4o-mini-tts") or "")[:64],
+        "default_voice": str(getattr(settings, "voice_openai_voice", "cedar") or "")[:32],
+        "local_model": str(getattr(settings, "voice_model_name", "ru_RU-denis-medium") or "")[:64],
+        "opus_bitrate_kbps": int(getattr(settings, "voice_opus_bitrate_kbps", 48) or 48),
+    }
+
     command_console_enabled = bool(getattr(settings, "telegram_aaa_console_enabled", True))
     features = {
         "ai": ai_enabled and ai_configured,
         "persistent_memory_configured": supabase_secret and supabase_url,
         "live_knowledge": bool(getattr(settings, "live_knowledge_enabled", True)),
         "vod": bool(getattr(settings, "vod_enabled", True)),
-        "voice": bool(getattr(settings, "voice_enabled", True)),
+        "voice": voice_enabled,
+        "voice_high_fidelity": cloud_tts_configured,
+        "voice_local_fallback": voice_enabled and voice_local_fallback_enabled,
         "mini_app": True,
         "command_center": True,
         "telegram_aaa_command_console": command_console_enabled,
@@ -118,6 +150,7 @@ def readiness_snapshot(
             "resilient_fallback": "Resilient" in storage_class,
             "recovery": recovery,
         },
+        "voice_runtime": voice_snapshot,
         "premium_link": entitlement_snapshot,
         "features": features,
         "abuse_guard": {
