@@ -22,6 +22,7 @@ DEFAULT_PROFILE: Dict[str, str] = {
     "zombies_map": "ashes",
     "zombies_mode": "",
     "zombies_search_last": "",
+    "tts_voice": "cedar",
 }
 
 
