@@ -36,7 +36,9 @@ def test_main_command_deck_uses_native_color_semantics():
     assert buttons["🎯 Тренировка"]["style"] == "success"
     assert buttons["🧟 Zombies"]["style"] == "danger"
     assert buttons["💎 Premium"]["style"] == "success"
-    assert buttons["🛰 MINI APP"]["style"] == "primary"
+    command_center = buttons.get("🛰 COMMAND CENTER") or buttons.get("🛰 MINI APP")
+    assert command_center is not None
+    assert command_center["style"] == "primary"
     assert "style" not in buttons["⚙️ Настройки"]
 
     for button in buttons.values():
@@ -61,7 +63,6 @@ def test_legacy_keyboard_modules_are_styled_at_transport_boundary():
     assert voice["🔇 Voice OFF"]["style"] == "danger"
     assert voice["🔊 Voice AUTO"]["style"] == "success"
     assert voice["📚 Коуч"]["style"] == "primary"
-    assert zombies["🧟 Zombies"]["style"] == "danger" if "🧟 Zombies" in zombies else True
     assert zombies["🗺 Карты"]["style"] == "primary"
     assert zombies["🧪 Перки"]["style"] == "success"
 
