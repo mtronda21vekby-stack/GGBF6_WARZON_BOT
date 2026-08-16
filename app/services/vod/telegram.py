@@ -46,7 +46,13 @@ class VODTelegramIngress:
     download_timeout_s: float = 60.0
 
     async def maybe_handle(self, update: dict[str, Any]) -> bool:
-        message = (update or {}).get("message") or (update or {}).get("edited_message")
+        callback = (update or {}).get("callback_query") or {}
+        if isinstance(callback, dict) and callback:
+            message = callback.get("message") or {}
+            text = str(callback.get("data") or "").strip()
+        else:
+            message = (update or {}).get("message") or (update or {}).get("edited_message")
+            text = str(message.get("text") or "").strip() if isinstance(message, dict) else ""
         if not isinstance(message, dict):
             return False
         chat_id = ((message.get("chat") or {}).get("id"))
@@ -57,7 +63,6 @@ class VODTelegramIngress:
         except Exception:
             return False
 
-        text = str(message.get("text") or "").strip()
         if text in {"🎬 VOD", "🎬 VOD: Разбор"}:
             await self.tg.send_message(chat_id, self.vod.intro_text(self.max_bytes))
             return True
