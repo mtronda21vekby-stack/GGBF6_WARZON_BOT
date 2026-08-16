@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Mapping
 
 from app.services.storage.memory import InMemoryStore
 from app.services.storage.resilient import ResilientStore
@@ -13,6 +13,31 @@ log = logging.getLogger("bco.storage")
 
 
 class PersistentSupabaseStore(SupabaseStore):
+    """Server-only Supabase adapter compatible with legacy and new API keys.
+
+    New `sb_secret_...` keys are API keys, not JWTs, and therefore must not be
+    copied into `Authorization: Bearer`. Legacy/older server keys keep the
+    bearer header for backward compatibility.
+    """
+
+    def _headers(self, extra: Mapping[str, str] | None = None) -> dict[str, str]:
+        headers = {
+            "apikey": self.key,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Accept-Profile": self.schema,
+            "Content-Profile": self.schema,
+            "User-Agent": "BLACK-CROWN-OPS/storage-v12",
+        }
+        # Supabase's new sb_secret_* keys are not JWTs. Legacy/older server
+        # keys remain bearer-compatible and existing integrations/tests depend
+        # on that behavior.
+        if not self.key.startswith("sb_"):
+            headers["Authorization"] = f"Bearer {self.key}"
+        if extra:
+            headers.update(dict(extra))
+        return headers
+
     def purge_player(self, chat_id: int, *, operation_id: str | None = None) -> None:
         self._request(
             "POST",
@@ -47,6 +72,11 @@ def build_store(settings: Any):
         log.warning("storage backend=supabase requested but configuration is incomplete; using memory")
         return memory
 
+    # A browser/public key must never be accepted as the privileged backend key.
+    if key.startswith("sb_publishable_"):
+        log.error("storage backend=supabase rejected public credential; using memory")
+        return memory
+
     try:
         primary = PersistentSupabaseStore(
             url=url,
@@ -57,9 +87,10 @@ def build_store(settings: Any):
         )
         outbox_max = int(getattr(settings, "storage_outbox_max", 500) or 500)
         replay_batch = int(getattr(settings, "storage_replay_batch", 50) or 50)
+        credential_kind = "secret" if key.startswith("sb_secret_") else "legacy_or_unknown"
         log.info(
-            "storage backend=supabase resilient_fallback=memory outbox_max=%d replay_batch=%d",
-            outbox_max, replay_batch,
+            "storage backend=supabase credential=%s resilient_fallback=memory outbox_max=%d replay_batch=%d",
+            credential_kind, outbox_max, replay_batch,
         )
         return PersistentResilientStore(
             primary=primary,
