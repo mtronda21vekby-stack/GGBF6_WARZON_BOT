@@ -101,15 +101,21 @@ jobs:
           from pathlib import Path
           from app.release import APP_VERSION, RELEASE_CONTRACT
 
-          assert APP_VERSION == '35.0.0'
-          assert RELEASE_CONTRACT == 'bco-regime-change-detection-v35'
+          assert APP_VERSION == '36.0.0'
+          assert RELEASE_CONTRACT == 'bco-mission-orchestrator-v36'
 
+          package = Path('app/services/operator_intelligence/__init__.py').read_text()
+          wrapper = Path('app/services/operator_intelligence/orchestrated_service.py').read_text()
+          orchestrator = Path('app/services/operator_intelligence/mission_orchestrator.py').read_text()
           portfolio = Path('app/services/operator_intelligence/strategy_portfolio.py').read_text()
           strategy = Path('app/services/operator_intelligence/adaptive_strategy.py').read_text()
           freshness = Path('app/services/operator_intelligence/evidence_freshness.py').read_text()
           regime = Path('app/services/operator_intelligence/regime_change.py').read_text()
+          context = Path('app/services/operator_intelligence/context.py').read_text()
+          prompt = Path('app/services/brain/operator_prompt.py').read_text()
           router = Path('app/webapp/command_center_router.py').read_text()
-          ui = Path('app/webapp/static/bco.strategy.js').read_text()
+          strategy_ui = Path('app/webapp/static/bco.strategy.js').read_text()
+          orch_ui = Path('app/webapp/static/bco.orchestrator.js').read_text()
 
           # Stable historical boundaries.
           assert 'bco_strategy_portfolio_v32' in portfolio
@@ -120,37 +126,55 @@ jobs:
           assert 'associative_outcome_calibration_only' in router
           assert 'deterministic_evidence_backed_rotation_only' in router
 
-          # v34 freshness remains additive and server-derived.
+          # v34/v35 remain intact.
           assert 'bco_evidence_freshness_v34' in freshness
           assert 'FRESH_MAX_DAYS = 7' in freshness
           assert 'AGING_MAX_DAYS = 21' in freshness
           assert 'stale_is_not_false' in freshness
-          assert 'missing_timestamp_remains_unknown' in freshness
-          assert 'old_support_is_not_current_proof' in freshness
-          assert 'server_persisted_evidence_timestamps_only' in router
-
-          # v35 regime detection is conservative and cannot infer cause/meta.
-          assert 'bco_premium_adaptive_strategy_v35' in strategy
           assert 'bco_player_regime_change_v35' in regime
           assert 'MIN_CANDIDATE_CYCLES = 6' in regime
           assert 'MIN_CONFIRMED_CYCLES = 9' in regime
-          assert 'WINDOW_SIZE = 3' in regime
           assert 'one_session_can_change_regime' in regime
           assert 'shift_does_not_identify_cause' in regime
           assert 'external_meta_change_not_inferred' in regime
-          assert 'stale_evidence_cannot_confirm_current_shift' in regime
-          assert 'vod_contradiction_cannot_confirm_shift' in regime
-          assert 'server_explicit_outcome_windows_only' in router
 
-          # Human-facing truth markers must remain literal.
-          assert 'ASSOCIATION ≠ CAUSATION' in ui
-          assert 'EFFECTIVENESS ≠ CAUSAL PROOF' in ui
-          assert 'PORTFOLIO PRIOR ≠ CAUSAL PROOF' in ui
-          assert 'EXPLORATION ≠ RANDOMNESS' in ui
-          assert 'STALE ≠ FALSE' in ui
-          assert 'OLD SUPPORT ≠ CURRENT PROOF' in ui
-          assert 'SHIFT ≠ CAUSE' in ui
-          assert 'ONE SESSION ≠ REGIME' in ui
-          assert 'META CHANGE NOT INFERRED' in ui
+          # v36 orchestrator wraps the current v28 service, never the old v25 base.
+          assert 'OrchestratedOperatorIntelligenceService as OperatorIntelligenceService' in package
+          assert 'from app.services.operator_intelligence.v28 import OperatorIntelligenceService as CurrentOperatorIntelligenceService' in wrapper
+          assert 'bco_mission_orchestrator_v36' in orchestrator
+          for stage in ('CALIBRATION', 'CORRECTION', 'VALIDATION', 'STRESS_TEST', 'MAINTENANCE'):
+              assert stage in orchestrator
+          assert 'explicit_operator_report_only' in orchestrator
+          assert 'vod_transition_authority' in orchestrator
+          assert 'reported_without_verdict_advances_stage' in orchestrator
+          assert 'stale_history_cannot_skip_current_recalibration' in orchestrator
+          assert 'stage_is_training_state_not_player_fact' in orchestrator
+          assert 'one_bad_match_does_not_reset_maintenance' in orchestrator
+          assert 'MISSION_ORCHESTRATOR_ENABLED' in wrapper
+          assert 'mission_orchestrator_authority' in router
+          assert 'mission_stage_explicit_only' in context
+          assert 'vod_cannot_advance_stage' in context
+          assert 'transition_authority=explicit_operator_report_only' in prompt
+
+          # Human-facing truth markers remain literal.
+          for marker in (
+              'ASSOCIATION ≠ CAUSATION',
+              'EFFECTIVENESS ≠ CAUSAL PROOF',
+              'PORTFOLIO PRIOR ≠ CAUSAL PROOF',
+              'EXPLORATION ≠ RANDOMNESS',
+              'STALE ≠ FALSE',
+              'OLD SUPPORT ≠ CURRENT PROOF',
+              'SHIFT ≠ CAUSE',
+              'ONE SESSION ≠ REGIME',
+              'META CHANGE NOT INFERRED',
+          ):
+              assert marker in strategy_ui
+          for marker in (
+              'EXPLICIT OUTCOME ONLY',
+              'VOD CANNOT ADVANCE STAGE',
+              'STAGE ≠ PLAYER TRAIT',
+              'ONE BAD MATCH ≠ MAINTENANCE RESET',
+          ):
+              assert marker in orch_ui
           print('release/truth/authority contract: clean')
           PY

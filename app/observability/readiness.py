@@ -6,6 +6,7 @@ from typing import Any
 
 from app.observability.quality import quality_telemetry
 from app.services.operator_intelligence.evidence_freshness import AGING_MAX_DAYS, FRESH_MAX_DAYS
+from app.services.operator_intelligence.mission_orchestrator import CURRENT_HORIZON_MAX_DAYS, ORCHESTRATOR_SCHEMA, STAGES
 from app.services.operator_intelligence.regime_change import MIN_CANDIDATE_CYCLES, MIN_CONFIRMED_CYCLES, WINDOW_SIZE
 
 
@@ -137,6 +138,7 @@ def readiness_snapshot(
     longitudinal = _env_on("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED")
     evidence_freshness = _env_on("EVIDENCE_FRESHNESS_ENABLED")
     regime_change = _env_on("REGIME_CHANGE_DETECTION_ENABLED")
+    mission_orchestrator = _env_on("MISSION_ORCHESTRATOR_ENABLED")
     premium_deep_history = bool(
         _env_on("PREMIUM_DEEP_HISTORY_ENABLED")
         and entitlement_snapshot["enabled"]
@@ -189,6 +191,15 @@ def readiness_snapshot(
         "regime_shift_identifies_cause": False,
         "regime_external_meta_inferred": False,
         "regime_causal_claims": False,
+        "mission_orchestrator": operator_intelligence and adaptive_missions and mission_orchestrator,
+        "mission_orchestrator_schema": ORCHESTRATOR_SCHEMA,
+        "mission_orchestrator_stages": list(STAGES),
+        "mission_orchestrator_transition_authority": "explicit_operator_report_only",
+        "mission_orchestrator_vod_transition_authority": False,
+        "mission_orchestrator_current_horizon_max_days": CURRENT_HORIZON_MAX_DAYS,
+        "mission_orchestrator_reported_without_verdict_advances": False,
+        "mission_orchestrator_stage_is_player_fact": False,
+        "mission_orchestrator_stage_transition_proves_cause": False,
         "truth_model": "verified_fact|high_confidence_player_pattern|weak_pattern|hypothesis|unknown",
         "unknown_remains_unknown": True,
         "session_lifecycle": ["PRE_SESSION", "LIVE_OBJECTIVE", "POST_SESSION_REVIEW", "MEMORY_UPDATE", "NEXT_MISSION"],
@@ -239,6 +250,12 @@ def readiness_snapshot(
         "operator_regime_one_session_not_enough": True,
         "operator_regime_no_causal_claims": True,
         "operator_regime_external_meta_not_inferred": True,
+        "operator_mission_orchestrator": operator_intelligence and adaptive_missions and mission_orchestrator,
+        "operator_mission_stage_explicit_only": True,
+        "operator_vod_cannot_advance_stage": True,
+        "operator_stale_history_cannot_skip_recalibration": True,
+        "operator_mission_stage_not_player_fact": True,
+        "operator_mission_stage_no_causal_claims": True,
         "persistence_recovery": bool(recovery_fn),
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
         "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),

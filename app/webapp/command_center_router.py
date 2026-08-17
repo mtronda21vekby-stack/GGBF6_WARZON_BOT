@@ -10,10 +10,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.services.analytics.command_center import CommandCenterService
-from app.services.operator_intelligence import MissionConflict, OperatorIntelligenceService
+from app.services.operator_intelligence import MissionConflict
 from app.services.operator_intelligence.adaptive_strategy import PremiumAdaptiveStrategyService
 from app.services.operator_intelligence.deep_history import PremiumDeepHistoryService
 from app.services.operator_intelligence.evidence_freshness import EvidenceFreshnessPolicy
+from app.services.operator_intelligence.orchestrated_service import OrchestratedOperatorIntelligenceService
 from app.services.operator_intelligence.regime_change import PlayerRegimeChangeDetector
 from app.services.operator_intelligence.strategy_outcomes import PremiumStrategyOutcomeService
 from app.services.operator_intelligence.strategy_portfolio import StrategyPortfolioCalibration
@@ -88,14 +89,15 @@ async def _require_premium(init_data: str, *, feature: str) -> tuple[int, int]:
     return chat_id, user_id
 
 
-def _operator_service() -> OperatorIntelligenceService:
+def _operator_service() -> OrchestratedOperatorIntelligenceService:
     if APP_STORE is None or APP_PROFILES is None:
         raise HTTPException(status_code=503, detail="operator_intelligence_unavailable")
-    return OperatorIntelligenceService(
+    return OrchestratedOperatorIntelligenceService.from_components(
         store=APP_STORE,
         profiles=APP_PROFILES,
         operator_enabled=_env_on("OPERATOR_INTELLIGENCE_ENABLED"),
         missions_enabled=_env_on("ADAPTIVE_MISSION_CONTROL_ENABLED"),
+        orchestrator_enabled=_env_on("MISSION_ORCHESTRATOR_ENABLED"),
     )
 
 
@@ -190,6 +192,7 @@ async def operator_strategy_get(
         "exploration_authority": "deterministic_evidence_backed_rotation_only",
         "freshness_authority": "server_persisted_evidence_timestamps_only" if freshness_enabled else "disabled_v33_behavior",
         "regime_authority": "server_explicit_outcome_windows_only" if regime_enabled else "disabled_v34_behavior",
+        "mission_orchestrator_authority": "explicit_operator_report_only" if _env_on("MISSION_ORCHESTRATOR_ENABLED") else "disabled_v35_behavior",
         "data": data,
     })
 

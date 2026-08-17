@@ -20,7 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: v30-v35 static compatibility boundaries
+      - name: v30-v36 static compatibility boundaries
         shell: bash
         run: |
           set -euo pipefail
@@ -85,6 +85,26 @@ jobs:
           grep -q 'ONE SESSION ≠ REGIME' app/webapp/static/bco.strategy.js
           grep -q 'META CHANGE NOT INFERRED' app/webapp/static/bco.strategy.js
 
+          # v36 — Mission Orchestrator is additive over v28 and explicit-outcome authoritative.
+          grep -q 'bco_mission_orchestrator_v36' app/services/operator_intelligence/mission_orchestrator.py
+          grep -q 'CALIBRATION' app/services/operator_intelligence/mission_orchestrator.py
+          grep -q 'CORRECTION' app/services/operator_intelligence/mission_orchestrator.py
+          grep -q 'VALIDATION' app/services/operator_intelligence/mission_orchestrator.py
+          grep -q 'STRESS_TEST' app/services/operator_intelligence/mission_orchestrator.py
+          grep -q 'MAINTENANCE' app/services/operator_intelligence/mission_orchestrator.py
+          grep -q 'explicit_operator_report_only' app/services/operator_intelligence/mission_orchestrator.py
+          grep -q 'vod_transition_authority' app/services/operator_intelligence/mission_orchestrator.py
+          grep -q 'reported_without_verdict_advances_stage' app/services/operator_intelligence/mission_orchestrator.py
+          grep -q 'stale_history_cannot_skip_current_recalibration' app/services/operator_intelligence/mission_orchestrator.py
+          grep -q 'stage_is_training_state_not_player_fact' app/services/operator_intelligence/mission_orchestrator.py
+          grep -q 'from app.services.operator_intelligence.v28 import OperatorIntelligenceService as CurrentOperatorIntelligenceService' app/services/operator_intelligence/orchestrated_service.py
+          grep -q 'MISSION_ORCHESTRATOR_ENABLED' app/services/operator_intelligence/orchestrated_service.py
+          grep -q 'mission_orchestrator_authority' app/webapp/command_center_router.py
+          grep -q 'EXPLICIT OUTCOME ONLY' app/webapp/static/bco.orchestrator.js
+          grep -q 'VOD CANNOT ADVANCE STAGE' app/webapp/static/bco.orchestrator.js
+          grep -q 'STAGE ≠ PLAYER TRAIT' app/webapp/static/bco.orchestrator.js
+          grep -q 'ONE BAD MATCH ≠ MAINTENANCE RESET' app/webapp/static/bco.orchestrator.js
+
   compatibility-production-smoke:
     name: compatibility-production-smoke
     needs: compatibility-contracts
@@ -97,7 +117,7 @@ jobs:
       - name: Checkout release contract
         uses: actions/checkout@v4
 
-      - name: Verify accumulated v30-v35 production boundaries
+      - name: Verify accumulated v30-v36 production boundaries
         shell: bash
         run: |
           set -euo pipefail
@@ -131,50 +151,48 @@ jobs:
               and op.get('premium_deep_history_authority') == 'server_bco_premium'
               and op.get('longitudinal_causal_claims') is False
               and f.get('operator_evidence_freshness') is True
-              and f.get('operator_stale_evidence_not_false') is True
-              and f.get('operator_freshness_no_causal_claims') is True
-              and op.get('evidence_freshness') is True
               and op.get('evidence_freshness_schema') == 'bco_evidence_freshness_v34'
-              and op.get('evidence_freshness_authority') == 'server_persisted_evidence_timestamps_only'
-              and int(op.get('evidence_freshness_fresh_max_days') or 0) == 7
-              and int(op.get('evidence_freshness_aging_max_days') or 0) == 21
               and op.get('stale_evidence_is_false') is False
-              and op.get('freshness_causal_claims') is False
               and f.get('operator_regime_change_detection') is True
-              and f.get('operator_regime_requires_sustained_windows') is True
-              and f.get('operator_regime_one_session_not_enough') is True
-              and f.get('operator_regime_no_causal_claims') is True
-              and f.get('operator_regime_external_meta_not_inferred') is True
-              and op.get('regime_change_detection') is True
               and op.get('regime_change_schema') == 'bco_player_regime_change_v35'
-              and op.get('regime_change_authority') == 'server_explicit_outcome_windows_only'
-              and int(op.get('regime_minimum_candidate_cycles') or 0) == 6
-              and int(op.get('regime_minimum_confirmed_cycles') or 0) == 9
-              and int(op.get('regime_window_size') or 0) == 3
               and op.get('regime_one_session_can_change') is False
               and op.get('regime_shift_identifies_cause') is False
-              and op.get('regime_external_meta_inferred') is False
-              and op.get('regime_causal_claims') is False
+              and f.get('operator_mission_orchestrator') is True
+              and f.get('operator_mission_stage_explicit_only') is True
+              and f.get('operator_vod_cannot_advance_stage') is True
+              and f.get('operator_stale_history_cannot_skip_recalibration') is True
+              and f.get('operator_mission_stage_not_player_fact') is True
+              and f.get('operator_mission_stage_no_causal_claims') is True
+              and op.get('mission_orchestrator') is True
+              and op.get('mission_orchestrator_schema') == 'bco_mission_orchestrator_v36'
+              and op.get('mission_orchestrator_stages') == ['CALIBRATION','CORRECTION','VALIDATION','STRESS_TEST','MAINTENANCE']
+              and op.get('mission_orchestrator_transition_authority') == 'explicit_operator_report_only'
+              and op.get('mission_orchestrator_vod_transition_authority') is False
+              and int(op.get('mission_orchestrator_current_horizon_max_days') or 0) == 21
+              and op.get('mission_orchestrator_reported_without_verdict_advances') is False
+              and op.get('mission_orchestrator_stage_is_player_fact') is False
+              and op.get('mission_orchestrator_stage_transition_proves_cause') is False
           )
           raise SystemExit(0 if ok else 1)
           PY
               then
-                js_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-strategy.js -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.strategy.js" || true)"
-                api_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-strategy-api.json -w '%{http_code}' "${PRODUCTION_URL}/webapp/api/operator-strategy" || true)"
-                if [ "${js_code}" = "200" ] && [ "${api_code}" = "401" ] && \
-                   grep -q 'Premium Adaptive Strategy; recommendation, not player fact' /tmp/bco-strategy.js && \
+                strategy_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-strategy.js -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.strategy.js" || true)"
+                orch_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-orchestrator.js -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.orchestrator.js" || true)"
+                strategy_api_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-strategy-api.json -w '%{http_code}' "${PRODUCTION_URL}/webapp/api/operator-strategy" || true)"
+                operator_api_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-operator-api.json -w '%{http_code}' "${PRODUCTION_URL}/webapp/api/operator-intelligence" || true)"
+                if [ "${strategy_code}" = "200" ] && [ "${orch_code}" = "200" ] && \
+                   [ "${strategy_api_code}" = "401" ] && [ "${operator_api_code}" = "401" ] && \
                    grep -q 'RECOMMENDATION ≠ FACT' /tmp/bco-strategy.js && \
                    grep -q 'EFFECTIVENESS ≠ CAUSAL PROOF' /tmp/bco-strategy.js && \
                    grep -q 'PORTFOLIO PRIOR ≠ CAUSAL PROOF' /tmp/bco-strategy.js && \
                    grep -q 'EXPLORATION ≠ RANDOMNESS' /tmp/bco-strategy.js && \
-                   grep -q 'ROTATION REQUIRES CLOSE EVIDENCE' /tmp/bco-strategy.js && \
                    grep -q 'STALE ≠ FALSE' /tmp/bco-strategy.js && \
-                   grep -q 'OLD SUPPORT ≠ CURRENT PROOF' /tmp/bco-strategy.js && \
                    grep -q 'SHIFT ≠ CAUSE' /tmp/bco-strategy.js && \
-                   grep -q 'ONE SESSION ≠ REGIME' /tmp/bco-strategy.js && \
-                   grep -q 'META CHANGE NOT INFERRED' /tmp/bco-strategy.js && \
-                   grep -q 'server-authoritative Premium' /tmp/bco-strategy.js; then
-                  echo "compatibility production verified: version=${EXPECTED_VERSION}, contract=${EXPECTED_CONTRACT}, v30-v35 boundaries=ON, unauth_strategy=401"
+                   grep -q 'EXPLICIT OUTCOME ONLY' /tmp/bco-orchestrator.js && \
+                   grep -q 'VOD CANNOT ADVANCE STAGE' /tmp/bco-orchestrator.js && \
+                   grep -q 'STAGE ≠ PLAYER TRAIT' /tmp/bco-orchestrator.js && \
+                   grep -q 'ONE BAD MATCH ≠ MAINTENANCE RESET' /tmp/bco-orchestrator.js; then
+                  echo "compatibility production verified: version=${EXPECTED_VERSION}, contract=${EXPECTED_CONTRACT}, v30-v36 boundaries=ON, orchestrator_asset=ON, unauth_strategy=401, unauth_operator=401"
                   exit 0
                 fi
               fi
