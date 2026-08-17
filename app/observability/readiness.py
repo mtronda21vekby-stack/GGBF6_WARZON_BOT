@@ -119,7 +119,13 @@ def readiness_snapshot(
         "cloud_model": str(getattr(settings, "voice_openai_model", "gpt-4o-mini-tts") or "")[:64],
         "default_voice": str(getattr(settings, "voice_openai_voice", "cedar") or "")[:32],
         "local_model": str(getattr(settings, "voice_model_name", "ru_RU-denis-medium") or "")[:64],
-        "opus_bitrate_kbps": int(getattr(settings, "voice_opus_bitrate_kbps", 64) or 64),
+        "opus_bitrate_kbps": int(getattr(settings, "voice_opus_bitrate_kbps", 72) or 72),
+        "mastering": "studio_master_v2_two_pass_loudnorm",
+        "target_loudness_lufs": -16,
+        "target_true_peak_dbtp": -1.0,
+        "output_sample_rate_hz": 48000,
+        "speech_max_chars": int(getattr(settings, "voice_max_chars", 3200) or 3200),
+        "duplex_max_chars": int(getattr(settings, "voice_duplex_max_chars", 1800) or 1800),
     }
 
     command_console_enabled = bool(getattr(settings, "telegram_aaa_console_enabled", True))
@@ -146,6 +152,8 @@ def readiness_snapshot(
         "voice_duplex_follow_input": voice_enabled and voice_follow_input,
         "voice_high_fidelity": cloud_tts_configured,
         "voice_local_fallback": voice_enabled and voice_local_fallback_enabled,
+        "voice_studio_mastering": voice_enabled,
+        "voice_two_pass_loudness": voice_enabled,
         "mini_app": True,
         "command_center": True,
         "telegram_aaa_command_console": command_console_enabled,
