@@ -40,12 +40,10 @@ def create_app() -> FastAPI:
 
     tg = TelegramClient(settings.bot_token)
     store = build_store(settings)
+    profiles = ProfileService(store=store)
     entitlement_service = PremiumEntitlementService(settings)
     entitlement_controller = EntitlementTelegramController(tg=tg, service=entitlement_service)
-    site_entitlement_bridge = SiteEntitlementBridgeAPI(
-        settings=settings,
-        entitlements=entitlement_service,
-    )
+    site_entitlement_bridge = SiteEntitlementBridgeAPI(settings=settings, entitlements=entitlement_service)
     usage_guard = UsageGuard.from_settings(settings)
     replay_guard = UpdateReplayGuard(
         ttl_s=settings.telegram_update_dedupe_ttl_s,
@@ -64,6 +62,7 @@ def create_app() -> FastAPI:
     voice_ingress = TelegramVoiceIngress(
         tg=tg,
         transcription=transcription_backend,
+        profiles=profiles,
         usage_guard=usage_guard,
         enabled=settings.voice_input_enabled,
         max_bytes=settings.voice_input_max_bytes,
@@ -117,29 +116,15 @@ def create_app() -> FastAPI:
     app = FastAPI(title="GGBF6 WARZON BOT", version=APP_VERSION, lifespan=lifespan)
     app.include_router(site_entitlement_bridge.router)
 
-    profiles = ProfileService(store=store)
     core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
-    conversation = ConversationService(
-        brain=core_brain,
-        store=store,
-        profiles=profiles,
-        usage_guard=usage_guard,
-    )
+    conversation = ConversationService(brain=core_brain, store=store, profiles=profiles, usage_guard=usage_guard)
     command_console = CommandConsoleController(
-        tg=tg,
-        profiles=profiles,
-        store=store,
-        entitlements=entitlement_service,
-        settings=settings,
+        tg=tg, profiles=profiles, store=store, entitlements=entitlement_service, settings=settings
     )
 
     voice_service = VoiceService(settings=settings)
     voice_controller = VoiceTelegramController(
-        tg=tg,
-        profiles=profiles,
-        store=store,
-        voice=voice_service,
-        usage_guard=usage_guard,
+        tg=tg, profiles=profiles, store=store, voice=voice_service, usage_guard=usage_guard
     )
 
     vod_service = VODAnalysisService(
@@ -183,7 +168,6 @@ def create_app() -> FastAPI:
     try:
         from app.webapp.webapp_router import bind_runtime as webapp_bind_runtime
         from app.webapp.webapp_router import router as webapp_router
-
         app.include_router(webapp_router)
         try:
             webapp_bind_runtime(brain=conversation, profiles=profiles, store=store, settings=settings)
@@ -197,12 +181,8 @@ def create_app() -> FastAPI:
         @app.get("/webapp", response_class=HTMLResponse, include_in_schema=False)
         async def webapp_missing():
             return (
-                "<h3>Mini App is not configured</h3>"
-                "<p>Expected:</p>"
-                "<ul>"
-                "<li>app/webapp/webapp_router.py</li>"
-                "<li>app/webapp/static/index.html</li>"
-                "</ul>"
+                "<h3>Mini App is not configured</h3><p>Expected:</p><ul>"
+                "<li>app/webapp/webapp_router.py</li><li>app/webapp/static/index.html</li></ul>"
             )
 
     @app.get("/", include_in_schema=False)
@@ -259,9 +239,6 @@ def create_app() -> FastAPI:
         upd = Update.parse(raw)
         input_mode = "text"
 
-        # Voice notes become ordinary text before every deterministic command
-        # and AI boundary. Low-confidence STT is held for explicit confirmation
-        # so uncertain audio never contaminates tactical memory.
         try:
             transformed, voice_handled = await voice_ingress.transform(upd)
             if voice_handled:

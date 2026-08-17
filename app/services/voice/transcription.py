@@ -7,7 +7,7 @@ import math
 import mimetypes
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import httpx
 
@@ -63,7 +63,6 @@ def _confidence_from_logprobs(payload: dict[str, Any]) -> float | None:
             values.append(max(-20.0, min(0.0, value)))
     if not values:
         return None
-    # Geometric mean of token probabilities is stable across transcript length.
     return max(0.0, min(1.0, math.exp(sum(values) / len(values))))
 
 
@@ -83,6 +82,34 @@ def _audio_mime(path: Path) -> str:
         ".webm": "audio/webm",
         ".flac": "audio/flac",
     }.get(suffix, "application/octet-stream")
+
+
+def build_transcription_prompt(profile: Mapping[str, Any] | None = None) -> str:
+    """Inject only trusted, compact player vocabulary into STT biasing."""
+    data = dict(profile or {})
+    context: list[str] = []
+    for label, key in (
+        ("игра", "game"),
+        ("режим", "mode"),
+        ("роль", "role"),
+        ("платформа", "platform"),
+        ("ввод", "input"),
+        ("карта Zombies", "zombies_map"),
+    ):
+        value = " ".join(str(data.get(key) or "").split()).strip()
+        if value:
+            context.append(f"{label}: {value[:80]}")
+
+    weapons = data.get("preferred_weapons")
+    if isinstance(weapons, (list, tuple)):
+        clean = [" ".join(str(item or "").split()).strip()[:60] for item in weapons[:6]]
+        clean = [item for item in clean if item]
+        if clean:
+            context.append("предпочитаемое оружие: " + ", ".join(clean))
+
+    if not context:
+        return _GAME_PROMPT
+    return (_GAME_PROMPT + " Контекст текущего игрока для распознавания терминов: " + "; ".join(context) + ".")[:4096]
 
 
 class OpenAITranscriptionBackend:
@@ -118,19 +145,23 @@ class OpenAITranscriptionBackend:
         if self._owns_client:
             await self._client.aclose()
 
-    async def _request(self, path: Path, *, model: str, include_logprobs: bool) -> dict[str, Any]:
+    async def _request(
+        self,
+        path: Path,
+        *,
+        model: str,
+        include_logprobs: bool,
+        prompt: str,
+    ) -> dict[str, Any]:
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Accept": "application/json",
-            "User-Agent": "BLACK-CROWN-OPS/voice-studio-v21",
+            "User-Agent": "BLACK-CROWN-OPS/voice-intelligence-v24",
         }
-        # httpx multipart encoding expects mapping-like form data when files are
-        # present. A list of tuples can fail client-side before any HTTP request,
-        # which used to surface to Telegram as a generic "voice unavailable".
         fields: dict[str, str] = {
             "model": model,
             "response_format": "json",
-            "prompt": self.prompt,
+            "prompt": str(prompt or self.prompt)[:4096],
         }
         if self.language:
             fields["language"] = self.language
@@ -151,17 +182,22 @@ class OpenAITranscriptionBackend:
             raise TranscriptionError("Speech transcription returned an invalid response")
         return payload
 
-    async def _transcribe_model(self, path: Path, *, model: str, fallback_used: bool) -> TranscriptionResult:
+    async def _transcribe_model(
+        self,
+        path: Path,
+        *,
+        model: str,
+        fallback_used: bool,
+        prompt: str,
+    ) -> TranscriptionResult:
         last_error: Exception | None = None
         for attempt in range(2):
             try:
                 try:
-                    payload = await self._request(path, model=model, include_logprobs=True)
+                    payload = await self._request(path, model=model, include_logprobs=True, prompt=prompt)
                 except httpx.HTTPStatusError as exc:
-                    # Some compatible/self-hosted endpoints may not understand
-                    # the logprobs include field. Keep transcription available.
                     if exc.response.status_code == 400:
-                        payload = await self._request(path, model=model, include_logprobs=False)
+                        payload = await self._request(path, model=model, include_logprobs=False, prompt=prompt)
                     else:
                         raise
                 text = str(payload.get("text") or "").strip()
@@ -190,13 +226,15 @@ class OpenAITranscriptionBackend:
             except TranscriptionError:
                 raise
             except Exception as exc:
-                # Normalize transport/encoding errors into the STT boundary so
-                # ingress can return an actionable retry instead of crashing the
-                # entire voice pre-handler.
                 raise TranscriptionError("Speech transcription transport failure") from exc
         raise TranscriptionError("Speech transcription failed") from last_error
 
-    async def transcribe_result(self, path: str | Path) -> TranscriptionResult:
+    async def transcribe_result(
+        self,
+        path: str | Path,
+        *,
+        profile: Mapping[str, Any] | None = None,
+    ) -> TranscriptionResult:
         if not self.configured:
             raise TranscriptionError("Speech transcription is not configured")
         source = Path(path)
@@ -205,8 +243,14 @@ class OpenAITranscriptionBackend:
         if source.stat().st_size > self.max_bytes:
             raise TranscriptionError("Voice file exceeds transcription size limit")
 
+        prompt = build_transcription_prompt(profile) if profile else self.prompt
         try:
-            return await self._transcribe_model(source, model=self.model, fallback_used=False)
+            return await self._transcribe_model(
+                source,
+                model=self.model,
+                fallback_used=False,
+                prompt=prompt,
+            )
         except TranscriptionError as primary_error:
             fallback = self.fallback_model
             if not fallback or fallback == self.model:
@@ -217,8 +261,12 @@ class OpenAITranscriptionBackend:
                 fallback,
                 type(primary_error).__name__,
             )
-            return await self._transcribe_model(source, model=fallback, fallback_used=True)
+            return await self._transcribe_model(
+                source,
+                model=fallback,
+                fallback_used=True,
+                prompt=prompt,
+            )
 
-    async def transcribe(self, path: str | Path) -> str:
-        """Backward-compatible text-only facade."""
-        return (await self.transcribe_result(path)).text
+    async def transcribe(self, path: str | Path, *, profile: Mapping[str, Any] | None = None) -> str:
+        return (await self.transcribe_result(path, profile=profile)).text
