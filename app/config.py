@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     voice_model_dir: str = os.getenv("VOICE_MODEL_DIR", ".bco_voice")
     voice_model_timeout_s: float = float(os.getenv("VOICE_MODEL_TIMEOUT_S", "120"))
     voice_max_chars: int = int(os.getenv("VOICE_MAX_CHARS", "2200"))
+    # Voice-to-voice replies should feel like conversation, not like an article
+    # being read aloud. Full authoritative text remains visible in Telegram.
+    voice_duplex_max_chars: int = int(os.getenv("VOICE_DUPLEX_MAX_CHARS", "1400"))
     voice_opus_bitrate_kbps: int = int(os.getenv("VOICE_OPUS_BITRATE_KBPS", "64"))
     voice_openai_model: str = os.getenv("VOICE_OPENAI_MODEL", "gpt-4o-mini-tts")
     voice_openai_voice: str = os.getenv("VOICE_OPENAI_VOICE", "cedar")
