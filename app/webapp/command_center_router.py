@@ -13,6 +13,7 @@ from app.services.analytics.command_center import CommandCenterService
 from app.services.operator_intelligence import MissionConflict, OperatorIntelligenceService
 from app.services.operator_intelligence.adaptive_strategy import PremiumAdaptiveStrategyService
 from app.services.operator_intelligence.deep_history import PremiumDeepHistoryService
+from app.services.operator_intelligence.strategy_outcomes import PremiumStrategyOutcomeService
 from app.webapp.security import verify_init_data
 
 log = logging.getLogger("bco.command_center")
@@ -136,37 +137,36 @@ def operator_intelligence_get(
 async def operator_deep_history_get(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ):
-    """Premium long-horizon dossier with fail-closed server entitlement authority."""
     if not _env_on("PREMIUM_DEEP_HISTORY_ENABLED"):
         raise HTTPException(status_code=503, detail="premium_deep_history_disabled")
     chat_id, _ = await _require_premium(x_telegram_init_data or "", feature="deep_history")
     data = PremiumDeepHistoryService(APP_STORE).snapshot(chat_id)
-    return _no_store({
-        "ok": True,
-        "trusted": True,
-        "premium": True,
-        "premium_authority": "server_bco_premium",
-        "data": data,
-    })
+    return _no_store({"ok": True, "trusted": True, "premium": True, "premium_authority": "server_bco_premium", "data": data})
 
 
 @router.get("/webapp/api/operator-strategy")
 async def operator_strategy_get(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ):
-    """Premium evidence-driven next-objective strategy; no per-turn entitlement injection."""
     if not _env_on("PREMIUM_ADAPTIVE_STRATEGY_ENABLED"):
         raise HTTPException(status_code=503, detail="premium_adaptive_strategy_disabled")
     chat_id, _ = await _require_premium(x_telegram_init_data or "", feature="adaptive_strategy")
     deep_history = PremiumDeepHistoryService(APP_STORE).snapshot(chat_id)
     operator = _operator_service().snapshot(chat_id)
     data = PremiumAdaptiveStrategyService().build(deep_history, operator)
+    outcome_loop = PremiumStrategyOutcomeService(APP_STORE)
+    strategy_id = outcome_loop.record_issue(chat_id, data)
+    effectiveness = outcome_loop.snapshot(chat_id)
+    data = dict(data)
+    data["strategy_id"] = strategy_id
+    data["effectiveness"] = effectiveness
     return _no_store({
         "ok": True,
         "trusted": True,
         "premium": True,
         "premium_authority": "server_bco_premium",
         "strategy_authority": "evidence_driven_recommendation",
+        "effectiveness_authority": "explicit_outcome_association_only",
         "data": data,
     })
 
@@ -201,12 +201,7 @@ def operator_mission_complete(
 ):
     chat_id = _trusted_identity(x_telegram_init_data or "")
     try:
-        data = _operator_service().complete(
-            chat_id,
-            body.mission_id,
-            outcome=body.outcome,
-            metrics=body.metrics,
-        )
+        data = _operator_service().complete(chat_id, body.mission_id, outcome=body.outcome, metrics=body.metrics)
     except MissionConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     return _no_store({"ok": True, "trusted": True, "data": data})
