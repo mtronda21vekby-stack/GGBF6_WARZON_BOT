@@ -48,7 +48,9 @@ def _settings():
         voice_openai_model="gpt-4o-mini-tts",
         voice_openai_voice="cedar",
         voice_model_name="ru_RU-denis-medium",
-        voice_opus_bitrate_kbps=64,
+        voice_opus_bitrate_kbps=72,
+        voice_max_chars=3200,
+        voice_duplex_max_chars=1800,
         usage_guard_enabled=True,
         telegram_max_update_bytes=256 * 1024,
         premium_link_enabled=True,
@@ -60,8 +62,8 @@ def _settings():
 
 
 def test_release_contract_is_explicit_and_readiness_exposes_version_only():
-    assert APP_VERSION == "21.0.0"
-    assert RELEASE_CONTRACT == "bco-voice-studio-v21"
+    assert APP_VERSION == "22.0.0"
+    assert RELEASE_CONTRACT == "bco-voice-studio-master-v22"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -69,7 +71,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "21.0.0", "contract": "bco-voice-studio-v21"}
+    assert snap["release"] == {"version": "22.0.0", "contract": "bco-voice-studio-master-v22"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_inline_navigation"] is True
@@ -82,6 +84,8 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
     assert snap["features"]["voice_duplex_follow_input"] is True
     assert snap["features"]["voice_high_fidelity"] is True
     assert snap["features"]["voice_local_fallback"] is True
+    assert snap["features"]["voice_studio_mastering"] is True
+    assert snap["features"]["voice_two_pass_loudness"] is True
     assert snap["live_intelligence"] == {
         "telegram_drafts": True,
         "telegram_transport": "rich_message_draft_with_text_fallback",
@@ -108,7 +112,13 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         "cloud_model": "gpt-4o-mini-tts",
         "default_voice": "cedar",
         "local_model": "ru_RU-denis-medium",
-        "opus_bitrate_kbps": 64,
+        "opus_bitrate_kbps": 72,
+        "mastering": "studio_master_v2_two_pass_loudnorm",
+        "target_loudness_lufs": -16,
+        "target_true_peak_dbtp": -1.0,
+        "output_sample_rate_hz": 48000,
+        "speech_max_chars": 3200,
+        "duplex_max_chars": 1800,
     }
     assert snap["storage"]["recovery"]["last_probe_ok"] is True
     rendered = repr(snap)
