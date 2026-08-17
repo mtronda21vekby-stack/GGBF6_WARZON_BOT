@@ -26,7 +26,7 @@ class FakeTG:
 
 class FakeProfiles:
     def __init__(self):
-        self.data = {7: {"tts_mode": "OFF", "voice": "TEAMMATE", "tts_voice": "cedar"}}
+        self.data = {7: {"tts_mode": "OFF", "voice": "TEAMMATE", "tts_voice": "marin"}}
 
     def get(self, chat_id):
         return dict(self.data.get(chat_id, {}))
@@ -45,15 +45,17 @@ class FakeStore:
 
 class FakeVoice:
     enabled = True
+    follow_input_active = True
 
-    def should_auto(self, profile):
+    def should_auto(self, profile, *, input_mode="text"):
         return str(profile.get("tts_mode")) == TTSMode.AUTO.value
 
     def describe(self, profile=None):
         return {
-            "provider": "OPENAI HIGH-FIDELITY",
-            "voice": str((profile or {}).get("tts_voice") or "cedar").upper(),
+            "provider": "OPENAI NATURAL VOICE",
+            "voice": str((profile or {}).get("tts_voice") or "marin").upper(),
             "local_fallback": True,
+            "mastering": "NATURAL MASTER V3",
         }
 
     async def synthesize(self, text, profile=None):
@@ -65,7 +67,8 @@ class FakeVoice:
             spoken_text=str(text),
             temp_dir=temp_dir,
             provider="openai",
-            voice_name=str((profile or {}).get("tts_voice") or "cedar"),
+            voice_name=str((profile or {}).get("tts_voice") or "marin"),
+            mastering="natural-v3",
         )
 
 
@@ -76,28 +79,41 @@ def _controller():
     return VoiceTelegramController(tg=tg, profiles=profiles, store=store, voice=FakeVoice()), tg, profiles, store
 
 
-def test_voice_mode_command_persists_profile_and_shows_runtime():
+def test_voice_mode_command_persists_profile_and_shows_natural_runtime():
     controller, tg, profiles, _ = _controller()
     handled = asyncio.run(controller.maybe_handle_command({"message": {"chat": {"id": 7}, "text": "🔊 Voice AUTO"}}))
     assert handled is True
     assert profiles.get(7)["tts_mode"] == "AUTO"
-    assert tg.messages
     panel = tg.messages[-1][1]
-    assert "OPENAI HIGH-FIDELITY" in panel
-    assert "LOCAL FALLBACK READY" in panel
-    assert "синтетический" in panel.lower()
+    assert "OPENAI NATURAL VOICE" in panel
+    assert "PIPER FALLBACK" in panel
+    assert "NATURAL MASTER V3" in panel
+    assert "Входящие голосовые: ПОНИМАЮ" in panel
+    assert "синтетические AI-голоса" in panel
 
 
-def test_voice_selection_persists_profile():
+def test_voice_selection_persists_marin_coral_shimmer_and_cedar():
     controller, tg, profiles, _ = _controller()
+    for label, expected in [
+        ("🎙 MARIN · SOFT", "marin"),
+        ("🎙 CORAL · WARM", "coral"),
+        ("🎙 SHIMMER · LIGHT", "shimmer"),
+        ("🎙 CEDAR · TACTICAL", "cedar"),
+    ]:
+        handled = asyncio.run(
+            controller.maybe_handle_command({"message": {"chat": {"id": 7}, "text": label}})
+        )
+        assert handled is True
+        assert profiles.get(7)["tts_voice"] == expected
+        assert expected.upper() in tg.messages[-1][1]
 
-    handled = asyncio.run(
+
+def test_cached_v22_voice_buttons_remain_compatible():
+    controller, _, profiles, _ = _controller()
+    assert asyncio.run(
         controller.maybe_handle_command({"message": {"chat": {"id": 7}, "text": "🎙 MARIN"}})
-    )
-
-    assert handled is True
+    ) is True
     assert profiles.get(7)["tts_voice"] == "marin"
-    assert "MARIN" in tg.messages[-1][1]
 
 
 def test_voice_preview_works_even_when_delivery_mode_is_off():
