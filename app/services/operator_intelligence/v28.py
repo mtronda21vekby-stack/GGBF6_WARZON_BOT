@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from statistics import mean, pstdev
 from typing import Any, Mapping
@@ -12,6 +13,10 @@ from app.services.vod.mission_evidence import EVENT_TYPE as MISSION_EVIDENCE_EVE
 MIN_DIRECTIONAL_CYCLES = 3
 MAX_HISTORY_CYCLES = 12
 _OUTCOME_SCORE = {"clean": 1.0, "mixed": 0.0, "failed": -1.0}
+
+
+def _env_on(name: str, default: str = "1") -> bool:
+    return os.getenv(name, default).strip().casefold() not in {"0", "false", "off", "no", ""}
 
 
 def _at(row: Mapping[str, Any]) -> str:
@@ -33,6 +38,10 @@ class OperatorIntelligenceService(_V27OperatorIntelligenceService):
     evidence may corroborate or contradict a cycle, but never changes its
     outcome and never creates a causal claim.
     """
+
+    @property
+    def longitudinal_enabled(self) -> bool:
+        return _env_on("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED")
 
     def _longitudinal(self, chat_id: int) -> dict[str, Any]:
         rows = self._rows("list_progression_events", int(chat_id), 100)
@@ -174,6 +183,8 @@ class OperatorIntelligenceService(_V27OperatorIntelligenceService):
 
     def snapshot(self, chat_id: int) -> dict[str, Any]:
         snapshot = super().snapshot(chat_id)
+        if not self.longitudinal_enabled:
+            return snapshot
         longitudinal = self._longitudinal(int(chat_id))
         snapshot["longitudinal"] = longitudinal
         operator = snapshot.get("operator") if isinstance(snapshot.get("operator"), dict) else {}
