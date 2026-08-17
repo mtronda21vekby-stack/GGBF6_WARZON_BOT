@@ -1,4 +1,4 @@
-/* BLACK CROWN OPS — v25 boot coordinator (v18 live layer preserved) */
+/* BLACK CROWN OPS — v29 boot coordinator (v18 live + v25/v28 Operator preserved) */
 (() => {
   "use strict";
 
@@ -78,10 +78,16 @@
       return loadScript("/webapp/bco.operator.js", "__BCO_OPERATOR_V25_LOADED__")
         .catch((error) => {
           window.__BCO_OPERATOR_V25_LOADED__ = false;
-          console.warn("[BCO v25] Operator Twin surface unavailable; base UI remains active", error);
+          console.warn("[BCO] Operator Twin surface unavailable; base UI remains active", error);
           return false;
         });
     })
+    .then(() => loadScript("/webapp/bco.deep-history.js", "__BCO_DEEP_HISTORY_V29_LOADED__")
+      .catch((error) => {
+        window.__BCO_DEEP_HISTORY_V29_LOADED__ = false;
+        console.warn("[BCO v29] Premium Deep History unavailable; Operator Twin remains active", error);
+        return false;
+      }))
     .then(() => true)
     .catch((error) => {
       window.__BCO_V18_READY__ = false;
