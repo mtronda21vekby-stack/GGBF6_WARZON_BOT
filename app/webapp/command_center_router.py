@@ -14,6 +14,7 @@ from app.services.operator_intelligence import MissionConflict, OperatorIntellig
 from app.services.operator_intelligence.adaptive_strategy import PremiumAdaptiveStrategyService
 from app.services.operator_intelligence.deep_history import PremiumDeepHistoryService
 from app.services.operator_intelligence.evidence_freshness import EvidenceFreshnessPolicy
+from app.services.operator_intelligence.regime_change import PlayerRegimeChangeDetector
 from app.services.operator_intelligence.strategy_outcomes import PremiumStrategyOutcomeService
 from app.services.operator_intelligence.strategy_portfolio import StrategyPortfolioCalibration
 from app.webapp.security import verify_init_data
@@ -158,9 +159,20 @@ async def operator_strategy_get(
     outcome_loop = PremiumStrategyOutcomeService(APP_STORE)
     prior_effectiveness = outcome_loop.snapshot(chat_id)
     portfolio = StrategyPortfolioCalibration.snapshot(prior_effectiveness)
+
     freshness_enabled = _env_on("EVIDENCE_FRESHNESS_ENABLED")
     freshness = EvidenceFreshnessPolicy.snapshot(deep_history, prior_effectiveness) if freshness_enabled else {}
-    data = PremiumAdaptiveStrategyService().build(deep_history, operator, portfolio, freshness)
+
+    regime_enabled = _env_on("REGIME_CHANGE_DETECTION_ENABLED")
+    regime = PlayerRegimeChangeDetector.snapshot(deep_history) if regime_enabled else None
+
+    data = PremiumAdaptiveStrategyService().build(
+        deep_history,
+        operator,
+        portfolio,
+        freshness,
+        regime,
+    )
     strategy_id = outcome_loop.record_issue(chat_id, data)
     effectiveness = outcome_loop.snapshot(chat_id)
     data = dict(data)
@@ -177,6 +189,7 @@ async def operator_strategy_get(
         "portfolio_authority": "associative_outcome_calibration_only",
         "exploration_authority": "deterministic_evidence_backed_rotation_only",
         "freshness_authority": "server_persisted_evidence_timestamps_only" if freshness_enabled else "disabled_v33_behavior",
+        "regime_authority": "server_explicit_outcome_windows_only" if regime_enabled else "disabled_v34_behavior",
         "data": data,
     })
 
