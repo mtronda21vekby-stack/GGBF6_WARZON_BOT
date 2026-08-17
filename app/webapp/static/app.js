@@ -1,4 +1,4 @@
-/* BLACK CROWN OPS — v35 boot coordinator (v18 live + Operator + Premium layers preserved) */
+/* BLACK CROWN OPS — v36 boot coordinator (v18 live + Operator + Premium layers preserved) */
 (() => {
   "use strict";
 
@@ -75,6 +75,11 @@
         return false;
       });
     })
+    .then(() => loadScript("/webapp/bco.orchestrator.js", "__BCO_MISSION_ORCHESTRATOR_V36_LOADED__").catch((error) => {
+      window.__BCO_MISSION_ORCHESTRATOR_V36_LOADED__ = false;
+      console.warn("[BCO v36] Mission Orchestrator overlay unavailable; base Operator mission control remains active", error);
+      return false;
+    }))
     .then(() => loadScript("/webapp/bco.deep-history.js", "__BCO_DEEP_HISTORY_V29_LOADED__").catch((error) => {
       window.__BCO_DEEP_HISTORY_V29_LOADED__ = false;
       console.warn("[BCO v29] Premium Deep History unavailable; Operator Twin remains active", error);
