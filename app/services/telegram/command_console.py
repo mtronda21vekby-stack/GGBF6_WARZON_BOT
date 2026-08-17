@@ -6,12 +6,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from app.services.missions import AdaptiveMissionService, MissionConflict
 from app.ui.command_console import (
     CALLBACK_PREFIX,
     ConsoleView,
     ai_view,
     brain_view,
-    home_view,
     premium_unlink_confirm_view,
     premium_view,
     profile_view,
@@ -22,6 +22,7 @@ from app.ui.command_console import (
     world_view,
     zombies_view,
 )
+from app.ui.mission_control import home_view_v19, mission_view
 from app.ui.quickbar import _webapp_url
 
 log = logging.getLogger("bco.command_console")
@@ -31,10 +32,12 @@ _OPEN_COMMANDS = {
     "/menu",
     "/deck",
     "/console",
+    "/mission",
     "Меню",
     "📋 Меню",
     "🧠 COMMAND DECK",
     "🛰 COMMAND CONSOLE",
+    "◈ MISSION CONTROL",
 }
 
 
@@ -83,6 +86,13 @@ class CommandConsoleController:
     entitlements: Any
     settings: Any
 
+    def __post_init__(self) -> None:
+        self.missions = AdaptiveMissionService(
+            store=self.store,
+            profiles=self.profiles,
+            enabled=bool(getattr(self.settings, "adaptive_mission_control_enabled", True)),
+        )
+
     @property
     def enabled(self) -> bool:
         return bool(getattr(self.settings, "telegram_aaa_console_enabled", True))
@@ -94,6 +104,7 @@ class CommandConsoleController:
 
         commands = [
             {"command": "menu", "description": "Открыть COMMAND CONSOLE"},
+            {"command": "mission", "description": "Открыть адаптивную миссию"},
             {"command": "premium", "description": "Проверить Premium и связку аккаунта"},
             {"command": "voice", "description": "Настроить голосовой режим"},
             {"command": "vod", "description": "Открыть VOD-разбор"},
@@ -133,6 +144,23 @@ class CommandConsoleController:
         except Exception:
             return {}
 
+    async def _mission_snapshot(self, chat_id: int) -> dict[str, Any]:
+        try:
+            result = await asyncio.to_thread(self.missions.snapshot, chat_id)
+            return dict(result or {})
+        except Exception as exc:
+            log.warning("mission snapshot failed error=%s", type(exc).__name__)
+            return {
+                "enabled": self.missions.enabled,
+                "state": {"mode": "RECOVERY", "risk_level": "UNKNOWN"},
+                "mission": {
+                    "status": "candidate",
+                    "title": "MISSION CHANNEL RECOVERY",
+                    "objective": "Повтори запрос через несколько секунд.",
+                },
+                "history": {},
+            }
+
     async def _premium_status(self, user_id: int) -> tuple[Any, str]:
         try:
             return await self.entitlements.get_status(user_id), ""
@@ -153,7 +181,9 @@ class CommandConsoleController:
     async def _view_for(self, action: str, chat_id: int, user_id: int) -> ConsoleView:
         profile = self._profile(chat_id)
         if action == "home":
-            return home_view(profile)
+            return home_view_v19(profile)
+        if action == "mission":
+            return mission_view(await self._mission_snapshot(chat_id))
         if action == "world":
             return world_view(profile)
         if action == "brain":
@@ -175,7 +205,7 @@ class CommandConsoleController:
         if action == "premium":
             status, error = await self._premium_status(user_id)
             return premium_view(status, error=error)
-        return home_view(profile)
+        return home_view_v19(profile)
 
     async def _open_from_message(self, message: Mapping[str, Any]) -> bool:
         sender = _sender(message)
@@ -188,7 +218,12 @@ class CommandConsoleController:
         except Exception as exc:
             log.warning("reply keyboard removal failed error=%s", type(exc).__name__)
 
-        await self._show(chat_id, home_view(self._profile(chat_id)))
+        text = str(message.get("text") or "").strip()
+        if text in {"/mission", "◈ MISSION CONTROL"}:
+            view = mission_view(await self._mission_snapshot(chat_id))
+        else:
+            view = home_view_v19(self._profile(chat_id))
+        await self._show(chat_id, view)
         return True
 
     async def _handle_set(self, data: str, chat_id: int, user_id: int, message_id: int) -> bool:
@@ -239,6 +274,40 @@ class CommandConsoleController:
         await self._patch(chat_id, patch)
         await self._show(chat_id, await self._view_for(return_view, chat_id, user_id), message_id)
         return True
+
+    async def _handle_mission(self, data: str, chat_id: int, message_id: int) -> None:
+        parts = data.split(":")
+        note = ""
+        try:
+            if data == "bco:m:r":
+                snapshot = await self._mission_snapshot(chat_id)
+                note = "Evidence model recalculated from current trusted player state."
+            elif len(parts) == 4 and parts[:3] == ["bco", "m", "a"]:
+                snapshot = await asyncio.to_thread(self.missions.accept, chat_id, parts[3])
+                note = "Миссия принята. Выполняй один протокол; не меняй критерий в середине попытки."
+            elif len(parts) == 5 and parts[:3] == ["bco", "m", "c"]:
+                outcome, mission_id = parts[3], parts[4]
+                snapshot = await asyncio.to_thread(
+                    self.missions.complete,
+                    chat_id,
+                    mission_id,
+                    outcome=outcome,
+                    metrics={},
+                )
+                note = (
+                    f"Результат зафиксирован как {outcome.upper()}. "
+                    "Следующая миссия уже пересчитана; отправь игровые цифры текстом для точной калибровки."
+                )
+            else:
+                snapshot = await self._mission_snapshot(chat_id)
+        except MissionConflict as exc:
+            snapshot = await self._mission_snapshot(chat_id)
+            note = f"Mission state changed: {exc}. Показана актуальная серверная версия."
+        except Exception as exc:
+            log.warning("mission action failed error=%s", type(exc).__name__)
+            snapshot = await self._mission_snapshot(chat_id)
+            note = "Mission action temporarily unavailable; trusted state was not changed."
+        await self._show(chat_id, mission_view(snapshot, note=note), message_id)
 
     async def _handle_premium(
         self,
@@ -358,7 +427,11 @@ class CommandConsoleController:
         if data.startswith("bco:set:"):
             handled = await self._handle_set(data, chat_id, user_id, message_id)
             if not handled:
-                await self._show(chat_id, home_view(self._profile(chat_id)), message_id)
+                await self._show(chat_id, home_view_v19(self._profile(chat_id)), message_id)
+            return True
+
+        if data.startswith("bco:m:"):
+            await self._handle_mission(data, chat_id, message_id)
             return True
 
         if data.startswith("bco:p:"):
@@ -370,6 +443,7 @@ class CommandConsoleController:
         action = data.removeprefix(CALLBACK_PREFIX)
         allowed = {
             "home",
+            "mission",
             "world",
             "brain",
             "voice",
