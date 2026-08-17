@@ -76,7 +76,7 @@ def test_adaptive_strategy_rotates_only_to_close_real_signal():
         },
     }
     portfolio = {
-        "schema": "bco_strategy_portfolio_v33",
+        "schema": "bco_strategy_portfolio_v32",
         "recent_strategy_classes": ["regression_intercept", "regression_intercept"],
         "classes": {
             "regression_intercept": {"priority_adjustment": 0, "state": "neutral", "evaluated": 2},
@@ -84,7 +84,7 @@ def test_adaptive_strategy_rotates_only_to_close_real_signal():
         },
     }
     data = PremiumAdaptiveStrategyService().build(history, {}, portfolio)
-    assert data["schema"] == "bco_premium_adaptive_strategy_v33"
+    assert data["schema"] == "bco_premium_adaptive_strategy_v34"
     assert data["strategy_class"] == "contradiction_resolution"
     assert data["focus"] == "positioning"
     assert data["exploration_budget"]["reason"] == "bounded_rotation"
@@ -108,7 +108,7 @@ def test_adaptive_strategy_preserves_strong_regression_despite_repeat_streak():
         },
     }
     portfolio = {
-        "schema": "bco_strategy_portfolio_v33",
+        "schema": "bco_strategy_portfolio_v32",
         "recent_strategy_classes": ["regression_intercept", "regression_intercept"],
         "classes": {},
     }
