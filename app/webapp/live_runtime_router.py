@@ -12,15 +12,18 @@ def webapp_live_runtime():
     settings = _base.APP_SETTINGS
     live_stream = bool(getattr(settings, "webapp_live_stream_enabled", True)) if settings else True
     cinematic = bool(getattr(settings, "webapp_cinematic_ui_enabled", True)) if settings else True
+    mission_control = bool(getattr(settings, "adaptive_mission_control_enabled", True)) if settings else True
     return JSONResponse(
         {
             "ok": True,
             "build": _base._build_id(),
-            "release": "bco-live-intelligence-v18",
+            "release": "bco-adaptive-mission-control-v19",
             "webapp": {
                 "live_stream": live_stream,
                 "cinematic_ui": cinematic,
                 "v18_overlay": live_stream and cinematic,
+                "adaptive_mission_control": mission_control,
+                "mission_transport": "trusted-json",
                 "transport": "ndjson" if live_stream else "json",
             },
         },
