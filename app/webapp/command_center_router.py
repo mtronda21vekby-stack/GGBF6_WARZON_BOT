@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.services.analytics.command_center import CommandCenterService
 from app.services.operator_intelligence import MissionConflict, OperatorIntelligenceService
+from app.services.operator_intelligence.adaptive_strategy import PremiumAdaptiveStrategyService
 from app.services.operator_intelligence.deep_history import PremiumDeepHistoryService
 from app.webapp.security import verify_init_data
 
@@ -65,6 +66,22 @@ def _trusted_meta(init_data: str) -> tuple[int, int, dict[str, Any]]:
 def _trusted_identity(init_data: str) -> int:
     chat_id, _, _ = _trusted_meta(init_data)
     return chat_id
+
+
+async def _require_premium(init_data: str, *, feature: str) -> tuple[int, int]:
+    """Resolve Premium from the shared server authority; never from client state."""
+    chat_id, user_id, _ = _trusted_meta(init_data)
+    if APP_ENTITLEMENTS is None:
+        raise HTTPException(status_code=503, detail="premium_authority_unavailable")
+    try:
+        status = await APP_ENTITLEMENTS.get_status(user_id)
+    except Exception as exc:
+        log.warning("%s entitlement check failed user_id=%s error=%s", feature, user_id, type(exc).__name__)
+        raise HTTPException(status_code=503, detail="premium_authority_unavailable")
+    entitlements = tuple(getattr(status, "entitlements", ()) or ())
+    if not bool(getattr(status, "premium", False)) or "bco_premium" not in entitlements:
+        raise HTTPException(status_code=403, detail="bco_premium_required")
+    return chat_id, user_id
 
 
 def _operator_service() -> OperatorIntelligenceService:
@@ -122,25 +139,34 @@ async def operator_deep_history_get(
     """Premium long-horizon dossier with fail-closed server entitlement authority."""
     if not _env_on("PREMIUM_DEEP_HISTORY_ENABLED"):
         raise HTTPException(status_code=503, detail="premium_deep_history_disabled")
-    chat_id, user_id, _ = _trusted_meta(x_telegram_init_data or "")
-    if APP_ENTITLEMENTS is None:
-        raise HTTPException(status_code=503, detail="premium_authority_unavailable")
-    try:
-        status = await APP_ENTITLEMENTS.get_status(user_id)
-    except Exception as exc:
-        log.warning("deep history entitlement check failed user_id=%s error=%s", user_id, type(exc).__name__)
-        raise HTTPException(status_code=503, detail="premium_authority_unavailable")
-    if not bool(getattr(status, "premium", False)):
-        raise HTTPException(status_code=403, detail="bco_premium_required")
-    entitlements = tuple(getattr(status, "entitlements", ()) or ())
-    if "bco_premium" not in entitlements:
-        raise HTTPException(status_code=403, detail="bco_premium_required")
+    chat_id, _ = await _require_premium(x_telegram_init_data or "", feature="deep_history")
     data = PremiumDeepHistoryService(APP_STORE).snapshot(chat_id)
     return _no_store({
         "ok": True,
         "trusted": True,
         "premium": True,
         "premium_authority": "server_bco_premium",
+        "data": data,
+    })
+
+
+@router.get("/webapp/api/operator-strategy")
+async def operator_strategy_get(
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    """Premium evidence-driven next-objective strategy; no per-turn entitlement injection."""
+    if not _env_on("PREMIUM_ADAPTIVE_STRATEGY_ENABLED"):
+        raise HTTPException(status_code=503, detail="premium_adaptive_strategy_disabled")
+    chat_id, _ = await _require_premium(x_telegram_init_data or "", feature="adaptive_strategy")
+    deep_history = PremiumDeepHistoryService(APP_STORE).snapshot(chat_id)
+    operator = _operator_service().snapshot(chat_id)
+    data = PremiumAdaptiveStrategyService().build(deep_history, operator)
+    return _no_store({
+        "ok": True,
+        "trusted": True,
+        "premium": True,
+        "premium_authority": "server_bco_premium",
+        "strategy_authority": "evidence_driven_recommendation",
         "data": data,
     })
 
