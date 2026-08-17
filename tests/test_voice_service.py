@@ -61,6 +61,7 @@ def _settings(**overrides):
         voice_high_fidelity_enabled=True,
         voice_local_fallback_enabled=True,
         voice_max_chars=500,
+        voice_duplex_max_chars=500,
         voice_opus_bitrate_kbps=48,
         voice_model_dir=".bco_voice",
         voice_model_name="ru_RU-denis-medium",
@@ -91,6 +92,8 @@ def test_voice_service_generates_ogg_and_cleans_up():
         assert "Проверка" in artifact.spoken_text
         assert artifact.provider == "piper"
         assert artifact.voice_name == "ru_RU-test-medium"
+        assert artifact.mastering == "studio-v2"
+        assert artifact.opus_bitrate_kbps == 48
         assert len(local.calls) == 1
     finally:
         temp = artifact.temp_dir
@@ -120,6 +123,9 @@ def test_high_fidelity_cloud_voice_is_preferred_when_available():
             "provider": "OPENAI HIGH-FIDELITY",
             "voice": "MARIN",
             "local_fallback": True,
+            "mastering": "STUDIO MASTER V2",
+            "opus_bitrate_kbps": 48,
+            "target_loudness_lufs": -16,
         }
     finally:
         artifact.cleanup()
