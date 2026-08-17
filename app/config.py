@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # without touching stored player state.
     webapp_live_stream_enabled: bool = _env_on("WEBAPP_LIVE_STREAM_ENABLED")
     webapp_cinematic_ui_enabled: bool = _env_on("WEBAPP_CINEMATIC_UI_ENABLED")
+    adaptive_mission_control_enabled: bool = _env_on("ADAPTIVE_MISSION_CONTROL_ENABLED")
 
     # Abuse / cost guard. Limits are intentionally generous for legitimate use
     # but cap burst/flood cost at the actual expensive capability boundaries.
