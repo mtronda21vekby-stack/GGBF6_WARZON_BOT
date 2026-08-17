@@ -21,8 +21,8 @@ class OperatorContextProjector:
     """Project the full Operator Twin into a bounded prompt-safe context.
 
     Internal evidence weights and scoring mechanics never cross this boundary.
-    The model receives claim class, provenance and uncertainty so it cannot
-    silently promote weak evidence into a player fact.
+    v27 additionally exposes bounded sampled-frame evidence correlated to the
+    active mission, while explicitly preserving that evidence != outcome.
     """
 
     max_claims: int = 8
@@ -58,6 +58,35 @@ class OperatorContextProjector:
             "trend": self._text(raw.get("trend"), 24) or "unknown",
             "uncertainty": self._text(raw.get("uncertainty"), 280),
             "evidence": evidence,
+        }
+
+    def _mission_evidence(self, raw: Mapping[str, Any] | None) -> dict[str, Any]:
+        if not isinstance(raw, Mapping):
+            return {}
+        signals: list[dict[str, Any]] = []
+        for item in list(raw.get("signals") or [])[:6]:
+            if not isinstance(item, Mapping):
+                continue
+            label = self._text(item.get("label"), 180)
+            if not label:
+                continue
+            signals.append({
+                "kind": self._text(item.get("kind"), 24),
+                "label": label,
+                "category": self._text(item.get("category"), 32) or "unknown",
+                "confidence": item.get("confidence") if isinstance(item.get("confidence"), (int, float)) else None,
+                "timestamp": self._text(item.get("timestamp"), 32),
+            })
+        return {
+            "classification": self._text(raw.get("classification"), 64),
+            "confidence": self._text(raw.get("confidence"), 20) or "unknown",
+            "clips": max(0, min(99, int(raw.get("clips") or 0))),
+            "evidence_count": max(0, min(999, int(raw.get("evidence_count") or 0))),
+            "sampled_frames": max(0, min(9999, int(raw.get("sampled_frames") or 0))),
+            "source": self._text(raw.get("source"), 48),
+            "latest_at": self._text(raw.get("latest_at"), 64),
+            "does_not_complete_mission": True,
+            "signals": signals,
         }
 
     def project(self, snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -110,6 +139,9 @@ class OperatorContextProjector:
             "at": self._text(review_raw.get("at"), 64),
         }
         last_review = {key: value for key, value in last_review.items() if value}
+        mission_evidence = self._mission_evidence(
+            session_raw.get("mission_evidence") if isinstance(session_raw.get("mission_evidence"), Mapping) else None
+        )
 
         truth = operator.get("truth_model") if isinstance(operator.get("truth_model"), Mapping) else {}
         truth_summary = {
@@ -121,8 +153,8 @@ class OperatorContextProjector:
         }
 
         return {
-            "schema": "bco_operator_context_v26",
-            "truth_contract": "never_promote_inference; unknown_remains_unknown",
+            "schema": "bco_operator_context_v27",
+            "truth_contract": "never_promote_inference; unknown_remains_unknown; mission_evidence_does_not_complete",
             "state": {
                 "readiness": self._text(operator.get("readiness"), 32) or "UNKNOWN",
                 "risk": self._text(operator.get("risk"), 32) or "UNKNOWN",
@@ -136,6 +168,7 @@ class OperatorContextProjector:
             "session": {
                 "phase": self._text(session_raw.get("phase"), 40) or "PRE_SESSION",
                 "last_review": last_review,
+                "mission_evidence": mission_evidence,
             },
         }
 

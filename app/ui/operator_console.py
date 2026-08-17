@@ -59,6 +59,17 @@ def operator_view(snapshot: Mapping[str, Any] | None, *, note: str = "") -> Cons
             f"• MEMORY UPDATE — {str(session.get('memory_update') or 'complete').upper()}"
         )
 
+    evidence = session.get("mission_evidence") if isinstance(session.get("mission_evidence"), Mapping) else None
+    evidence_block = ""
+    if evidence:
+        classification = str(evidence.get("classification") or "unknown").replace("_", " ").upper()
+        evidence_block = (
+            "\n\nMISSION EVIDENCE:\n"
+            f"• STATUS — {classification}\n"
+            f"• CLIPS — {int(evidence.get('clips') or 0)} · SIGNALS — {int(evidence.get('evidence_count') or 0)} · FRAMES — {int(evidence.get('sampled_frames') or 0)}\n"
+            "• AUTHORITY — sampled-frame evidence only; mission outcome is never auto-completed"
+        )
+
     note_block = f"\n\n{note[:300]}" if note else ""
     body = (
         "OPERATOR TWIN // EVIDENCE DOSSIER\n\n"
@@ -75,7 +86,7 @@ def operator_view(snapshot: Mapping[str, Any] | None, *, note: str = "") -> Cons
         f"• FOCUS — {focus.upper()} · {status}\n"
         f"• SUCCESS — {success or 'collecting evidence'}\n\n"
         f"BASIS: {basis or 'No hidden score. Mission is calibrated from available evidence.'}"
-        f"{review_block}{note_block}"
+        f"{evidence_block}{review_block}{note_block}"
     )
 
     rows: list[list[dict[str, Any]]] = []

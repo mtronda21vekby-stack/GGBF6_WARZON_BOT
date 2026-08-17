@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     # Operator Twin / adaptive mission intelligence.
     operator_intelligence_enabled: bool = _env_on("OPERATOR_INTELLIGENCE_ENABLED")
     adaptive_mission_control_enabled: bool = _env_on("ADAPTIVE_MISSION_CONTROL_ENABLED")
+    mission_vod_evidence_fusion_enabled: bool = _env_on("MISSION_VOD_EVIDENCE_FUSION_ENABLED")
 
     # Abuse / cost guard.
     usage_guard_enabled: bool = _env_on("USAGE_GUARD_ENABLED")

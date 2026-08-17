@@ -21,6 +21,7 @@ on:
       - feature/bco-duplex-voice-v20
       - feature/bco-operator-twin-missions-v25
       - feature/bco-causal-operator-context-v26
+      - feature/bco-mission-evidence-fusion-v27
   pull_request:
     branches:
       - main
@@ -158,12 +159,17 @@ jobs:
               and features.get('operator_session_lifecycle') is True
               and features.get('operator_context_bridge') is True
               and features.get('operator_causal_intelligence') is True
+              and features.get('mission_vod_evidence_fusion') is True
+              and features.get('mission_vod_evidence_no_autocomplete') is True
               and operator.get('enabled') is True
               and operator.get('adaptive_missions') is True
               and operator.get('unknown_remains_unknown') is True
               and operator.get('context_bridge') is True
               and operator.get('shared_brain_context') is True
-              and operator.get('context_schema') == 'bco_operator_context_v26'
+              and operator.get('context_schema') == 'bco_operator_context_v27'
+              and operator.get('mission_evidence_fusion') is True
+              and operator.get('mission_evidence_source') == 'vision_sampled_frames'
+              and operator.get('mission_evidence_autocomplete') is False
               and voice.get('input_configured') is True
               and voice.get('transcription_model') == 'gpt-4o-transcribe'
               and voice.get('transcription_fallback_model') == 'gpt-4o-mini-transcribe'
@@ -189,8 +195,9 @@ jobs:
                    grep -q 'Live Intelligence + Cinematic Runtime' /tmp/bco-live.js && \
                    grep -q 'Cinematic Technical Design System' /tmp/bco-cinematic.css && \
                    grep -q 'Operator Twin / Adaptive Mission Intelligence' /tmp/bco-operator.js && \
+                   grep -q 'SAMPLED-FRAME ONLY / NO AUTO-COMPLETE' /tmp/bco-operator.js && \
                    grep -q 'Operator Twin technical dossier' /tmp/bco-operator.css; then
-                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, duplex voice=ON, live intelligence=ON, operator twin=ON, mission control=ON, causal context=ON"
+                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, duplex voice=ON, live intelligence=ON, operator twin=ON, mission control=ON, causal context=ON, mission evidence fusion=ON, autocomplete=OFF"
                   cat /tmp/bco-health.json
                   cat /tmp/bco-runtime.json
                   exit 0
