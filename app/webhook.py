@@ -26,8 +26,10 @@ from app.services.storage.factory import build_store
 from app.services.telegram.command_console import CommandConsoleController
 from app.services.vod.service import VODAnalysisService
 from app.services.vod.telegram import VODTelegramIngress
+from app.services.voice.ingress import TelegramVoiceIngress
 from app.services.voice.service import VoiceService
 from app.services.voice.telegram import VoiceTelegramController
+from app.services.voice.transcription import OpenAITranscriptionBackend
 
 log = get_logger("webhook")
 
@@ -51,6 +53,21 @@ def create_app() -> FastAPI:
     )
     command_console: CommandConsoleController | None = None
 
+    transcription_backend = OpenAITranscriptionBackend(
+        api_key=settings.openai_api_key,
+        model=settings.voice_transcription_model,
+        timeout_s=settings.voice_transcription_timeout_s,
+        max_bytes=settings.voice_input_max_bytes,
+    )
+    voice_ingress = TelegramVoiceIngress(
+        tg=tg,
+        transcription=transcription_backend,
+        usage_guard=usage_guard,
+        enabled=settings.voice_input_enabled,
+        max_bytes=settings.voice_input_max_bytes,
+        max_duration_s=settings.voice_input_max_duration_s,
+    )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         probe = getattr(store, "probe_primary", None)
@@ -73,6 +90,10 @@ def create_app() -> FastAPI:
         try:
             yield
         finally:
+            try:
+                await transcription_backend.close()
+            except Exception as exc:
+                log.warning("voice transcription shutdown failed: %s", type(exc).__name__)
             try:
                 await site_entitlement_bridge.close()
             except Exception as exc:
@@ -229,12 +250,22 @@ def create_app() -> FastAPI:
 
         update_id = raw.get("update_id")
         if update_id is not None and not replay_guard.accept(update_id):
-            # Telegram retries must receive 200 or the platform will keep
-            # redelivering the same update. Duplicate work is intentionally
-            # skipped before any AI/VOD/TTS boundary.
             return JSONResponse({"ok": True, "duplicate": True})
 
         upd = Update.parse(raw)
+
+        # Voice notes are normalized into ordinary text updates before every
+        # deterministic command and AI boundary, so voice and typed input use
+        # the exact same intent, memory, currentness and answer-quality stack.
+        try:
+            transformed, voice_handled = await voice_ingress.transform(upd)
+            if voice_handled:
+                upd = transformed
+                msg = (upd.get("message") or upd.get("edited_message") or {}) if isinstance(upd, dict) else {}
+                if not isinstance(msg, dict) or msg.get("_bco_input_mode") != "voice":
+                    return JSONResponse({"ok": True, "voice_consumed": True})
+        except Exception as exc:
+            log.exception("voice ingress pre-handler crashed: %s", type(exc).__name__)
 
         try:
             if await command_console.maybe_handle(upd):
@@ -242,9 +273,6 @@ def create_app() -> FastAPI:
         except Exception as exc:
             log.exception("AAA command console pre-handler crashed: %s", type(exc).__name__)
 
-        # Inline navigation converted from legacy reply keyboards still uses
-        # the existing deterministic handlers. Acknowledge it immediately so
-        # Telegram removes the client-side progress spinner before routing.
         try:
             callback = upd.get("callback_query") if isinstance(upd, dict) else None
             if isinstance(callback, dict):
