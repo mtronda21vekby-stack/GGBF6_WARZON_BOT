@@ -15,19 +15,8 @@ DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
 DEFAULT_TTS_VOICE = "cedar"
 ALLOWED_TTS_VOICES = frozenset(
     {
-        "alloy",
-        "ash",
-        "ballad",
-        "coral",
-        "echo",
-        "fable",
-        "nova",
-        "onyx",
-        "sage",
-        "shimmer",
-        "verse",
-        "marin",
-        "cedar",
+        "alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx",
+        "sage", "shimmer", "verse", "marin", "cedar",
     }
 )
 
@@ -49,7 +38,6 @@ def _profile_value(profile: Mapping[str, Any], *keys: str, fallback: str = "") -
 
 
 def voice_instructions(profile: Mapping[str, Any] | None) -> str:
-    """Build a safe, non-impersonating performance direction for the TTS model."""
     data = dict(profile or {})
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
@@ -61,34 +49,30 @@ def voice_instructions(profile: Mapping[str, Any] | None) -> str:
         "Use natural breath groups, micro-pauses, clean consonants and human conversational prosody.",
         "Pronounce English gaming terms confidently inside Russian speech without exaggerated foreign accent.",
         "Preserve weapon names, map names, numbers and tactical abbreviations exactly in meaning.",
-        "Never sound robotic, theatrical, like an advertisement, a movie trailer, or a real named person.",
+        "Never sound robotic, theatrical, like an advertisement, a movie trailer, or like a real named person.",
         "Do not read decorative symbols, markdown, URLs or UI labels aloud.",
         "Avoid sing-song intonation. End tactical instructions decisively but naturally.",
     ]
 
     if persona == "COACH":
-        instructions.extend(
-            [
-                "Use the manner of an elite esports coach reviewing a player one-on-one.",
-                "Pace slightly slower, with calm authority and deliberate pauses before causes, corrections and metrics.",
-                "Use warmer delivery for encouragement, but keep criticism precise and unemotional.",
-            ]
-        )
+        instructions.extend([
+            "Use the manner of an elite esports coach reviewing a player one-on-one.",
+            "Use a measured pace, warm authority and deliberate pauses before causes, corrections and metrics.",
+            "Keep criticism precise and unemotional; encouragement should feel earned, not generic.",
+        ])
     else:
-        instructions.extend(
-            [
-                "Use the manner of a trusted high-level squad teammate on clean comms.",
-                "Keep the pace brisk and low-friction, with short pauses and fast tactical emphasis.",
-                "Sound close and direct, but never imitate radio distortion or military roleplay.",
-            ]
-        )
+        instructions.extend([
+            "Sound like a trusted high-level squad teammate speaking over clean voice chat.",
+            "Keep the pace brisk, direct and concise, with short pauses around tactical priorities.",
+            "Never imitate radio distortion or military roleplay.",
+        ])
 
     if brain == "DEMON":
         instructions.append(
-            "Add restrained intensity: tighter timing, firmer sentence endings and stronger emphasis on the single highest-value action."
+            "Add restrained intensity: firmer endings and stronger emphasis on the single highest-value action, without shouting."
         )
     elif brain == "PRO":
-        instructions.append("Use precise professional emphasis and slightly denser tactical cadence.")
+        instructions.append("Use precise professional emphasis and a focused tactical cadence.")
     else:
         instructions.append("Keep the delivery relaxed and easy to process on first listen.")
 
@@ -107,19 +91,18 @@ def voice_speed(profile: Mapping[str, Any] | None) -> float:
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
     emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
-    speed = 0.96 if persona == "COACH" else 1.03
+
+    # Keep v17's proven baseline so existing users do not get a surprising
+    # cadence shift; v19 layers emotion/brain adaptation on top of it.
+    speed = 0.98 if persona == "COACH" else 1.04
     if brain == "DEMON":
-        speed += 0.015
-    elif brain == "NORMAL":
-        speed -= 0.01
+        speed += 0.01
     if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
         speed -= 0.025
     return max(0.88, min(speed, 1.10))
 
 
 class OpenAITTSBackend:
-    """Steerable high-fidelity speech backend using OpenAI's Audio API."""
-
     def __init__(
         self,
         *,
@@ -150,24 +133,15 @@ class OpenAITTSBackend:
         if explicit:
             return normalize_tts_voice(explicit, self.default_voice)
         persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
-        # Automatic timbre pairing gives each persona a coherent identity while
-        # still allowing a user-selected voice to override it.
         return "marin" if persona == "COACH" else self.default_voice
 
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()
 
-    async def _download_once(
-        self,
-        *,
-        text: str,
-        output: Path,
-        profile: Mapping[str, Any],
-    ) -> Path:
+    async def _download_once(self, *, text: str, output: Path, profile: Mapping[str, Any]) -> Path:
         if not self.configured:
             raise RuntimeError("OpenAI TTS is not configured")
-
         payload = {
             "model": self.model,
             "voice": self.voice_for(profile),
@@ -182,18 +156,12 @@ class OpenAITTSBackend:
             "Accept": "audio/wav, application/octet-stream",
             "User-Agent": "BLACK-CROWN-OPS/voice-v19",
         }
-
         output.parent.mkdir(parents=True, exist_ok=True)
         part = output.with_suffix(output.suffix + ".part")
         part.unlink(missing_ok=True)
         total = 0
         try:
-            async with self._client.stream(
-                "POST",
-                OPENAI_SPEECH_URL,
-                headers=headers,
-                json=payload,
-            ) as response:
+            async with self._client.stream("POST", OPENAI_SPEECH_URL, headers=headers, json=payload) as response:
                 response.raise_for_status()
                 declared = int(response.headers.get("content-length") or 0)
                 if declared and declared > self.max_bytes:
@@ -206,7 +174,6 @@ class OpenAITTSBackend:
                         if total > self.max_bytes:
                             raise RuntimeError("OpenAI TTS audio exceeded configured size limit")
                         file_handle.write(chunk)
-
             if total < 44:
                 raise RuntimeError("OpenAI TTS returned empty audio")
             with part.open("rb") as file_handle:
@@ -219,12 +186,7 @@ class OpenAITTSBackend:
             part.unlink(missing_ok=True)
             raise
 
-    async def synthesize_wav(
-        self,
-        text: str,
-        output_path: str | Path,
-        profile: Mapping[str, Any] | None = None,
-    ) -> Path:
+    async def synthesize_wav(self, text: str, output_path: str | Path, profile: Mapping[str, Any] | None = None) -> Path:
         output = Path(output_path)
         data = dict(profile or {})
         last_error: Exception | None = None
