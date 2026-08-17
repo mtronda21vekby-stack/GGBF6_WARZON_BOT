@@ -86,6 +86,7 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
     if duplex_reply:
         instructions.extend([
             "This is a direct reply to a voice message. Continue the conversation immediately as if the player is still in comms.",
+            "Do not sound like you are reading an article or prepared script; answer the player conversationally and directly.",
             "The first sentence should arrive quickly and naturally; do not introduce or summarize the fact that you are answering.",
             "Use fewer formal pauses, smoother connected phrasing and a compact spoken form while the complete written answer remains visible.",
         ])
