@@ -88,7 +88,7 @@ class PlayerMemoryService:
                 parts.append("Тренды: " + ", ".join(trend_bits))
         return ". ".join(parts)[:1000]
 
-    def _refresh_derived(self, chat_id: int, fallback_profile: dict[str, Any]) -> None:
+    def _refresh_derived(self, chat_id: int, fallback_profile: dict[str, Any]) -> dict[str, Any]:
         try:
             latest_profile = self.profiles.get(chat_id)
         except Exception:
@@ -99,6 +99,23 @@ class PlayerMemoryService:
             self.store.set_summary(chat_id, self._build_summary(chat_id, latest_profile, snapshot))
         except Exception:
             pass
+        return snapshot
+
+    def refresh(self, chat_id: int, profile: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Recompute deterministic long-term intelligence after a trusted event.
+
+        This is intentionally public so non-conversation evidence sources such
+        as Adaptive Mission Control can refresh trends without an extra LLM
+        request or duplicating the analytics implementation.
+        """
+        cid = int(chat_id)
+        fallback = dict(profile or {})
+        if not fallback:
+            try:
+                fallback = dict(self.profiles.get(cid) or {})
+            except Exception:
+                fallback = {}
+        return self._refresh_derived(cid, fallback)
 
     def observe(self, *, chat_id: int, text: str, profile: dict[str, Any], reply: str = "", trusted: bool = True) -> None:
         """Persist only evidence-backed long-term intelligence.
