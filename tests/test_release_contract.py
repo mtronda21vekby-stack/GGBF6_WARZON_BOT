@@ -25,6 +25,11 @@ class ReadyStore:
         return True
 
 
+class ReadyEntitlements:
+    def readiness(self):
+        return {"enabled": True, "configured": True, "last_success_at": None, "last_error": ""}
+
+
 def _settings():
     return SimpleNamespace(
         ai_enabled=True,
@@ -67,16 +72,18 @@ def _settings():
 
 def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkeypatch):
     monkeypatch.setenv("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED", "1")
-    assert APP_VERSION == "28.0.0"
-    assert RELEASE_CONTRACT == "bco-longitudinal-operator-intelligence-v28"
+    monkeypatch.setenv("PREMIUM_DEEP_HISTORY_ENABLED", "1")
+    assert APP_VERSION == "29.0.0"
+    assert RELEASE_CONTRACT == "bco-premium-deep-history-v29"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
         app_version=APP_VERSION,
         release_contract=RELEASE_CONTRACT,
+        entitlement_service=ReadyEntitlements(),
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "28.0.0", "contract": "bco-longitudinal-operator-intelligence-v28"}
+    assert snap["release"] == {"version": "29.0.0", "contract": "bco-premium-deep-history-v29"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_live_intelligence_drafts"] is True
@@ -99,6 +106,10 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkey
     assert snap["features"]["operator_longitudinal_intelligence"] is True
     assert snap["features"]["operator_longitudinal_contradiction_detection"] is True
     assert snap["features"]["operator_longitudinal_no_causal_claims"] is True
+    assert snap["features"]["premium_deep_history"] is True
+    assert snap["features"]["premium_deep_history_server_authoritative"] is True
+    assert snap["features"]["premium_client_authority"] is False
+    assert snap["features"]["premium_link_does_not_grant_entitlement"] is True
     assert snap["operator_intelligence"]["unknown_remains_unknown"] is True
     assert snap["operator_intelligence"]["adaptive_missions"] is True
     assert snap["operator_intelligence"]["context_bridge"] is True
@@ -113,6 +124,12 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkey
     assert snap["operator_intelligence"]["longitudinal_contradiction_detection"] is True
     assert snap["operator_intelligence"]["longitudinal_association_rule"] == "association_not_causation"
     assert snap["operator_intelligence"]["longitudinal_causal_claims"] is False
+    assert snap["operator_intelligence"]["premium_deep_history"] is True
+    assert snap["operator_intelligence"]["premium_deep_history_schema"] == "bco_premium_deep_history_v29"
+    assert snap["operator_intelligence"]["premium_deep_history_max_cycles"] == 36
+    assert snap["operator_intelligence"]["premium_deep_history_authority"] == "server_bco_premium"
+    assert snap["operator_intelligence"]["premium_link_grants_entitlement"] is False
+    assert snap["operator_intelligence"]["premium_client_authority"] is False
     assert snap["live_intelligence"]["final_message_authoritative"] is True
     assert snap["voice_runtime"]["input_configured"] is True
     assert snap["voice_runtime"]["transcription_model"] == "gpt-4o-transcribe"
