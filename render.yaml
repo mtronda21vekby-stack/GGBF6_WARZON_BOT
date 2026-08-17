@@ -18,6 +18,8 @@ services:
         value: "1"
       - key: WEBAPP_CINEMATIC_UI_ENABLED
         value: "1"
+      - key: ADAPTIVE_MISSION_CONTROL_ENABLED
+        value: "1"
       - key: STORAGE_BACKEND
         value: auto
       - key: SUPABASE_URL
