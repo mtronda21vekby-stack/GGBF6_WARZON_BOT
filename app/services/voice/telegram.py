@@ -129,7 +129,8 @@ class VoiceTelegramController:
             f"Режим: {state}\n"
             f"Движок: {str(details.get('provider') or 'VOICE').upper()}{fallback}\n"
             f"Голос: {str(details.get('voice') or 'CEDAR').upper()}\n\n"
-            "SMART DUPLEX: если ты говоришь голосом, я отвечаю текстом и голосом. Явный Voice OFF всегда отключает это поведение.\n"
+            "SMART DUPLEX: отправляешь voice — я распознаю речь, прогоняю её через тот же Intelligence Core и отвечаю текстом + живым voice.\n"
+            "Для voice→voice используется более разговорная подача; полный ответ остаётся в тексте.\n"
             "CEDAR — собранный тактический тембр. MARIN — более мягкая и живая подача.\n"
             "Голос синтетический и сгенерирован ИИ."
         )
@@ -144,7 +145,7 @@ class VoiceTelegramController:
         except Exception:
             pass
 
-    async def _speak(self, chat_id: int, text: str, *, explicit: bool) -> bool:
+    async def _speak(self, chat_id: int, text: str, *, explicit: bool, input_mode: str = "text") -> bool:
         if self.usage_guard is not None:
             try:
                 decision = self.usage_guard.check(chat_id, "voice")
@@ -160,6 +161,7 @@ class VoiceTelegramController:
                 pass
 
         profile = self._profile(chat_id)
+        profile["_bco_voice_reply"] = str(input_mode or "").startswith("voice")
         try:
             await self._chat_action(chat_id, "record_voice")
             artifact = await self.voice.synthesize(text, profile)
@@ -172,11 +174,12 @@ class VoiceTelegramController:
                     caption=caption,
                 )
                 log.info(
-                    "voice delivered chat_id=%s provider=%s voice=%s chars=%s",
+                    "voice delivered chat_id=%s provider=%s voice=%s chars=%s duplex=%s",
                     chat_id,
                     str(getattr(artifact, "provider", "unknown"))[:24],
                     str(getattr(artifact, "voice_name", ""))[:32],
                     len(str(getattr(artifact, "spoken_text", "") or "")),
+                    profile["_bco_voice_reply"],
                 )
             finally:
                 artifact.cleanup()
@@ -246,8 +249,6 @@ class VoiceTelegramController:
         try:
             enabled = bool(should_auto(profile, input_mode=input_mode))
         except TypeError:
-            # Backward-compatible with older adapters/tests that implement the
-            # pre-v20 `should_auto(profile)` signature.
             enabled = bool(should_auto(profile))
         if not enabled:
             return False
@@ -258,7 +259,7 @@ class VoiceTelegramController:
         last = _last_assistant(history)
         if not last:
             return False
-        return await self._speak(chat_id, last, explicit=False)
+        return await self._speak(chat_id, last, explicit=False, input_mode=input_mode)
 
     @staticmethod
     def extract_chat_id(raw: dict) -> int | None:

@@ -148,9 +148,6 @@ class VoiceService:
         else:
             provider = "PIPER LOCAL"
             fallback = False
-        # Keep this stable because UI/tests treat describe() as a compact public
-        # descriptor. Duplex capability is exposed separately through the
-        # follow_input_active property and readiness payload.
         return {
             "provider": provider,
             "voice": self.voice_name_for(profile).upper(),
@@ -196,14 +193,21 @@ class VoiceService:
             raise RuntimeError("Local voice fallback is unavailable")
         await asyncio.to_thread(self.backend.synthesize_wav, text, wav_path, dict(profile))
 
+    def _speech_limit(self, profile: Mapping[str, Any]) -> int:
+        full_limit = max(120, min(int(getattr(self.settings, "voice_max_chars", 2200) or 2200), 4096))
+        if not bool(profile.get("_bco_voice_reply")):
+            return full_limit
+        duplex_limit = max(360, min(int(getattr(self.settings, "voice_duplex_max_chars", 1400) or 1400), 2600))
+        return min(full_limit, duplex_limit)
+
     async def synthesize(self, text: str, profile: Mapping[str, Any] | None = None) -> VoiceArtifact:
         if not self.enabled:
             raise RuntimeError("Voice/TTS is disabled")
-        spoken = clean_tts_text(text, int(getattr(self.settings, "voice_max_chars", 2200) or 2200))
+        data = dict(profile or {})
+        spoken = clean_tts_text(text, self._speech_limit(data))
         if not spoken:
             raise ValueError("Nothing useful to synthesize")
 
-        data = dict(profile or {})
         temp_dir = Path(tempfile.mkdtemp(prefix="bco-voice-"))
         wav_path = temp_dir / "reply.wav"
         ogg_path = temp_dir / "reply.ogg"

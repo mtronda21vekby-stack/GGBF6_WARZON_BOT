@@ -44,6 +44,26 @@ def _voice_payload(message: Mapping[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _audio_suffix(payload: Mapping[str, Any]) -> str:
+    name = str(payload.get("file_name") or "").strip().casefold()
+    for suffix in (".ogg", ".oga", ".opus", ".mp3", ".m4a", ".mp4", ".wav", ".webm", ".flac"):
+        if name.endswith(suffix):
+            return suffix
+    mime = str(payload.get("mime_type") or "").strip().casefold()
+    return {
+        "audio/ogg": ".ogg",
+        "audio/opus": ".opus",
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/mp4": ".m4a",
+        "audio/x-m4a": ".m4a",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/webm": ".webm",
+        "audio/flac": ".flac",
+    }.get(mime, ".ogg")
+
+
 @dataclass(frozen=True)
 class PendingTranscript:
     text: str
@@ -107,7 +127,6 @@ class TelegramVoiceIngress:
             }
             transformed.pop("callback_query", None)
             transformed["message"] = synthetic
-            key = "message"
         else:
             key = "message" if isinstance(transformed.get("message"), dict) else "edited_message"
             synthetic = dict(transformed.get(key) or {})
@@ -222,15 +241,20 @@ class TelegramVoiceIngress:
         except Exception:
             pass
 
+        suffix = _audio_suffix(voice)
         try:
             with tempfile.TemporaryDirectory(prefix="bco-stt-") as td:
-                source = Path(td) / "voice.ogg"
-                await self.tg.download_file(
-                    file_id,
-                    str(source),
-                    max_bytes=byte_limit,
-                    timeout_s=60.0,
-                )
+                source = Path(td) / f"voice{suffix}"
+                try:
+                    await self.tg.download_file(
+                        file_id,
+                        str(source),
+                        max_bytes=byte_limit,
+                        timeout_s=60.0,
+                    )
+                except Exception as exc:
+                    raise TranscriptionError("Telegram voice download failed") from exc
+
                 rich = getattr(self.transcription, "transcribe_result", None)
                 if callable(rich):
                     result = await rich(source)
@@ -246,14 +270,14 @@ class TelegramVoiceIngress:
             log.warning("voice transcription rejected chat_id=%s error=%s", chat_id, type(exc).__name__)
             await self.tg.send_message(
                 chat_id,
-                "🎙 Не смог надёжно разобрать это голосовое. Повтори чуть короче и без сильного фонового шума.",
+                "🎙 Не смог надёжно разобрать голосовое. Попробуй ещё раз — я поддерживаю Telegram voice, MP3, M4A, WAV и WebM.",
             )
             return dict(update), True
         except Exception as exc:
             log.exception("voice transcription crashed chat_id=%s error=%s", chat_id, type(exc).__name__)
             await self.tg.send_message(
                 chat_id,
-                "🎙 Голосовой ввод временно недоступен. Текстовые сообщения продолжают работать.",
+                "🎙 Голосовой канал перезапускается. Повтори сообщение через несколько секунд; текстовый режим остаётся доступен.",
             )
             return dict(update), True
 

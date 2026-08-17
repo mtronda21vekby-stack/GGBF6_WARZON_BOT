@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import logging
+import math
+import mimetypes
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,24 @@ def _confidence_from_logprobs(payload: dict[str, Any]) -> float | None:
     return max(0.0, min(1.0, math.exp(sum(values) / len(values))))
 
 
+def _audio_mime(path: Path) -> str:
+    guessed, _ = mimetypes.guess_type(path.name)
+    if guessed and guessed.startswith("audio/"):
+        return guessed
+    suffix = path.suffix.casefold()
+    return {
+        ".ogg": "audio/ogg",
+        ".oga": "audio/ogg",
+        ".opus": "audio/ogg",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".mp4": "audio/mp4",
+        ".wav": "audio/wav",
+        ".webm": "audio/webm",
+        ".flac": "audio/flac",
+    }.get(suffix, "application/octet-stream")
+
+
 class OpenAITranscriptionBackend:
     def __init__(
         self,
@@ -103,20 +122,23 @@ class OpenAITranscriptionBackend:
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Accept": "application/json",
-            "User-Agent": "BLACK-CROWN-OPS/duplex-voice-v20",
+            "User-Agent": "BLACK-CROWN-OPS/voice-studio-v21",
         }
-        fields: list[tuple[str, str]] = [
-            ("model", model),
-            ("response_format", "json"),
-            ("prompt", self.prompt),
-        ]
+        # httpx multipart encoding expects mapping-like form data when files are
+        # present. A list of tuples can fail client-side before any HTTP request,
+        # which used to surface to Telegram as a generic "voice unavailable".
+        fields: dict[str, str] = {
+            "model": model,
+            "response_format": "json",
+            "prompt": self.prompt,
+        }
         if self.language:
-            fields.append(("language", self.language))
+            fields["language"] = self.language
         if include_logprobs:
-            fields.append(("include[]", "logprobs"))
+            fields["include[]"] = "logprobs"
 
         with path.open("rb") as handle:
-            files = {"file": (path.name, handle, "audio/ogg")}
+            files = {"file": (path.name, handle, _audio_mime(path))}
             response = await self._client.post(
                 OPENAI_TRANSCRIPTION_URL,
                 headers=headers,
@@ -167,6 +189,11 @@ class OpenAITranscriptionBackend:
                 raise TranscriptionError("Speech transcription network failure") from exc
             except TranscriptionError:
                 raise
+            except Exception as exc:
+                # Normalize transport/encoding errors into the STT boundary so
+                # ingress can return an actionable retry instead of crashing the
+                # entire voice pre-handler.
+                raise TranscriptionError("Speech transcription transport failure") from exc
         raise TranscriptionError("Speech transcription failed") from last_error
 
     async def transcribe_result(self, path: str | Path) -> TranscriptionResult:
