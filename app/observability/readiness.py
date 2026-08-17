@@ -133,6 +133,11 @@ def readiness_snapshot(
     operator_context_bridge = bool(getattr(settings, "operator_context_bridge_enabled", _env_on("OPERATOR_CONTEXT_BRIDGE_ENABLED")))
     mission_vod_fusion = bool(getattr(settings, "mission_vod_evidence_fusion_enabled", _env_on("MISSION_VOD_EVIDENCE_FUSION_ENABLED")))
     longitudinal = _env_on("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED")
+    premium_deep_history = bool(
+        _env_on("PREMIUM_DEEP_HISTORY_ENABLED")
+        and entitlement_snapshot["enabled"]
+        and entitlement_snapshot["configured"]
+    )
 
     live_intelligence_snapshot = {
         "telegram_drafts": telegram_live_drafts,
@@ -157,6 +162,12 @@ def readiness_snapshot(
         "longitudinal_contradiction_detection": True,
         "longitudinal_association_rule": "association_not_causation",
         "longitudinal_causal_claims": False,
+        "premium_deep_history": operator_intelligence and premium_deep_history,
+        "premium_deep_history_schema": "bco_premium_deep_history_v29",
+        "premium_deep_history_max_cycles": 36,
+        "premium_deep_history_authority": "server_bco_premium",
+        "premium_link_grants_entitlement": False,
+        "premium_client_authority": False,
         "truth_model": "verified_fact|high_confidence_player_pattern|weak_pattern|hypothesis|unknown",
         "unknown_remains_unknown": True,
         "session_lifecycle": ["PRE_SESSION", "LIVE_OBJECTIVE", "POST_SESSION_REVIEW", "MEMORY_UPDATE", "NEXT_MISSION"],
@@ -195,6 +206,10 @@ def readiness_snapshot(
         "operator_longitudinal_intelligence": operator_intelligence and longitudinal,
         "operator_longitudinal_contradiction_detection": True,
         "operator_longitudinal_no_causal_claims": True,
+        "premium_deep_history": operator_intelligence and premium_deep_history,
+        "premium_deep_history_server_authoritative": True,
+        "premium_client_authority": False,
+        "premium_link_does_not_grant_entitlement": True,
         "persistence_recovery": bool(recovery_fn),
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
         "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),
