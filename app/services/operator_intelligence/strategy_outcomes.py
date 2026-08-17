@@ -102,7 +102,7 @@ class PremiumStrategyOutcomeService:
         ]
 
         evaluations: list[dict[str, Any]] = []
-        by_class: dict[str, list[str]] = defaultdict(list)
+        by_class: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for strategy in issued:
             issued_at = _at(strategy)
             focus = str(strategy.get("focus") or "").casefold()
@@ -123,26 +123,35 @@ class PremiumStrategyOutcomeService:
             else:
                 verdict = "mixed_association"
             strategy_class = str(strategy.get("strategy_class") or "calibration")[:40]
-            by_class[strategy_class].append(verdict)
+            latest_followup_at = _at(matched[-1]) if matched else ""
+            by_class[strategy_class].append({"verdict": verdict, "latest_followup_at": latest_followup_at})
             evaluations.append({
                 "strategy_id": str(strategy.get("strategy_id") or ""),
                 "generation": max(0, int(strategy.get("generation") or 0)),
                 "strategy_class": strategy_class,
                 "focus": focus,
                 "issued_at": issued_at,
+                "latest_followup_at": latest_followup_at or None,
                 "matched_cycles": len(outcomes),
                 "outcomes": {"clean": clean, "mixed": mixed, "failed": failed},
                 "verdict": verdict,
                 "causal_claim": False,
             })
 
-        class_summary = {}
-        for strategy_class, verdicts in by_class.items():
+        class_summary: dict[str, dict[str, Any]] = {}
+        for strategy_class, records in by_class.items():
+            verdicts = [str(item.get("verdict") or "") for item in records]
+            evaluated_times = [
+                str(item.get("latest_followup_at") or "")
+                for item in records
+                if str(item.get("verdict") or "") != "insufficient_followup" and str(item.get("latest_followup_at") or "")
+            ]
             class_summary[strategy_class] = {
                 "evaluated": sum(v != "insufficient_followup" for v in verdicts),
                 "supported": verdicts.count("supported_association"),
                 "mixed": verdicts.count("mixed_association"),
                 "unsupported": verdicts.count("unsupported_association"),
+                "latest_evaluated_at": max(evaluated_times) if evaluated_times else None,
             }
 
         latest = evaluations[-1] if evaluations else None
