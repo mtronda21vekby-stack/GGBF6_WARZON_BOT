@@ -50,7 +50,7 @@ def _content_direction(text: str) -> str:
         )
     if len(clean) >= 1200:
         return (
-            "Treat this as a long coaching debrief. Group meaning into audible paragraphs, slightly reset the breath between "
+            "Treat this as a longer coaching debrief. Group meaning into audible paragraphs, slightly reset the breath between "
             "cause, correction and next action, and keep the final third as controlled as the opening."
         )
     if any(marker in clean for marker in ("Перв", "Втор", "1.", "2.", "•")):
@@ -72,7 +72,7 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
         "Speak fluent natural Russian in a close-mic premium studio style with a neutral native Russian accent.",
         "The voice is synthetic: do not imitate, reference, or resemble any real named person.",
         "Sound like a highly experienced competitive-FPS operator speaking to one player, not like a generic assistant.",
-        "Keep the signal dry and intimate: no announcer voice, trailer voice, radio distortion, reverb, whisper effect, or theatrical growl.",
+        "Keep the signal dry and intimate: no announcer voice, movie trailer voice, radio distortion, reverb, whisper effect, or theatrical growl.",
         "Use human breath groups, micro-pauses, variable sentence length, clean consonants and relaxed connected speech.",
         "Avoid the synthetic assistant cadence where every phrase receives equal stress or every sentence rises at the end.",
         "Give at most one strong emphasis per thought. Let secondary information stay quieter and faster.",
@@ -92,7 +92,7 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
 
     if persona == "COACH":
         instructions.extend([
-            "Use a measured one-on-one elite esports coaching manner: calm authority, slightly warmer tone, controlled pacing.",
+            "Use a measured one-on-one elite esports coach manner: calm authority, slightly warmer tone, controlled pacing.",
             "Pause briefly before the root cause, the correction and the measurable next action.",
             "Criticism is precise and emotionally neutral; encouragement is brief and earned.",
         ])
@@ -104,7 +104,7 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
 
     if brain == "DEMON":
         instructions.append(
-            "Add restrained competitive intensity through firmer consonants and endings, never by shouting or lowering the voice theatrically."
+            "Add restrained intensity through firmer consonants and endings, without shouting, theatrical pitch lowering, or roleplay."
         )
     elif brain == "PRO":
         instructions.append("Use precise professional emphasis and a focused tournament-review cadence.")
@@ -113,7 +113,7 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
 
     if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
         instructions.append(
-            "The player may be overloaded. Lower vocal energy, widen the most important pause slightly, and make the correction exceptionally clear."
+            "Lower emotional intensity because the player may be overloaded: reduce vocal energy, widen the most important pause slightly, and make the correction exceptionally clear."
         )
     elif emotion in {"HYPE", "EXCITED"}:
         instructions.append("Allow modest extra energy and faster transitions while preserving diction and control.")
@@ -130,7 +130,7 @@ def voice_speed(profile: Mapping[str, Any] | None) -> float:
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
     emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
 
-    speed = 0.985 if persona == "COACH" else 1.035
+    speed = 0.98 if persona == "COACH" else 1.04
     if bool(data.get("_bco_voice_reply")):
         speed += 0.015
     if brain == "DEMON":
@@ -195,7 +195,7 @@ class OpenAITTSBackend:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/voice-studio-v19",
+            "User-Agent": "BLACK-CROWN-OPS/voice-studio-v22",
             "X-Client-Request-Id": str(uuid.uuid4()),
         }
         output.parent.mkdir(parents=True, exist_ok=True)
