@@ -33,6 +33,7 @@ def operator_view(snapshot: Mapping[str, Any] | None, *, note: str = "") -> Cons
     operator = dict(data.get("operator") or {})
     mission = dict(data.get("mission") or {})
     session = dict(data.get("session") or {})
+    orchestrator = mission.get("orchestrator") if isinstance(mission.get("orchestrator"), Mapping) else {}
     weaknesses = list(operator.get("weakness_signals") or [])[:3]
 
     readiness = str(operator.get("readiness") or "UNKNOWN")
@@ -45,6 +46,21 @@ def operator_view(snapshot: Mapping[str, Any] | None, *, note: str = "") -> Cons
     status = str(mission.get("status") or "candidate").upper()
     success = str(mission.get("success_condition") or "")
     basis = str(mission.get("basis") or "")
+
+    stage = str(mission.get("training_stage") or orchestrator.get("stage") or "CALIBRATION").upper()
+    stage_label = str(mission.get("stage_label") or orchestrator.get("stage_label") or "BASELINE CAPTURE")
+    stage_success = str(mission.get("stage_success_condition") or orchestrator.get("stage_success_condition") or "")
+    next_stage = str(orchestrator.get("next_stage_if_passed") or stage).upper()
+    recalibration = bool(orchestrator.get("recalibration_required", False))
+    stage_block = (
+        "\n\nMISSION ORCHESTRATOR:\n"
+        f"• STAGE — {stage} · {stage_label}\n"
+        f"• STAGE GATE — {stage_success or 'explicit outcome gate'}\n"
+        f"• NEXT — {next_stage}\n"
+        f"• RECALIBRATION — {'REQUIRED' if recalibration else 'NO'}\n"
+        "• AUTHORITY — explicit CLEAN/MIXED/FAILED only; VOD cannot advance stage\n"
+        "• RULE — one bad match does not reset MAINTENANCE; stage ≠ player trait"
+    )
 
     signal_block = "\n".join(_signal_line(x) for x in weaknesses) if weaknesses else (
         "• Нет подтверждённой слабости. Unknown остаётся unknown."
@@ -86,7 +102,7 @@ def operator_view(snapshot: Mapping[str, Any] | None, *, note: str = "") -> Cons
         f"• FOCUS — {focus.upper()} · {status}\n"
         f"• SUCCESS — {success or 'collecting evidence'}\n\n"
         f"BASIS: {basis or 'No hidden score. Mission is calibrated from available evidence.'}"
-        f"{evidence_block}{review_block}{note_block}"
+        f"{stage_block}{evidence_block}{review_block}{note_block}"
     )
 
     rows: list[list[dict[str, Any]]] = []
