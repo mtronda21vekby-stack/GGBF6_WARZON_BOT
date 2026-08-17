@@ -101,12 +101,13 @@ jobs:
           from pathlib import Path
           from app.release import APP_VERSION, RELEASE_CONTRACT
 
-          assert APP_VERSION == '34.0.0'
-          assert RELEASE_CONTRACT == 'bco-evidence-freshness-v34'
+          assert APP_VERSION == '35.0.0'
+          assert RELEASE_CONTRACT == 'bco-regime-change-detection-v35'
 
           portfolio = Path('app/services/operator_intelligence/strategy_portfolio.py').read_text()
           strategy = Path('app/services/operator_intelligence/adaptive_strategy.py').read_text()
           freshness = Path('app/services/operator_intelligence/evidence_freshness.py').read_text()
+          regime = Path('app/services/operator_intelligence/regime_change.py').read_text()
           router = Path('app/webapp/command_center_router.py').read_text()
           ui = Path('app/webapp/static/bco.strategy.js').read_text()
 
@@ -119,8 +120,7 @@ jobs:
           assert 'associative_outcome_calibration_only' in router
           assert 'deterministic_evidence_backed_rotation_only' in router
 
-          # v34 freshness is additive and server-derived.
-          assert 'bco_premium_adaptive_strategy_v34' in strategy
+          # v34 freshness remains additive and server-derived.
           assert 'bco_evidence_freshness_v34' in freshness
           assert 'FRESH_MAX_DAYS = 7' in freshness
           assert 'AGING_MAX_DAYS = 21' in freshness
@@ -129,6 +129,19 @@ jobs:
           assert 'old_support_is_not_current_proof' in freshness
           assert 'server_persisted_evidence_timestamps_only' in router
 
+          # v35 regime detection is conservative and cannot infer cause/meta.
+          assert 'bco_premium_adaptive_strategy_v35' in strategy
+          assert 'bco_player_regime_change_v35' in regime
+          assert 'MIN_CANDIDATE_CYCLES = 6' in regime
+          assert 'MIN_CONFIRMED_CYCLES = 9' in regime
+          assert 'WINDOW_SIZE = 3' in regime
+          assert 'one_session_can_change_regime' in regime
+          assert 'shift_does_not_identify_cause' in regime
+          assert 'external_meta_change_not_inferred' in regime
+          assert 'stale_evidence_cannot_confirm_current_shift' in regime
+          assert 'vod_contradiction_cannot_confirm_shift' in regime
+          assert 'server_explicit_outcome_windows_only' in router
+
           # Human-facing truth markers must remain literal.
           assert 'ASSOCIATION ≠ CAUSATION' in ui
           assert 'EFFECTIVENESS ≠ CAUSAL PROOF' in ui
@@ -136,5 +149,8 @@ jobs:
           assert 'EXPLORATION ≠ RANDOMNESS' in ui
           assert 'STALE ≠ FALSE' in ui
           assert 'OLD SUPPORT ≠ CURRENT PROOF' in ui
+          assert 'SHIFT ≠ CAUSE' in ui
+          assert 'ONE SESSION ≠ REGIME' in ui
+          assert 'META CHANGE NOT INFERRED' in ui
           print('release/truth/authority contract: clean')
           PY
