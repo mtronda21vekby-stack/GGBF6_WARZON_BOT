@@ -2,29 +2,46 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import Any, Mapping
 
 from app.services.operator_intelligence.mission_orchestrator import MissionOrchestrator
-from app.services.operator_intelligence.service import OperatorIntelligenceService
+from app.services.operator_intelligence.v28 import OperatorIntelligenceService as CurrentOperatorIntelligenceService
 
 
 def _env_on(name: str, default: str = "1") -> bool:
     return os.getenv(name, default).strip().casefold() not in {"0", "false", "off", "no", ""}
 
 
-@dataclass
 class OrchestratedOperatorIntelligenceService:
-    """Add v36 mission staging without changing v25 mission authority.
+    """Add v36 mission staging without changing established mission authority.
 
-    The wrapped v25 service remains the authority for mission IDs, accept,
-    complete, persistence, stale-action rejection, and explicit outcomes. This
-    wrapper only derives and projects the v36 training stage from persisted
-    explicit mission history.
+    The wrapped current Operator service (v28 including v27 evidence fusion)
+    remains authoritative for mission IDs, accept, complete, persistence,
+    longitudinal intelligence and stale-action rejection. v36 only derives and
+    projects a training stage from persisted explicit mission history.
     """
 
-    base: OperatorIntelligenceService
-    orchestrator_enabled: bool = True
+    def __init__(
+        self,
+        *,
+        store: Any = None,
+        profiles: Any = None,
+        operator_enabled: bool = True,
+        missions_enabled: bool = True,
+        orchestrator_enabled: bool | None = None,
+        base: CurrentOperatorIntelligenceService | None = None,
+    ) -> None:
+        self.base = base or CurrentOperatorIntelligenceService(
+            store=store,
+            profiles=profiles,
+            operator_enabled=operator_enabled,
+            missions_enabled=missions_enabled,
+        )
+        self.orchestrator_enabled = (
+            _env_on("MISSION_ORCHESTRATOR_ENABLED")
+            if orchestrator_enabled is None
+            else bool(orchestrator_enabled)
+        )
 
     @classmethod
     def from_components(
@@ -37,17 +54,11 @@ class OrchestratedOperatorIntelligenceService:
         orchestrator_enabled: bool | None = None,
     ) -> "OrchestratedOperatorIntelligenceService":
         return cls(
-            base=OperatorIntelligenceService(
-                store=store,
-                profiles=profiles,
-                operator_enabled=operator_enabled,
-                missions_enabled=missions_enabled,
-            ),
-            orchestrator_enabled=(
-                _env_on("MISSION_ORCHESTRATOR_ENABLED")
-                if orchestrator_enabled is None
-                else bool(orchestrator_enabled)
-            ),
+            store=store,
+            profiles=profiles,
+            operator_enabled=operator_enabled,
+            missions_enabled=missions_enabled,
+            orchestrator_enabled=orchestrator_enabled,
         )
 
     @property
@@ -57,6 +68,14 @@ class OrchestratedOperatorIntelligenceService:
     @property
     def profiles(self) -> Any:
         return self.base.profiles
+
+    @property
+    def operator_enabled(self) -> bool:
+        return bool(self.base.operator_enabled)
+
+    @property
+    def missions_enabled(self) -> bool:
+        return bool(self.base.missions_enabled)
 
     def _progression(self, chat_id: int) -> list[dict[str, Any]]:
         fn = getattr(self.store, "list_progression_events", None)
@@ -118,14 +137,12 @@ class OrchestratedOperatorIntelligenceService:
         next_mission = self._decorate_mission(data.get("next_mission"), progression)
         if next_mission is not None:
             data["next_mission"] = next_mission
-
         return data
 
     def snapshot(self, chat_id: int) -> dict[str, Any]:
         return self._apply(int(chat_id), self.base.snapshot(int(chat_id)))
 
     def accept(self, chat_id: int, mission_id: str) -> dict[str, Any]:
-        # Base service validates the exact v25 mission ID and records acceptance.
         return self._apply(int(chat_id), self.base.accept(int(chat_id), mission_id))
 
     def complete(
@@ -136,8 +153,6 @@ class OrchestratedOperatorIntelligenceService:
         outcome: str = "reported",
         metrics: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        # Base service remains the only completion writer. The orchestrator sees
-        # the new explicit outcome only after that write has completed.
         result = self.base.complete(
             int(chat_id),
             mission_id,
