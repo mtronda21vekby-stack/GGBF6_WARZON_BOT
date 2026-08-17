@@ -18,6 +18,7 @@ on:
       - feature/bco-aaa-abuse-guard-v12
       - feature/bco-live-intelligence-command-center-v18
       - feature/bco-voice-intelligence-v19
+      - feature/bco-duplex-voice-v20
   pull_request:
     branches:
       - main
@@ -145,9 +146,14 @@ jobs:
               and features.get('webapp_live_intelligence_stream') is True
               and features.get('webapp_cinematic_ui') is True
               and features.get('voice_input') is True
+              and features.get('voice_input_confidence_gate') is True
+              and features.get('voice_duplex_follow_input') is True
               and features.get('voice_high_fidelity') is True
               and voice.get('input_configured') is True
-              and voice.get('transcription_model') == 'gpt-4o-mini-transcribe'
+              and voice.get('transcription_model') == 'gpt-4o-transcribe'
+              and voice.get('transcription_fallback_model') == 'gpt-4o-mini-transcribe'
+              and voice.get('follow_input_enabled') is True
+              and float(voice.get('transcription_confidence_threshold') or 0) > 0
               and voice.get('opus_bitrate_kbps') >= 64
               and live.get('final_message_authoritative') is True
               and live.get('webapp_transport') == 'ndjson'
@@ -163,7 +169,7 @@ jobs:
                    grep -q '"v18_overlay":true' /tmp/bco-runtime.json && \
                    grep -q 'Live Intelligence + Cinematic Runtime' /tmp/bco-live.js && \
                    grep -q 'Cinematic Technical Design System' /tmp/bco-cinematic.css; then
-                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, voice intelligence=ON, live intelligence=ON"
+                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, duplex voice=ON, live intelligence=ON"
                   cat /tmp/bco-health.json
                   cat /tmp/bco-runtime.json
                   exit 0
