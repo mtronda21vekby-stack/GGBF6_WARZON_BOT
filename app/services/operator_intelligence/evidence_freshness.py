@@ -89,6 +89,22 @@ class EvidenceFreshnessPolicy:
                 return raw + 1
         return raw
 
+    @staticmethod
+    def decay_recommendation_confidence(confidence: str, state: str) -> str:
+        """Decay current recommendation confidence while preserving history."""
+        raw = str(confidence or "unknown").casefold()
+        if raw not in {"high", "medium", "low", "unknown"}:
+            raw = "unknown"
+        freshness = str(state or "unknown").casefold()
+        if freshness == "stale":
+            return "low" if raw in {"high", "medium", "low"} else "unknown"
+        if freshness == "aging":
+            if raw == "high":
+                return "medium"
+            if raw == "medium":
+                return "low"
+        return raw
+
     @classmethod
     def snapshot(
         cls,
