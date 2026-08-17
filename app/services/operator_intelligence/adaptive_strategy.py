@@ -4,19 +4,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from app.services.operator_intelligence.strategy_portfolio import StrategyPortfolioCalibration
+
 
 @dataclass(frozen=True)
 class PremiumAdaptiveStrategyService:
     """Build a bounded next-objective strategy from Premium Deep History.
 
     Entitlement is resolved by the server route before this service is called.
-    This layer never accepts a Premium flag and never turns association into
-    causation. It chooses a measurable next focus from observed history only.
+    v32 may calibrate strategy-class priority using prior associative outcome
+    windows, but it never accepts a Premium flag and never claims causation.
     """
 
-    def build(self, deep_history: Mapping[str, Any], operator: Mapping[str, Any]) -> dict[str, Any]:
+    def build(
+        self,
+        deep_history: Mapping[str, Any],
+        operator: Mapping[str, Any],
+        portfolio: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         history = dict(deep_history or {})
         op = dict(operator or {})
+        portfolio_data = dict(portfolio or {})
         comparisons = [dict(x) for x in list(history.get("focus_comparisons") or []) if isinstance(x, Mapping)]
         evidence = history.get("evidence") if isinstance(history.get("evidence"), Mapping) else {}
         signals = history.get("signals") if isinstance(history.get("signals"), Mapping) else {}
@@ -28,33 +36,76 @@ class PremiumAdaptiveStrategyService:
         contradiction_count = max(0, int(evidence.get("contradictions") or 0))
         observed_cycles = max(0, int((history.get("horizon") or {}).get("observed_cycles") or 0)) if isinstance(history.get("horizon"), Mapping) else 0
 
-        selected: dict[str, Any] | None = None
-        rationale = ""
-        strategy_class = "calibration"
+        candidates: list[dict[str, Any]] = []
+
+        def add_candidate(strategy_class: str, selected: Mapping[str, Any] | None, rationale: str, base_priority: int) -> None:
+            adjustment = StrategyPortfolioCalibration.adjustment(portfolio_data, strategy_class)
+            candidates.append({
+                "strategy_class": strategy_class,
+                "selected": dict(selected or {}),
+                "rationale": rationale,
+                "base_priority": base_priority,
+                "portfolio_adjustment": adjustment,
+                "score": base_priority + adjustment * 3,
+            })
 
         if regression:
-            selected = dict(regression)
-            strategy_class = "regression_intercept"
-            rationale = "Repeated recent-vs-prior decline is the strongest bounded signal in Premium history."
-        elif contradiction_count > 0:
-            candidates = [x for x in comparisons if int(x.get("contradictions") or 0) > 0]
-            if candidates:
-                selected = max(candidates, key=lambda x: (int(x.get("contradictions") or 0), int(x.get("cycles") or 0)))
-            strategy_class = "contradiction_resolution"
-            rationale = "Explicit outcomes and sampled-frame evidence disagree; resolve the uncertainty before increasing difficulty."
-        elif comparisons:
-            stable = [x for x in comparisons if str(x.get("direction") or "") == "stable"]
-            selected = max(stable or comparisons, key=lambda x: int(x.get("cycles") or 0))
-            strategy_class = "consistency_build"
-            rationale = "No regression dominates; use the best-supported repeated focus to improve consistency."
-        elif improvement:
-            selected = dict(improvement)
-            strategy_class = "stability_validation"
-            rationale = "An improving association exists, but history is not yet deep enough to treat it as stable mastery."
+            add_candidate(
+                "regression_intercept",
+                regression,
+                "Repeated recent-vs-prior decline is a strong bounded signal in Premium history.",
+                40,
+            )
 
-        focus = str((selected or {}).get("focus") or current_mission.get("focus") or "calibration").strip().casefold()[:40]
-        selected_cycles = max(0, int((selected or {}).get("cycles") or 0))
-        contradictions = max(0, int((selected or {}).get("contradictions") or contradiction_count))
+        if contradiction_count > 0:
+            contradiction_candidates = [x for x in comparisons if int(x.get("contradictions") or 0) > 0]
+            selected_contradiction = max(
+                contradiction_candidates,
+                key=lambda x: (int(x.get("contradictions") or 0), int(x.get("cycles") or 0)),
+                default=None,
+            )
+            add_candidate(
+                "contradiction_resolution",
+                selected_contradiction,
+                "Explicit outcomes and sampled-frame evidence disagree; resolve uncertainty before increasing difficulty.",
+                30,
+            )
+
+        if comparisons:
+            stable = [x for x in comparisons if str(x.get("direction") or "") == "stable"]
+            selected_consistency = max(stable or comparisons, key=lambda x: int(x.get("cycles") or 0))
+            add_candidate(
+                "consistency_build",
+                selected_consistency,
+                "Use a well-supported repeated focus to reduce session-to-session variance.",
+                20,
+            )
+
+        if improvement:
+            add_candidate(
+                "stability_validation",
+                improvement,
+                "An improving association exists; validate stability before treating it as durable mastery.",
+                10,
+            )
+
+        if candidates:
+            chosen = max(candidates, key=lambda x: (int(x["score"]), int(x["base_priority"])))
+            selected = dict(chosen["selected"])
+            strategy_class = str(chosen["strategy_class"])
+            rationale = str(chosen["rationale"])
+            portfolio_adjustment = int(chosen["portfolio_adjustment"])
+            selection_score = int(chosen["score"])
+        else:
+            selected = {}
+            strategy_class = "calibration"
+            rationale = "Insufficient repeated evidence; remain in calibration."
+            portfolio_adjustment = StrategyPortfolioCalibration.adjustment(portfolio_data, strategy_class)
+            selection_score = portfolio_adjustment * 3
+
+        focus = str(selected.get("focus") or current_mission.get("focus") or "calibration").strip().casefold()[:40]
+        selected_cycles = max(0, int(selected.get("cycles") or 0))
+        contradictions = max(0, int(selected.get("contradictions") or contradiction_count))
 
         if selected_cycles >= 8 and contradictions == 0:
             confidence = "high"
@@ -95,16 +146,25 @@ class PremiumAdaptiveStrategyService:
         elif active_focus:
             mission_alignment = "different_active_focus"
 
+        class_row = ((portfolio_data.get("classes") or {}).get(strategy_class) or {}) if isinstance(portfolio_data.get("classes"), Mapping) else {}
         return {
-            "schema": "bco_premium_adaptive_strategy_v30",
+            "schema": "bco_premium_adaptive_strategy_v32",
             "strategy_class": strategy_class,
             "focus": focus,
             "confidence": confidence,
-            "rationale": rationale or "Insufficient repeated evidence; remain in calibration.",
+            "rationale": rationale,
             "objective": objective,
             "success_condition": success_condition,
             "next_adaptation": next_adaptation,
             "mission_alignment": mission_alignment,
+            "portfolio_calibration": {
+                "schema": str(portfolio_data.get("schema") or "bco_strategy_portfolio_v32"),
+                "state": str(class_row.get("state") or "explore"),
+                "evaluated_windows": max(0, int(class_row.get("evaluated") or 0)),
+                "priority_adjustment": portfolio_adjustment,
+                "selection_score": selection_score,
+                "insufficient_data_preserves_exploration": True,
+            },
             "evidence": {
                 "observed_cycles": observed_cycles,
                 "focus_cycles": selected_cycles,
@@ -123,5 +183,7 @@ class PremiumAdaptiveStrategyService:
                 "explicit_outcome_authoritative": True,
                 "sampled_frame_vod_does_not_autocomplete": True,
                 "strategy_is_recommendation_not_fact": True,
+                "portfolio_priority_is_associative": True,
+                "no_strategy_class_permanently_blocked": True,
             },
         }

@@ -14,6 +14,7 @@ from app.services.operator_intelligence import MissionConflict, OperatorIntellig
 from app.services.operator_intelligence.adaptive_strategy import PremiumAdaptiveStrategyService
 from app.services.operator_intelligence.deep_history import PremiumDeepHistoryService
 from app.services.operator_intelligence.strategy_outcomes import PremiumStrategyOutcomeService
+from app.services.operator_intelligence.strategy_portfolio import StrategyPortfolioCalibration
 from app.webapp.security import verify_init_data
 
 log = logging.getLogger("bco.command_center")
@@ -153,13 +154,16 @@ async def operator_strategy_get(
     chat_id, _ = await _require_premium(x_telegram_init_data or "", feature="adaptive_strategy")
     deep_history = PremiumDeepHistoryService(APP_STORE).snapshot(chat_id)
     operator = _operator_service().snapshot(chat_id)
-    data = PremiumAdaptiveStrategyService().build(deep_history, operator)
     outcome_loop = PremiumStrategyOutcomeService(APP_STORE)
+    prior_effectiveness = outcome_loop.snapshot(chat_id)
+    portfolio = StrategyPortfolioCalibration.snapshot(prior_effectiveness)
+    data = PremiumAdaptiveStrategyService().build(deep_history, operator, portfolio)
     strategy_id = outcome_loop.record_issue(chat_id, data)
     effectiveness = outcome_loop.snapshot(chat_id)
     data = dict(data)
     data["strategy_id"] = strategy_id
     data["effectiveness"] = effectiveness
+    data["strategy_portfolio"] = portfolio
     return _no_store({
         "ok": True,
         "trusted": True,
@@ -167,6 +171,7 @@ async def operator_strategy_get(
         "premium_authority": "server_bco_premium",
         "strategy_authority": "evidence_driven_recommendation",
         "effectiveness_authority": "explicit_outcome_association_only",
+        "portfolio_authority": "associative_outcome_calibration_only",
         "data": data,
     })
 

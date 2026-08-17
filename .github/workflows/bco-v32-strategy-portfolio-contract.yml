@@ -1,0 +1,98 @@
+name: BCO v32 Strategy Portfolio Contract
+
+on:
+  push:
+    branches:
+      - main
+      - feature/bco-strategy-portfolio-calibration-v32
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  v32-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: Compile
+        run: python -m compileall app
+      - name: Tests
+        run: pytest -q
+      - name: Import smoke
+        run: python -c "from app.webhook import app; print(app.title, app.version)"
+      - name: Static portfolio contract
+        run: |
+          grep -q 'bco_strategy_portfolio_v32' app/services/operator_intelligence/strategy_portfolio.py
+          grep -q 'minimum_evaluated_windows' app/services/operator_intelligence/strategy_portfolio.py
+          grep -q 'insufficient_data_preserves_exploration' app/services/operator_intelligence/strategy_portfolio.py
+          grep -q 'no_strategy_class_is_permanently_blocked' app/services/operator_intelligence/strategy_portfolio.py
+          grep -q 'portfolio_priority_is_associative' app/services/operator_intelligence/adaptive_strategy.py
+          grep -q 'associative_outcome_calibration_only' app/webapp/command_center_router.py
+          grep -q 'PORTFOLIO PRIOR ≠ CAUSAL PROOF' app/webapp/static/bco.strategy.js
+          grep -q 'server_bco_premium' app/webapp/command_center_router.py
+
+  v32-production-smoke:
+    needs: v32-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PRODUCTION_URL: https://ggbf6-warzon-bot.onrender.com
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify deployed strategy portfolio contract
+        shell: bash
+        run: |
+          set -u
+          EXPECTED_VERSION="$(python -c 'from app.release import APP_VERSION; print(APP_VERSION)')"
+          EXPECTED_CONTRACT="$(python -c 'from app.release import RELEASE_CONTRACT; print(RELEASE_CONTRACT)')"
+          for attempt in $(seq 1 60); do
+            health_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-v32-health.json -w '%{http_code}' "${PRODUCTION_URL}/health/details" || true)"
+            if [ "${health_code}" = "200" ]; then
+              if EXPECTED_VERSION="${EXPECTED_VERSION}" EXPECTED_CONTRACT="${EXPECTED_CONTRACT}" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          try:
+              p = json.loads(Path('/tmp/bco-v32-health.json').read_text())
+          except Exception:
+              raise SystemExit(1)
+          recovery = ((p.get('storage') or {}).get('recovery') or {})
+          release = p.get('release') or {}
+          ok = (
+              release.get('version') == os.environ['EXPECTED_VERSION']
+              and release.get('contract') == os.environ['EXPECTED_CONTRACT']
+              and p.get('status') == 'ready'
+              and recovery.get('primary_available') is True
+              and recovery.get('last_probe_ok') is True
+              and int(recovery.get('outbox_pending') or 0) == 0
+          )
+          raise SystemExit(0 if ok else 1)
+          PY
+              then
+                js_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-v32-strategy.js -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.strategy.js" || true)"
+                api_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-v32-api.json -w '%{http_code}' "${PRODUCTION_URL}/webapp/api/operator-strategy" || true)"
+                if [ "${js_code}" = "200" ] && [ "${api_code}" = "401" ] && \
+                   grep -q 'Strategy Portfolio Calibration' /tmp/bco-v32-strategy.js && \
+                   grep -q 'PORTFOLIO PRIOR ≠ CAUSAL PROOF' /tmp/bco-v32-strategy.js && \
+                   grep -q 'server-authoritative Premium' /tmp/bco-v32-strategy.js; then
+                  echo "v32 production verified: version=${EXPECTED_VERSION}, contract=${EXPECTED_CONTRACT}, portfolio_asset=ON, unauth_strategy=401, exploration_preserved=ON"
+                  cat /tmp/bco-v32-health.json
+                  exit 0
+                fi
+              fi
+            fi
+            echo "v32 attempt=${attempt}/60 health=${health_code:-000} not ready"
+            sleep 10
+          done
+          echo "v32 production contract failed"
+          cat /tmp/bco-v32-health.json 2>/dev/null || true
+          exit 1
