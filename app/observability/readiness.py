@@ -88,11 +88,7 @@ def readiness_snapshot(
     voice_local_fallback_enabled = bool(getattr(settings, "voice_local_fallback_enabled", True))
     voice_follow_input = bool(getattr(settings, "voice_follow_input_enabled", True))
     local_only = voice_provider in {
-        "local",
-        "offline",
-        "piper_only",
-        "piper-only",
-        "local_only",
+        "local", "offline", "piper_only", "piper-only", "local_only",
     }
     cloud_tts_configured = voice_enabled and voice_high_fidelity_enabled and ai_configured and not local_only
     voice_input_configured = voice_input_enabled and ai_configured
@@ -106,8 +102,7 @@ def readiness_snapshot(
         )[:64],
         "transcription_language": str(getattr(settings, "voice_transcription_language", "ru") or "")[:8],
         "transcription_confidence_threshold": max(
-            0.0,
-            min(1.0, float(getattr(settings, "voice_transcription_confidence_threshold", 0.58) or 0.58)),
+            0.0, min(1.0, float(getattr(settings, "voice_transcription_confidence_threshold", 0.58) or 0.58)),
         ),
         "input_max_duration_s": int(getattr(settings, "voice_input_max_duration_s", 300) or 300),
         "follow_input_enabled": voice_follow_input,
@@ -134,6 +129,9 @@ def readiness_snapshot(
     telegram_live_drafts = bool(getattr(settings, "telegram_live_drafts_enabled", True))
     webapp_live_stream = bool(getattr(settings, "webapp_live_stream_enabled", True))
     webapp_cinematic = bool(getattr(settings, "webapp_cinematic_ui_enabled", True))
+    operator_intelligence = bool(getattr(settings, "operator_intelligence_enabled", True))
+    adaptive_missions = bool(getattr(settings, "adaptive_mission_control_enabled", True))
+
     live_intelligence_snapshot = {
         "telegram_drafts": telegram_live_drafts,
         "telegram_transport": "rich_message_draft_with_text_fallback",
@@ -141,6 +139,14 @@ def readiness_snapshot(
         "webapp_transport": "ndjson",
         "cinematic_ui": webapp_cinematic,
         "final_message_authoritative": True,
+    }
+    operator_snapshot = {
+        "enabled": operator_intelligence,
+        "adaptive_missions": operator_intelligence and adaptive_missions,
+        "truth_model": "verified_fact|high_confidence_player_pattern|weak_pattern|hypothesis|unknown",
+        "unknown_remains_unknown": True,
+        "session_lifecycle": ["PRE_SESSION", "LIVE_OBJECTIVE", "POST_SESSION_REVIEW", "MEMORY_UPDATE", "NEXT_MISSION"],
+        "persistence": "existing_progression_training_episode_store",
     }
 
     features = {
@@ -164,6 +170,10 @@ def readiness_snapshot(
         "telegram_live_intelligence_drafts": telegram_live_drafts,
         "webapp_live_intelligence_stream": webapp_live_stream,
         "webapp_cinematic_ui": webapp_cinematic,
+        "operator_twin": operator_intelligence,
+        "adaptive_mission_control": operator_intelligence and adaptive_missions,
+        "operator_truth_calibration": operator_intelligence,
+        "operator_session_lifecycle": operator_intelligence and adaptive_missions,
         "persistence_recovery": bool(recovery_fn),
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
         "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),
@@ -191,6 +201,7 @@ def readiness_snapshot(
         },
         "voice_runtime": voice_snapshot,
         "live_intelligence": live_intelligence_snapshot,
+        "operator_intelligence": operator_snapshot,
         "premium_link": entitlement_snapshot,
         "features": features,
         "abuse_guard": {
