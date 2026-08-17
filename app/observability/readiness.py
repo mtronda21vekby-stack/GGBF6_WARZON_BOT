@@ -112,6 +112,18 @@ def readiness_snapshot(
     }
 
     command_console_enabled = bool(getattr(settings, "telegram_aaa_console_enabled", True))
+    telegram_live_drafts = bool(getattr(settings, "telegram_live_drafts_enabled", True))
+    webapp_live_stream = bool(getattr(settings, "webapp_live_stream_enabled", True))
+    webapp_cinematic = bool(getattr(settings, "webapp_cinematic_ui_enabled", True))
+    live_intelligence_snapshot = {
+        "telegram_drafts": telegram_live_drafts,
+        "telegram_transport": "rich_message_draft_with_text_fallback",
+        "webapp_stream": webapp_live_stream,
+        "webapp_transport": "ndjson",
+        "cinematic_ui": webapp_cinematic,
+        "final_message_authoritative": True,
+    }
+
     features = {
         "ai": ai_enabled and ai_configured,
         "persistent_memory_configured": supabase_secret and supabase_url,
@@ -125,6 +137,9 @@ def readiness_snapshot(
         "telegram_aaa_command_console": command_console_enabled,
         "telegram_inline_navigation": command_console_enabled,
         "telegram_rich_messages": command_console_enabled,
+        "telegram_live_intelligence_drafts": telegram_live_drafts,
+        "webapp_live_intelligence_stream": webapp_live_stream,
+        "webapp_cinematic_ui": webapp_cinematic,
         "persistence_recovery": bool(recovery_fn),
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
         "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),
@@ -151,6 +166,7 @@ def readiness_snapshot(
             "recovery": recovery,
         },
         "voice_runtime": voice_snapshot,
+        "live_intelligence": live_intelligence_snapshot,
         "premium_link": entitlement_snapshot,
         "features": features,
         "abuse_guard": {
