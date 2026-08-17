@@ -36,8 +36,12 @@ def _settings():
         vod_enabled=True,
         voice_enabled=True,
         voice_input_enabled=True,
-        voice_transcription_model="gpt-4o-mini-transcribe",
+        voice_transcription_model="gpt-4o-transcribe",
+        voice_transcription_fallback_model="gpt-4o-mini-transcribe",
+        voice_transcription_language="ru",
+        voice_transcription_confidence_threshold=0.58,
         voice_input_max_duration_s=300,
+        voice_follow_input_enabled=True,
         voice_provider="auto",
         voice_high_fidelity_enabled=True,
         voice_local_fallback_enabled=True,
@@ -56,8 +60,8 @@ def _settings():
 
 
 def test_release_contract_is_explicit_and_readiness_exposes_version_only():
-    assert APP_VERSION == "19.0.0"
-    assert RELEASE_CONTRACT == "bco-voice-intelligence-v19"
+    assert APP_VERSION == "20.0.0"
+    assert RELEASE_CONTRACT == "bco-duplex-voice-v20"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -65,7 +69,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "19.0.0", "contract": "bco-voice-intelligence-v19"}
+    assert snap["release"] == {"version": "20.0.0", "contract": "bco-duplex-voice-v20"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_inline_navigation"] is True
@@ -74,6 +78,8 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
     assert snap["features"]["webapp_live_intelligence_stream"] is True
     assert snap["features"]["webapp_cinematic_ui"] is True
     assert snap["features"]["voice_input"] is True
+    assert snap["features"]["voice_input_confidence_gate"] is True
+    assert snap["features"]["voice_duplex_follow_input"] is True
     assert snap["features"]["voice_high_fidelity"] is True
     assert snap["features"]["voice_local_fallback"] is True
     assert snap["live_intelligence"] == {
@@ -88,8 +94,12 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         "enabled": True,
         "input_enabled": True,
         "input_configured": True,
-        "transcription_model": "gpt-4o-mini-transcribe",
+        "transcription_model": "gpt-4o-transcribe",
+        "transcription_fallback_model": "gpt-4o-mini-transcribe",
+        "transcription_language": "ru",
+        "transcription_confidence_threshold": 0.58,
         "input_max_duration_s": 300,
+        "follow_input_enabled": True,
         "requested_provider": "auto",
         "active_strategy": "cloud_first_local_fallback",
         "high_fidelity_enabled": True,
