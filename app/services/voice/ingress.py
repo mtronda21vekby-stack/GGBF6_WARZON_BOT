@@ -77,6 +77,7 @@ class PendingTranscript:
 class TelegramVoiceIngress:
     tg: Any
     transcription: OpenAITranscriptionBackend
+    profiles: Any = None
     usage_guard: Any = None
     enabled: bool = True
     max_bytes: int = 12 * 1024 * 1024
@@ -84,6 +85,17 @@ class TelegramVoiceIngress:
     confidence_threshold: float = 0.58
     confirmation_ttl_s: int = 120
     pending: dict[tuple[int, str], PendingTranscript] = field(default_factory=dict)
+
+    def _profile(self, chat_id: int) -> dict[str, Any]:
+        if self.profiles is None:
+            return {}
+        getter = getattr(self.profiles, "get", None)
+        if not callable(getter):
+            return {}
+        try:
+            return dict(getter(chat_id) or {})
+        except Exception:
+            return {}
 
     def _purge_pending(self) -> None:
         now = time.monotonic()
@@ -256,10 +268,18 @@ class TelegramVoiceIngress:
                     raise TranscriptionError("Telegram voice download failed") from exc
 
                 rich = getattr(self.transcription, "transcribe_result", None)
+                profile = self._profile(chat_id)
                 if callable(rich):
-                    result = await rich(source)
+                    try:
+                        result = await rich(source, profile=profile)
+                    except TypeError:
+                        result = await rich(source)
                 else:
-                    text = await self.transcription.transcribe(source)
+                    transcribe = getattr(self.transcription, "transcribe")
+                    try:
+                        text = await transcribe(source, profile=profile)
+                    except TypeError:
+                        text = await transcribe(source)
                     result = TranscriptionResult(
                         text=str(text or ""),
                         confidence=None,
@@ -331,12 +351,13 @@ class TelegramVoiceIngress:
             confirmed=False,
         )
         log.info(
-            "voice transcribed chat_id=%s duration_s=%s chars=%s confidence=%s model=%s fallback=%s",
+            "voice transcribed chat_id=%s duration_s=%s chars=%s confidence=%s model=%s fallback=%s context=%s",
             chat_id,
             duration,
             len(transcript),
             "unknown" if confidence is None else f"{confidence:.3f}",
             result.model,
             bool(result.fallback_used),
+            bool(self._profile(chat_id)),
         )
         return transformed, True
