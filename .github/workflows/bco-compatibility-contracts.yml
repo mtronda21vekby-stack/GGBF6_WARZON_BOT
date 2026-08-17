@@ -20,7 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: v30-v34 static compatibility boundaries
+      - name: v30-v35 static compatibility boundaries
         shell: bash
         run: |
           set -euo pipefail
@@ -66,9 +66,24 @@ jobs:
           grep -q 'missing_timestamp_remains_unknown' app/services/operator_intelligence/evidence_freshness.py
           grep -q 'old_support_is_not_current_proof' app/services/operator_intelligence/evidence_freshness.py
           grep -q 'server_persisted_evidence_timestamps_only' app/webapp/command_center_router.py
-          grep -q 'bco_premium_adaptive_strategy_v34' app/services/operator_intelligence/adaptive_strategy.py
           grep -q 'STALE ≠ FALSE' app/webapp/static/bco.strategy.js
           grep -q 'OLD SUPPORT ≠ CURRENT PROOF' app/webapp/static/bco.strategy.js
+
+          # v35 — Regime shifts require sustained explicit-outcome windows and never identify cause/meta.
+          grep -q 'bco_player_regime_change_v35' app/services/operator_intelligence/regime_change.py
+          grep -q 'MIN_CANDIDATE_CYCLES = 6' app/services/operator_intelligence/regime_change.py
+          grep -q 'MIN_CONFIRMED_CYCLES = 9' app/services/operator_intelligence/regime_change.py
+          grep -q 'WINDOW_SIZE = 3' app/services/operator_intelligence/regime_change.py
+          grep -q 'one_session_can_change_regime' app/services/operator_intelligence/regime_change.py
+          grep -q 'shift_does_not_identify_cause' app/services/operator_intelligence/regime_change.py
+          grep -q 'external_meta_change_not_inferred' app/services/operator_intelligence/regime_change.py
+          grep -q 'stale_evidence_cannot_confirm_current_shift' app/services/operator_intelligence/regime_change.py
+          grep -q 'vod_contradiction_cannot_confirm_shift' app/services/operator_intelligence/regime_change.py
+          grep -q 'bco_premium_adaptive_strategy_v35' app/services/operator_intelligence/adaptive_strategy.py
+          grep -q 'server_explicit_outcome_windows_only' app/webapp/command_center_router.py
+          grep -q 'SHIFT ≠ CAUSE' app/webapp/static/bco.strategy.js
+          grep -q 'ONE SESSION ≠ REGIME' app/webapp/static/bco.strategy.js
+          grep -q 'META CHANGE NOT INFERRED' app/webapp/static/bco.strategy.js
 
   compatibility-production-smoke:
     name: compatibility-production-smoke
@@ -82,7 +97,7 @@ jobs:
       - name: Checkout release contract
         uses: actions/checkout@v4
 
-      - name: Verify accumulated v30-v34 production boundaries
+      - name: Verify accumulated v30-v35 production boundaries
         shell: bash
         run: |
           set -euo pipefail
@@ -125,6 +140,21 @@ jobs:
               and int(op.get('evidence_freshness_aging_max_days') or 0) == 21
               and op.get('stale_evidence_is_false') is False
               and op.get('freshness_causal_claims') is False
+              and f.get('operator_regime_change_detection') is True
+              and f.get('operator_regime_requires_sustained_windows') is True
+              and f.get('operator_regime_one_session_not_enough') is True
+              and f.get('operator_regime_no_causal_claims') is True
+              and f.get('operator_regime_external_meta_not_inferred') is True
+              and op.get('regime_change_detection') is True
+              and op.get('regime_change_schema') == 'bco_player_regime_change_v35'
+              and op.get('regime_change_authority') == 'server_explicit_outcome_windows_only'
+              and int(op.get('regime_minimum_candidate_cycles') or 0) == 6
+              and int(op.get('regime_minimum_confirmed_cycles') or 0) == 9
+              and int(op.get('regime_window_size') or 0) == 3
+              and op.get('regime_one_session_can_change') is False
+              and op.get('regime_shift_identifies_cause') is False
+              and op.get('regime_external_meta_inferred') is False
+              and op.get('regime_causal_claims') is False
           )
           raise SystemExit(0 if ok else 1)
           PY
@@ -140,8 +170,11 @@ jobs:
                    grep -q 'ROTATION REQUIRES CLOSE EVIDENCE' /tmp/bco-strategy.js && \
                    grep -q 'STALE ≠ FALSE' /tmp/bco-strategy.js && \
                    grep -q 'OLD SUPPORT ≠ CURRENT PROOF' /tmp/bco-strategy.js && \
+                   grep -q 'SHIFT ≠ CAUSE' /tmp/bco-strategy.js && \
+                   grep -q 'ONE SESSION ≠ REGIME' /tmp/bco-strategy.js && \
+                   grep -q 'META CHANGE NOT INFERRED' /tmp/bco-strategy.js && \
                    grep -q 'server-authoritative Premium' /tmp/bco-strategy.js; then
-                  echo "compatibility production verified: version=${EXPECTED_VERSION}, contract=${EXPECTED_CONTRACT}, v30-v34 boundaries=ON, unauth_strategy=401"
+                  echo "compatibility production verified: version=${EXPECTED_VERSION}, contract=${EXPECTED_CONTRACT}, v30-v35 boundaries=ON, unauth_strategy=401"
                   exit 0
                 fi
               fi
