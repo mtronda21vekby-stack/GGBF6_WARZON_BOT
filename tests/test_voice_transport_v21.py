@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -89,6 +88,7 @@ def test_voice_to_voice_direction_is_conversational_not_read_aloud():
     base = {
         "voice": "TEAMMATE",
         "difficulty": "Demon",
+        "tts_voice": "marin",
     }
     typed = voice_instructions(base, "Держи высоту и не отдавай позицию.")
     duplex = voice_instructions(
@@ -96,9 +96,10 @@ def test_voice_to_voice_direction_is_conversational_not_read_aloud():
         "Держи высоту и не отдавай позицию.",
     )
 
-    assert "direct reply to a voice message" not in typed
-    assert "direct reply to a voice message" in duplex
-    assert "Do not sound like you are reading" in duplex
+    assert "directly answers the player's voice message" not in typed
+    assert "directly answers the player's voice message" in duplex
+    assert "avoid an intro or recap" in duplex
+    assert "read-out script" in duplex
     assert voice_speed({**base, "_bco_voice_reply": True}) > voice_speed(base)
 
 
