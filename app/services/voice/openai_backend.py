@@ -80,9 +80,9 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
     if bool(data.get("_bco_voice_reply")):
         instructions.append("This directly answers the player's voice message: enter the answer immediately, keep it conversational, and avoid an intro or recap of the question.")
     instructions.append("As COACH, be calm, analytical and emphasize the root cause and next correction." if persona == "COACH" else "As TEAMMATE, be concise, fast and natural like a strong squadmate between fights, not military roleplay.")
-    if brain == "DEMON": instructions.append("For DEMON mode, lower the emotional temperature and be more decisive and information-dense, but never shout, growl or perform a villain persona.")
+    if brain == "DEMON": instructions.append("For DEMON mode, lower the emotional temperature and be more decisive and information-dense, but never shout, growl or perform a villain persona; never artificially lower the pitch.")
     elif brain == "PRO": instructions.append("For PRO mode, keep confident professional precision and higher information density without sounding formal.")
-    if emotion in {"TILT", "ANGRY", "ANXIOUS"}: instructions.append("Lower the energy slightly and make the key correction easy to hear; do not make psychological claims.")
+    if emotion in {"TILT", "ANGRY", "ANXIOUS"}: instructions.append("The player may be overloaded: lower the energy slightly and make the key correction easy to hear; do not make psychological claims.")
     elif emotion in {"HYPE", "EXCITED"}: instructions.append("Allow a little extra energy while keeping delivery controlled and natural.")
     content = _content_direction(text)
     if content: instructions.append(content)
