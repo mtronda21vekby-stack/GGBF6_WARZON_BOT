@@ -101,25 +101,40 @@ jobs:
           from pathlib import Path
           from app.release import APP_VERSION, RELEASE_CONTRACT
 
-          assert APP_VERSION == '33.0.0'
-          assert RELEASE_CONTRACT == 'bco-adaptive-exploration-budget-v33'
+          assert APP_VERSION == '34.0.0'
+          assert RELEASE_CONTRACT == 'bco-evidence-freshness-v34'
 
           portfolio = Path('app/services/operator_intelligence/strategy_portfolio.py').read_text()
           strategy = Path('app/services/operator_intelligence/adaptive_strategy.py').read_text()
+          freshness = Path('app/services/operator_intelligence/evidence_freshness.py').read_text()
           router = Path('app/webapp/command_center_router.py').read_text()
           ui = Path('app/webapp/static/bco.strategy.js').read_text()
 
+          # Stable historical boundaries.
           assert 'bco_strategy_portfolio_v32' in portfolio
-          assert 'bco_premium_adaptive_strategy_v33' in strategy
           assert 'exploration_is_deterministic' in strategy
           assert 'strong_signal_not_overridden_by_exploration' in strategy
           assert 'server_bco_premium' in router
           assert 'explicit_outcome_association_only' in router
           assert 'associative_outcome_calibration_only' in router
           assert 'deterministic_evidence_backed_rotation_only' in router
+
+          # v34 freshness is additive and server-derived.
+          assert 'bco_premium_adaptive_strategy_v34' in strategy
+          assert 'bco_evidence_freshness_v34' in freshness
+          assert 'FRESH_MAX_DAYS = 7' in freshness
+          assert 'AGING_MAX_DAYS = 21' in freshness
+          assert 'stale_is_not_false' in freshness
+          assert 'missing_timestamp_remains_unknown' in freshness
+          assert 'old_support_is_not_current_proof' in freshness
+          assert 'server_persisted_evidence_timestamps_only' in router
+
+          # Human-facing truth markers must remain literal.
           assert 'ASSOCIATION ≠ CAUSATION' in ui
           assert 'EFFECTIVENESS ≠ CAUSAL PROOF' in ui
           assert 'PORTFOLIO PRIOR ≠ CAUSAL PROOF' in ui
           assert 'EXPLORATION ≠ RANDOMNESS' in ui
+          assert 'STALE ≠ FALSE' in ui
+          assert 'OLD SUPPORT ≠ CURRENT PROOF' in ui
           print('release/truth/authority contract: clean')
           PY
