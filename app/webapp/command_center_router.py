@@ -172,6 +172,7 @@ async def operator_strategy_get(
         "strategy_authority": "evidence_driven_recommendation",
         "effectiveness_authority": "explicit_outcome_association_only",
         "portfolio_authority": "associative_outcome_calibration_only",
+        "exploration_authority": "deterministic_evidence_backed_rotation_only",
         "data": data,
     })
 
