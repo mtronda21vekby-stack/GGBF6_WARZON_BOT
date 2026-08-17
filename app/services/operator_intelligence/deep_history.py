@@ -120,6 +120,7 @@ class PremiumDeepHistoryService:
                 "direction": direction,
                 "contradictions": focus_contradictions,
                 "confidence": "medium" if focus_contradictions else ("high" if len(cycles) >= 8 else "medium"),
+                "latest_at": str(cycles[-1].get("at") or "")[:64],
                 "causal_claim": False,
             })
 

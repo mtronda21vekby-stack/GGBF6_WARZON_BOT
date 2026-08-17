@@ -1,7 +1,8 @@
-/* BLACK CROWN OPS v33 — Adaptive Exploration Budget; Strategy Portfolio Calibration; Premium Strategy Outcome Loop; Premium Adaptive Strategy; recommendation, not player fact */
+/* BLACK CROWN OPS v34 — Evidence Freshness; Adaptive Exploration Budget; Strategy Portfolio Calibration; Premium Strategy Outcome Loop; Premium Adaptive Strategy; recommendation, not player fact */
 (() => {
   "use strict";
-  if (window.__BCO_STRATEGY_V33_LOADED__) return;
+  if (window.__BCO_STRATEGY_V34_LOADED__) return;
+  window.__BCO_STRATEGY_V34_LOADED__ = true;
   window.__BCO_STRATEGY_V33_LOADED__ = true;
   window.__BCO_STRATEGY_V32_LOADED__ = true;
   window.__BCO_STRATEGY_V31_LOADED__ = true;
@@ -13,11 +14,11 @@
 
   function mount() {
     const pane = $("#tab-operator-v25 .bco-op-shell");
-    if (!pane || $("#bcoStrategyV33")) return;
+    if (!pane || $("#bcoStrategyV34")) return;
     const card = document.createElement("section");
-    card.id = "bcoStrategyV33";
+    card.id = "bcoStrategyV34";
     card.className = "bco-op-card";
-    card.innerHTML = `<div class="bco-op-title"><span>ADAPTIVE STRATEGY</span><small>PREMIUM / EXPLORATION BUDGET</small></div><div id="bcoStrategyStatus" class="bco-op-review">Resolve strategy on demand.</div><div id="bcoStrategyBody"></div><button id="bcoStrategyRefresh" class="bco-op-btn" type="button">BUILD NEXT OBJECTIVE</button>`;
+    card.innerHTML = `<div class="bco-op-title"><span>ADAPTIVE STRATEGY</span><small>PREMIUM / EVIDENCE FRESHNESS</small></div><div id="bcoStrategyStatus" class="bco-op-review">Resolve strategy on demand.</div><div id="bcoStrategyBody"></div><button id="bcoStrategyRefresh" class="bco-op-btn" type="button">BUILD NEXT OBJECTIVE</button>`;
     const status = $("#bcoOpStatus", pane);
     if (status) pane.insertBefore(card, status); else pane.appendChild(card);
     $("#bcoStrategyRefresh")?.addEventListener("click", refresh);
@@ -40,14 +41,25 @@
 
   function portfolioText(calibration) {
     const c = calibration || {};
-    const sign = Number(c.priority_adjustment || 0) > 0 ? "+" : "";
-    return `${String(c.state || "explore").toUpperCase()} • EVALUATED ${Number(c.evaluated_windows || 0)} • PRIORITY ${sign}${Number(c.priority_adjustment || 0)} • SCORE ${Number(c.selection_score || 0)} • EXPLORATION PRESERVED`;
+    const current = Number(c.priority_adjustment || 0);
+    const historical = Number(c.historical_priority_adjustment ?? current);
+    const sign = current > 0 ? "+" : "";
+    const historicalSign = historical > 0 ? "+" : "";
+    const decay = current === historical ? "NO DECAY" : `HIST ${historicalSign}${historical} → CURRENT ${sign}${current}`;
+    return `${String(c.state || "explore").toUpperCase()} • EVALUATED ${Number(c.evaluated_windows || 0)} • PRIORITY ${sign}${current} • ${decay} • SCORE ${Number(c.selection_score || 0)} • EXPLORATION PRESERVED`;
   }
 
   function explorationText(exploration) {
     const e = exploration || {};
     const gap = e.score_gap === null || e.score_gap === undefined ? "N/A" : Number(e.score_gap);
     return `${String(e.reason || "top_signal").replaceAll("_", " ").toUpperCase()} • ROTATED ${e.rotated === true ? "YES" : "NO"} • REPEAT ${Number(e.repeat_streak || 0)}/${Number(e.repeat_limit || 2)} • SCORE GAP ${gap} • DETERMINISTIC • EVIDENCE-BACKED ONLY`;
+  }
+
+  function freshnessText(freshness) {
+    const f = freshness || {};
+    const signalAge = f.signal_age_days === null || f.signal_age_days === undefined ? "UNKNOWN AGE" : `${Number(f.signal_age_days)}D`;
+    const portfolioAge = f.portfolio_age_days === null || f.portfolio_age_days === undefined ? "UNKNOWN AGE" : `${Number(f.portfolio_age_days)}D`;
+    return `SIGNAL ${String(f.signal_state || "unknown").toUpperCase()} / ${signalAge} • PRIOR ${String(f.portfolio_state || "unknown").toUpperCase()} / ${portfolioAge} • STALE ≠ FALSE • OLD SUPPORT ≠ CURRENT PROOF`;
   }
 
   function render(data) {
@@ -58,19 +70,20 @@
       block("SUCCESS CONDITION", data?.success_condition),
       block("NEXT ADAPTATION", data?.next_adaptation),
       block("RATIONALE", data?.rationale),
+      block("EVIDENCE FRESHNESS", freshnessText(data?.evidence_freshness)),
       block("PORTFOLIO PRIOR", portfolioText(data?.portfolio_calibration)),
       block("EXPLORATION BUDGET", explorationText(data?.exploration_budget)),
       block("OUTCOME LOOP", effectivenessText(data?.effectiveness))
     );
     const meta = document.createElement("div"); meta.className = "bco-op-flow";
-    meta.textContent = `${String(data?.strategy_class || "calibration").toUpperCase()} • CONF ${String(data?.confidence || "unknown").toUpperCase()} • STRATEGY ${String(data?.strategy_id || "untracked").toUpperCase()} • ASSOCIATION ≠ CAUSATION • RECOMMENDATION ≠ FACT • EFFECTIVENESS ≠ CAUSAL PROOF • PORTFOLIO PRIOR ≠ CAUSAL PROOF • EXPLORATION ≠ RANDOMNESS • ROTATION REQUIRES CLOSE EVIDENCE`;
+    meta.textContent = `${String(data?.strategy_class || "calibration").toUpperCase()} • CONF ${String(data?.confidence || "unknown").toUpperCase()} / HIST ${String(data?.historical_confidence || data?.confidence || "unknown").toUpperCase()} • STRATEGY ${String(data?.strategy_id || "untracked").toUpperCase()} • ASSOCIATION ≠ CAUSATION • RECOMMENDATION ≠ FACT • EFFECTIVENESS ≠ CAUSAL PROOF • PORTFOLIO PRIOR ≠ CAUSAL PROOF • EXPLORATION ≠ RANDOMNESS • ROTATION REQUIRES CLOSE EVIDENCE • STALE ≠ FALSE • OLD SUPPORT ≠ CURRENT PROOF`;
     body.prepend(meta);
   }
 
   async function refresh() {
     const status = $("#bcoStrategyStatus"); const init = initData();
     if (!init) { if (status) status.textContent = "Open from Telegram to resolve server-authoritative Premium."; return; }
-    if (status) status.textContent = "Building strategy from bounded evidence + portfolio prior + deterministic exploration budget…";
+    if (status) status.textContent = "Building strategy from bounded evidence + freshness + associative portfolio + deterministic exploration…";
     try {
       const response = await fetch(API, { method: "GET", headers: { "X-Telegram-Init-Data": init }, cache: "no-store", credentials: "same-origin" });
       const payload = await response.json().catch(() => ({}));
@@ -79,7 +92,8 @@
       if (payload?.effectiveness_authority !== "explicit_outcome_association_only") throw new Error("Strategy outcome authority mismatch");
       if (payload?.portfolio_authority !== "associative_outcome_calibration_only") throw new Error("Strategy portfolio authority mismatch");
       if (payload?.exploration_authority !== "deterministic_evidence_backed_rotation_only") throw new Error("Exploration authority mismatch");
-      if (status) status.textContent = "SERVER PREMIUM VERIFIED // EXPLORATION IS DETERMINISTIC, EVIDENCE-BACKED, NON-CAUSAL";
+      if (payload?.freshness_authority !== "server_persisted_evidence_timestamps_only") throw new Error("Evidence freshness authority mismatch");
+      if (status) status.textContent = "SERVER PREMIUM VERIFIED // FRESHNESS CHANGES RELEVANCE, NOT HISTORY";
       render(payload.data || {});
     } catch (error) { if (status) status.textContent = error?.message || "Adaptive strategy unavailable."; }
   }

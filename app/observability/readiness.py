@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 from app.observability.quality import quality_telemetry
+from app.services.operator_intelligence.evidence_freshness import AGING_MAX_DAYS, FRESH_MAX_DAYS
 
 
 def _env_on(name: str, default: str = "1") -> bool:
@@ -133,6 +134,7 @@ def readiness_snapshot(
     operator_context_bridge = bool(getattr(settings, "operator_context_bridge_enabled", _env_on("OPERATOR_CONTEXT_BRIDGE_ENABLED")))
     mission_vod_fusion = bool(getattr(settings, "mission_vod_evidence_fusion_enabled", _env_on("MISSION_VOD_EVIDENCE_FUSION_ENABLED")))
     longitudinal = _env_on("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED")
+    evidence_freshness = _env_on("EVIDENCE_FRESHNESS_ENABLED")
     premium_deep_history = bool(
         _env_on("PREMIUM_DEEP_HISTORY_ENABLED")
         and entitlement_snapshot["enabled"]
@@ -168,6 +170,13 @@ def readiness_snapshot(
         "premium_deep_history_authority": "server_bco_premium",
         "premium_link_grants_entitlement": False,
         "premium_client_authority": False,
+        "evidence_freshness": operator_intelligence and premium_deep_history and evidence_freshness,
+        "evidence_freshness_schema": "bco_evidence_freshness_v34",
+        "evidence_freshness_authority": "server_persisted_evidence_timestamps_only",
+        "evidence_freshness_fresh_max_days": FRESH_MAX_DAYS,
+        "evidence_freshness_aging_max_days": AGING_MAX_DAYS,
+        "stale_evidence_is_false": False,
+        "freshness_causal_claims": False,
         "truth_model": "verified_fact|high_confidence_player_pattern|weak_pattern|hypothesis|unknown",
         "unknown_remains_unknown": True,
         "session_lifecycle": ["PRE_SESSION", "LIVE_OBJECTIVE", "POST_SESSION_REVIEW", "MEMORY_UPDATE", "NEXT_MISSION"],
@@ -210,6 +219,9 @@ def readiness_snapshot(
         "premium_deep_history_server_authoritative": True,
         "premium_client_authority": False,
         "premium_link_does_not_grant_entitlement": True,
+        "operator_evidence_freshness": operator_intelligence and premium_deep_history and evidence_freshness,
+        "operator_stale_evidence_not_false": True,
+        "operator_freshness_no_causal_claims": True,
         "persistence_recovery": bool(recovery_fn),
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
         "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),

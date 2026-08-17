@@ -20,7 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: v30-v33 static compatibility boundaries
+      - name: v30-v34 static compatibility boundaries
         shell: bash
         run: |
           set -euo pipefail
@@ -58,6 +58,18 @@ jobs:
           grep -q 'ROTATION REQUIRES CLOSE EVIDENCE' app/webapp/static/bco.strategy.js
           grep -q 'ASSOCIATION ≠ CAUSATION' app/webapp/static/bco.strategy.js
 
+          # v34 — Freshness changes current relevance, never historical truth.
+          grep -q 'bco_evidence_freshness_v34' app/services/operator_intelligence/evidence_freshness.py
+          grep -q 'FRESH_MAX_DAYS = 7' app/services/operator_intelligence/evidence_freshness.py
+          grep -q 'AGING_MAX_DAYS = 21' app/services/operator_intelligence/evidence_freshness.py
+          grep -q 'stale_is_not_false' app/services/operator_intelligence/evidence_freshness.py
+          grep -q 'missing_timestamp_remains_unknown' app/services/operator_intelligence/evidence_freshness.py
+          grep -q 'old_support_is_not_current_proof' app/services/operator_intelligence/evidence_freshness.py
+          grep -q 'server_persisted_evidence_timestamps_only' app/webapp/command_center_router.py
+          grep -q 'bco_premium_adaptive_strategy_v34' app/services/operator_intelligence/adaptive_strategy.py
+          grep -q 'STALE ≠ FALSE' app/webapp/static/bco.strategy.js
+          grep -q 'OLD SUPPORT ≠ CURRENT PROOF' app/webapp/static/bco.strategy.js
+
   compatibility-production-smoke:
     name: compatibility-production-smoke
     needs: compatibility-contracts
@@ -70,7 +82,7 @@ jobs:
       - name: Checkout release contract
         uses: actions/checkout@v4
 
-      - name: Verify accumulated v30-v33 production boundaries
+      - name: Verify accumulated v30-v34 production boundaries
         shell: bash
         run: |
           set -euo pipefail
@@ -103,6 +115,16 @@ jobs:
               and f.get('premium_client_authority') is False
               and op.get('premium_deep_history_authority') == 'server_bco_premium'
               and op.get('longitudinal_causal_claims') is False
+              and f.get('operator_evidence_freshness') is True
+              and f.get('operator_stale_evidence_not_false') is True
+              and f.get('operator_freshness_no_causal_claims') is True
+              and op.get('evidence_freshness') is True
+              and op.get('evidence_freshness_schema') == 'bco_evidence_freshness_v34'
+              and op.get('evidence_freshness_authority') == 'server_persisted_evidence_timestamps_only'
+              and int(op.get('evidence_freshness_fresh_max_days') or 0) == 7
+              and int(op.get('evidence_freshness_aging_max_days') or 0) == 21
+              and op.get('stale_evidence_is_false') is False
+              and op.get('freshness_causal_claims') is False
           )
           raise SystemExit(0 if ok else 1)
           PY
@@ -116,8 +138,10 @@ jobs:
                    grep -q 'PORTFOLIO PRIOR ≠ CAUSAL PROOF' /tmp/bco-strategy.js && \
                    grep -q 'EXPLORATION ≠ RANDOMNESS' /tmp/bco-strategy.js && \
                    grep -q 'ROTATION REQUIRES CLOSE EVIDENCE' /tmp/bco-strategy.js && \
+                   grep -q 'STALE ≠ FALSE' /tmp/bco-strategy.js && \
+                   grep -q 'OLD SUPPORT ≠ CURRENT PROOF' /tmp/bco-strategy.js && \
                    grep -q 'server-authoritative Premium' /tmp/bco-strategy.js; then
-                  echo "compatibility production verified: version=${EXPECTED_VERSION}, contract=${EXPECTED_CONTRACT}, v30-v33 boundaries=ON, unauth_strategy=401"
+                  echo "compatibility production verified: version=${EXPECTED_VERSION}, contract=${EXPECTED_CONTRACT}, v30-v34 boundaries=ON, unauth_strategy=401"
                   exit 0
                 fi
               fi
