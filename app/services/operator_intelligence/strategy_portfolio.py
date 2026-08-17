@@ -66,7 +66,7 @@ class StrategyPortfolioCalibration:
         ][-6:]
 
         return {
-            "schema": "bco_strategy_portfolio_v33",
+            "schema": "bco_strategy_portfolio_v32",
             "minimum_evaluated_windows": MIN_EVALUATED_WINDOWS,
             "classes": classes,
             "recent_strategy_classes": recent_strategy_classes,
