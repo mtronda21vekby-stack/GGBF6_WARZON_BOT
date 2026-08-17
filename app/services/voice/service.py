@@ -121,9 +121,6 @@ class VoiceService:
         mode = self.mode_for(data)
         if mode == TTSMode.AUTO:
             return True
-        # Explicit OFF must always win. Smart duplex only applies before the
-        # player has chosen a TTS mode, so speaking to the bot feels natural
-        # without overriding a deliberate preference.
         explicit_mode = "tts_mode" in data and str(data.get("tts_mode") or "").strip() != ""
         if explicit_mode:
             return False
@@ -151,11 +148,13 @@ class VoiceService:
         else:
             provider = "PIPER LOCAL"
             fallback = False
+        # Keep this stable because UI/tests treat describe() as a compact public
+        # descriptor. Duplex capability is exposed separately through the
+        # follow_input_active property and readiness payload.
         return {
             "provider": provider,
             "voice": self.voice_name_for(profile).upper(),
             "local_fallback": fallback,
-            "follow_input": self.follow_input_active,
         }
 
     async def close(self) -> None:
