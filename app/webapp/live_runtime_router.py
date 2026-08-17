@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from app.webapp import webapp_router_base as _base
 
 
-@_base.router.get("/webapp/api/runtime", include_in_schema=False)
+@_base.router.post("/webapp/api/runtime", include_in_schema=False)
 def webapp_live_runtime():
     """Public capability flags only; never expose configuration values or secrets."""
     settings = _base.APP_SETTINGS
