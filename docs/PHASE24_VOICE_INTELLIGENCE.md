@@ -1,4 +1,4 @@
-# BLACK CROWN OPS v24 — Duplex Voice Intelligence
+# BLACK CROWN OPS v24.1 — Duplex Voice Intelligence
 
 ## Mission
 
@@ -63,7 +63,7 @@ No real-person voice imitation is used.
 
 ## Cost and abuse boundaries
 
-STT and TTS now use separate process-local budgets.
+STT and TTS use separate process-local budgets.
 
 `stt` protects incoming transcription. `voice` protects outgoing synthesis. A normal voice-to-voice exchange therefore consumes one event from each relevant capability instead of double-counting against one generic voice bucket.
 
@@ -90,4 +90,4 @@ Default STT controls are configurable through:
 
 `VOICE_FOLLOW_INPUT_ENABLED=0` disables automatic voice-to-voice behavior while preserving manual TTS modes.
 
-Release target: `24.0.0 / bco-voice-intelligence-v24`.
+Release target: `24.1.0 / bco-duplex-voice-v24.1`.
