@@ -15,11 +15,10 @@ def wav_to_natural_ogg_opus(
 ) -> Path:
     """Encode steerable cloud TTS with deliberately transparent processing.
 
-    Previous releases reused the stronger Piper rescue chain for OpenAI audio.
-    That added presence EQ, compression and aggressive loudness shaping to an
-    already mastered neural voice. v23 leaves the model's prosody/timbre intact
-    and only removes sub-bass, keeps safe headroom and encodes Telegram-native
-    Opus once.
+    Neural TTS is already voiced and mastered upstream. BLACK CROWN therefore
+    applies only a sub-bass safety cut, transparent peak limiting and one Opus
+    encode. `application=audio` preserves timbre better than speech-optimized
+    VOIP mode while remaining a Telegram-compatible mono Ogg/Opus voice note.
     """
     source = Path(wav_path)
     target = Path(ogg_path)
@@ -31,10 +30,7 @@ def wav_to_natural_ogg_opus(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.unlink(missing_ok=True)
 
-    # Very light safety chain: no presence boost, no compressor, no loudness
-    # pumping. The 45 Hz high-pass is below useful speech fundamentals and the
-    # limiter only catches pathological peaks before Opus encoding.
-    audio_filter = "highpass=f=45,alimiter=limit=0.965:attack=5:release=60:level=false,apad=pad_dur=0.06"
+    audio_filter = "highpass=f=42,alimiter=limit=0.975:attack=4:release=70:level=false,apad=pad_dur=0.075"
     command = [
         ffmpeg,
         "-hide_banner",
@@ -63,7 +59,7 @@ def wav_to_natural_ogg_opus(
         "-frame_duration",
         "20",
         "-application",
-        "voip",
+        "audio",
         str(target),
     ]
     proc = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
