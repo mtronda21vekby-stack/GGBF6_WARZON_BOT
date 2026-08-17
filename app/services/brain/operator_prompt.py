@@ -26,13 +26,14 @@ def render_operator_context(player_context: Mapping[str, Any] | None) -> str:
     state = raw.get("state") if isinstance(raw.get("state"), Mapping) else {}
     session = raw.get("session") if isinstance(raw.get("session"), Mapping) else {}
     mission = raw.get("mission") if isinstance(raw.get("mission"), Mapping) else {}
+    orchestrator = mission.get("orchestrator") if isinstance(mission.get("orchestrator"), Mapping) else {}
     mission_evidence = session.get("mission_evidence") if isinstance(session.get("mission_evidence"), Mapping) else {}
     claims = list(raw.get("claims") or [])[:8]
     unknown = [_clean(x, 40) for x in list(raw.get("unknown_dimensions") or [])[:12] if _clean(x, 40)]
 
     lines = [
-        f"schema={_clean(raw.get('schema'), 64) or 'bco_operator_context_v27'}",
-        "truth_contract=never promote inference; unknown remains unknown; sampled-frame mission evidence never completes a mission",
+        f"schema={_clean(raw.get('schema'), 64) or 'bco_operator_context_v28'}",
+        "truth_contract=never promote inference; unknown remains unknown; sampled-frame mission evidence never completes a mission; mission stage moves only from explicit CLEAN/MIXED/FAILED reports; training stage is not a player trait",
         (
             "operator_state="
             f"readiness:{_clean(state.get('readiness'), 32) or 'UNKNOWN'}, "
@@ -53,6 +54,18 @@ def render_operator_context(player_context: Mapping[str, Any] | None) -> str:
             f"- success_condition={_clean(mission.get('success_condition'), 500) or 'unknown'}",
             f"- calibration={bool(mission.get('calibration', False))}",
         ])
+        if orchestrator or mission.get("training_stage"):
+            lines.extend([
+                "mission_orchestrator:",
+                f"- stage={_clean(mission.get('training_stage') or orchestrator.get('stage'), 32) or 'CALIBRATION'}",
+                f"- stage_label={_clean(mission.get('stage_label') or orchestrator.get('stage_label'), 80)}",
+                f"- stage_success_condition={_clean(mission.get('stage_success_condition') or orchestrator.get('stage_success_condition'), 500)}",
+                f"- next_stage_if_passed={_clean(orchestrator.get('next_stage_if_passed'), 32)}",
+                f"- recalibration_required={bool(orchestrator.get('recalibration_required', False))}",
+                "- transition_authority=explicit_operator_report_only",
+                "- rule=VOD, inferred performance, hidden scores and a report without CLEAN/MIXED/FAILED cannot advance the training stage",
+                "- rule=one bad match does not reset MAINTENANCE; stage movement is training-state control, not proof of player trait or cause",
+            ])
 
     if mission_evidence:
         lines.extend([
@@ -108,4 +121,4 @@ def render_operator_context(player_context: Mapping[str, Any] | None) -> str:
             "last_session_review="
             f"focus:{_clean(review.get('focus'), 40)}, outcome:{_clean(review.get('outcome'), 24)}, at:{_clean(review.get('at'), 64)}"
         )
-    return "\n".join(lines)[:7600]
+    return "\n".join(lines)[:8000]
