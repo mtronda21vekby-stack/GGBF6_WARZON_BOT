@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     vod_rate_limit_1h: int = int(os.getenv("VOD_RATE_LIMIT_1H", "12"))
     vod_global_rate_limit_10m: int = int(os.getenv("VOD_GLOBAL_RATE_LIMIT_10M", "30"))
     vod_global_rate_limit_1h: int = int(os.getenv("VOD_GLOBAL_RATE_LIMIT_1H", "120"))
+    # STT and TTS are distinct paid capability boundaries. A voice→voice turn
+    # consumes one STT event and, when spoken output is enabled, one TTS event.
+    stt_rate_limit_1m: int = int(os.getenv("STT_RATE_LIMIT_1M", "12"))
+    stt_rate_limit_1h: int = int(os.getenv("STT_RATE_LIMIT_1H", "90"))
+    stt_global_rate_limit_1m: int = int(os.getenv("STT_GLOBAL_RATE_LIMIT_1M", "150"))
+    stt_global_rate_limit_1h: int = int(os.getenv("STT_GLOBAL_RATE_LIMIT_1H", "1200"))
     voice_rate_limit_1m: int = int(os.getenv("VOICE_RATE_LIMIT_1M", "10"))
     voice_rate_limit_1h: int = int(os.getenv("VOICE_RATE_LIMIT_1H", "60"))
     voice_global_rate_limit_1m: int = int(os.getenv("VOICE_GLOBAL_RATE_LIMIT_1M", "120"))
@@ -83,7 +89,7 @@ class Settings(BaseSettings):
     vod_download_timeout_s: float = float(os.getenv("VOD_DOWNLOAD_TIMEOUT_S", "60"))
     vod_vision_model: str = os.getenv("VOD_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini"))
 
-    # Duplex voice input: Telegram voice/audio -> confidence-aware STT -> same Intelligence Core.
+    # Duplex voice input: Telegram voice/audio/video-note -> confidence-aware STT -> same Intelligence Core.
     voice_input_enabled: bool = _env_on("VOICE_INPUT_ENABLED")
     voice_transcription_model: str = os.getenv("VOICE_TRANSCRIPTION_MODEL", "gpt-4o-transcribe")
     voice_transcription_fallback_model: str = os.getenv("VOICE_TRANSCRIPTION_FALLBACK_MODEL", "gpt-4o-mini-transcribe")
@@ -107,8 +113,6 @@ class Settings(BaseSettings):
     voice_duplex_max_chars: int = int(os.getenv("VOICE_DUPLEX_MAX_CHARS", "1800"))
     voice_opus_bitrate_kbps: int = int(os.getenv("VOICE_OPUS_BITRATE_KBPS", "72"))
     voice_openai_model: str = os.getenv("VOICE_OPENAI_MODEL", "gpt-4o-mini-tts")
-    # v23 defaults to Marin. An existing Render ENV override still wins, so the
-    # rollout is reversible without code changes.
     voice_openai_voice: str = os.getenv("VOICE_OPENAI_VOICE", "marin")
     voice_openai_timeout_s: float = float(os.getenv("VOICE_OPENAI_TIMEOUT_S", "45"))
     voice_openai_max_bytes: int = int(os.getenv("VOICE_OPENAI_MAX_BYTES", str(20 * 1024 * 1024)))
