@@ -84,7 +84,7 @@ def test_adaptive_strategy_rotates_only_to_close_real_signal():
         },
     }
     data = PremiumAdaptiveStrategyService().build(history, {}, portfolio)
-    assert data["schema"] == "bco_premium_adaptive_strategy_v34"
+    assert data["schema"] == "bco_premium_adaptive_strategy_v35"
     assert data["strategy_class"] == "contradiction_resolution"
     assert data["focus"] == "positioning"
     assert data["exploration_budget"]["reason"] == "bounded_rotation"
