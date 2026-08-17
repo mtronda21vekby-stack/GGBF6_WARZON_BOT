@@ -46,13 +46,14 @@ def test_regression_watch_becomes_next_strategy_without_causal_claim():
     }
     operator = {"mission": {"focus": "rotations"}, "longitudinal": {"trend": "declining"}}
     data = PremiumAdaptiveStrategyService().build(history, operator)
-    assert data["schema"] == "bco_premium_adaptive_strategy_v30"
+    assert data["schema"] == "bco_premium_adaptive_strategy_v32"
     assert data["strategy_class"] == "regression_intercept"
     assert data["focus"] == "rotations"
     assert data["mission_alignment"] == "aligned"
     assert data["confidence"] == "high"
     assert data["truth_contract"]["causal_claims"] is False
     assert data["truth_contract"]["strategy_is_recommendation_not_fact"] is True
+    assert data["truth_contract"]["portfolio_priority_is_associative"] is True
     assert data["authority"]["client_authority"] is False
 
 
@@ -81,6 +82,7 @@ def test_insufficient_history_remains_calibration():
     assert data["focus"] == "calibration"
     assert data["confidence"] == "low"
     assert "at least 4 completed mission cycles" in data["objective"]
+    assert data["portfolio_calibration"]["state"] == "explore"
 
 
 def test_strategy_api_is_server_premium_gated(monkeypatch):
@@ -98,6 +100,7 @@ def test_strategy_api_is_server_premium_gated(monkeypatch):
     payload = response.json()
     assert payload["premium_authority"] == "server_bco_premium"
     assert payload["strategy_authority"] == "evidence_driven_recommendation"
+    assert payload["portfolio_authority"] == "associative_outcome_calibration_only"
     assert payload["data"]["authority"]["client_authority"] is False
     assert entitled.calls == [991]
 
