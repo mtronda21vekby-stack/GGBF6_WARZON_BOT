@@ -101,13 +101,18 @@ class ConversationService:
             except Exception:
                 player_context = dict(profile or {})
 
-        result = self.brain.reply(
-            text=text,
-            profile=profile,
-            history=history,
-            player_context=player_context,
-            on_partial=on_partial,
-        )
+        brain_kwargs: dict[str, Any] = {
+            "text": text,
+            "profile": profile,
+            "history": history,
+            "player_context": player_context,
+        }
+        # Do not pass a new optional keyword to legacy/test brain adapters when
+        # there is no streaming consumer. Production BrainEngine accepts it;
+        # non-streaming implementations keep their previous call contract.
+        if on_partial is not None:
+            brain_kwargs["on_partial"] = on_partial
+        result = self.brain.reply(**brain_kwargs)
 
         if trusted and chat_id is not None and not caller_manages_working_memory and self.store is not None:
             try:
