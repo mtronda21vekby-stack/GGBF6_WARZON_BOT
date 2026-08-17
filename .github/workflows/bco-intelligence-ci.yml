@@ -16,6 +16,7 @@ on:
       - feature/bco-aaa-deployment-gate-v10
       - feature/bco-render-deploy-recovery-v11
       - feature/bco-aaa-abuse-guard-v12
+      - feature/bco-live-intelligence-command-center-v18
   pull_request:
     branches:
       - main
@@ -111,7 +112,7 @@ jobs:
           EXPECTED_VERSION="$(python -c 'from app.release import APP_VERSION; print(APP_VERSION)')"
           echo "Render deploy trigger mode=${DEPLOY_TRIGGER_MODE:-unknown}"
           echo "Waiting for BLACK CROWN OPS ${EXPECTED_VERSION} at ${PRODUCTION_URL}"
-          rm -f /tmp/bco-health.json
+          rm -f /tmp/bco-health.json /tmp/bco-runtime.json /tmp/bco-live.js /tmp/bco-cinematic.css
 
           for attempt in $(seq 1 60); do
             http_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-health.json -w '%{http_code}' "${PRODUCTION_URL}/health/details" || true)"
@@ -128,6 +129,7 @@ jobs:
 
           recovery = ((payload.get('storage') or {}).get('recovery') or {})
           features = payload.get('features') or {}
+          live = payload.get('live_intelligence') or {}
           release = payload.get('release') or {}
           ok = (
               release.get('version') == os.environ['EXPECTED_VERSION']
@@ -137,13 +139,28 @@ jobs:
               and recovery.get('primary_available') is True
               and features.get('abuse_guard') is True
               and features.get('telegram_replay_dedupe') is True
+              and features.get('telegram_live_intelligence_drafts') is True
+              and features.get('webapp_live_intelligence_stream') is True
+              and features.get('webapp_cinematic_ui') is True
+              and live.get('final_message_authoritative') is True
+              and live.get('webapp_transport') == 'ndjson'
           )
           raise SystemExit(0 if ok else 1)
           PY
               then
-                echo "Production verified: version=${EXPECTED_VERSION}, Supabase startup probe=OK, abuse guard=ON"
-                cat /tmp/bco-health.json
-                exit 0
+                runtime_code="$(curl -sS -X POST --connect-timeout 10 --max-time 20 -o /tmp/bco-runtime.json -w '%{http_code}' "${PRODUCTION_URL}/webapp/api/runtime" || true)"
+                live_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-live.js -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.live.js" || true)"
+                css_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-cinematic.css -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.cinematic.css" || true)"
+
+                if [ "${runtime_code}" = "200" ] && [ "${live_code}" = "200" ] && [ "${css_code}" = "200" ] && \
+                   grep -q '"v18_overlay":true' /tmp/bco-runtime.json && \
+                   grep -q 'Live Intelligence + Cinematic Runtime' /tmp/bco-live.js && \
+                   grep -q 'Cinematic Technical Design System' /tmp/bco-cinematic.css; then
+                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, live intelligence=ON, cinematic assets=OK"
+                  cat /tmp/bco-health.json
+                  cat /tmp/bco-runtime.json
+                  exit 0
+                fi
               fi
             fi
 
@@ -153,4 +170,5 @@ jobs:
 
           echo "Production deployment gate failed after 10 minutes. Last response:"
           cat /tmp/bco-health.json 2>/dev/null || true
+          cat /tmp/bco-runtime.json 2>/dev/null || true
           exit 1
