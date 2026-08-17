@@ -6,6 +6,7 @@ from typing import Any
 
 from app.observability.quality import quality_telemetry
 from app.services.operator_intelligence.evidence_freshness import AGING_MAX_DAYS, FRESH_MAX_DAYS
+from app.services.operator_intelligence.regime_change import MIN_CANDIDATE_CYCLES, MIN_CONFIRMED_CYCLES, WINDOW_SIZE
 
 
 def _env_on(name: str, default: str = "1") -> bool:
@@ -135,6 +136,7 @@ def readiness_snapshot(
     mission_vod_fusion = bool(getattr(settings, "mission_vod_evidence_fusion_enabled", _env_on("MISSION_VOD_EVIDENCE_FUSION_ENABLED")))
     longitudinal = _env_on("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED")
     evidence_freshness = _env_on("EVIDENCE_FRESHNESS_ENABLED")
+    regime_change = _env_on("REGIME_CHANGE_DETECTION_ENABLED")
     premium_deep_history = bool(
         _env_on("PREMIUM_DEEP_HISTORY_ENABLED")
         and entitlement_snapshot["enabled"]
@@ -177,6 +179,16 @@ def readiness_snapshot(
         "evidence_freshness_aging_max_days": AGING_MAX_DAYS,
         "stale_evidence_is_false": False,
         "freshness_causal_claims": False,
+        "regime_change_detection": operator_intelligence and premium_deep_history and regime_change,
+        "regime_change_schema": "bco_player_regime_change_v35",
+        "regime_change_authority": "server_explicit_outcome_windows_only",
+        "regime_minimum_candidate_cycles": MIN_CANDIDATE_CYCLES,
+        "regime_minimum_confirmed_cycles": MIN_CONFIRMED_CYCLES,
+        "regime_window_size": WINDOW_SIZE,
+        "regime_one_session_can_change": False,
+        "regime_shift_identifies_cause": False,
+        "regime_external_meta_inferred": False,
+        "regime_causal_claims": False,
         "truth_model": "verified_fact|high_confidence_player_pattern|weak_pattern|hypothesis|unknown",
         "unknown_remains_unknown": True,
         "session_lifecycle": ["PRE_SESSION", "LIVE_OBJECTIVE", "POST_SESSION_REVIEW", "MEMORY_UPDATE", "NEXT_MISSION"],
@@ -222,6 +234,11 @@ def readiness_snapshot(
         "operator_evidence_freshness": operator_intelligence and premium_deep_history and evidence_freshness,
         "operator_stale_evidence_not_false": True,
         "operator_freshness_no_causal_claims": True,
+        "operator_regime_change_detection": operator_intelligence and premium_deep_history and regime_change,
+        "operator_regime_requires_sustained_windows": True,
+        "operator_regime_one_session_not_enough": True,
+        "operator_regime_no_causal_claims": True,
+        "operator_regime_external_meta_not_inferred": True,
         "persistence_recovery": bool(recovery_fn),
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
         "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),
