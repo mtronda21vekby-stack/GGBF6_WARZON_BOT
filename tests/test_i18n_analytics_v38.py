@@ -1,5 +1,6 @@
 from app.i18n import detect_text_locale, normalize_locale, resolve_locale
 from app.services.analytics.admin_usage import AdminUsageAnalytics
+from app.services.voice.openai_backend import voice_instructions
 
 
 def test_locale_detection_and_override():
@@ -19,3 +20,13 @@ def test_admin_report_is_aggregate_only():
     assert "ACTIVE 24H — 3" in report
     assert "Telegram header member counts are not bot MAU/DAU analytics" in report
     assert "telegram_user_id" not in report
+
+
+def test_voice_direction_follows_ecosystem_locale_and_identity():
+    english = voice_instructions({"language": "en", "voice_identity": "female", "voice": "TEAMMATE"}, "Hold the roof.")
+    russian = voice_instructions({"language": "ru", "voice_identity": "male", "voice": "COACH"}, "Держи позицию.")
+    assert "fluent natural English" in english
+    assert "female tactical-intelligence" in english
+    assert "fluent natural Russian" in russian
+    assert "male tactical-intelligence" in russian
+    assert "Do not imitate" in english
