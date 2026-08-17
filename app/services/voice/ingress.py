@@ -33,18 +33,29 @@ def _chat_id(message: Mapping[str, Any]) -> int | None:
 
 
 def _voice_payload(message: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return a normalized speech-bearing Telegram media descriptor."""
     voice = message.get("voice")
     if isinstance(voice, dict) and voice.get("file_id"):
-        return voice
+        return {**voice, "_bco_media_kind": "voice"}
+
     audio = message.get("audio")
     if isinstance(audio, dict) and audio.get("file_id"):
         mime = str(audio.get("mime_type") or "").casefold()
         if not mime or mime.startswith("audio/"):
-            return audio
+            return {**audio, "_bco_media_kind": "audio"}
+
+    # Telegram round video messages are MP4 containers and often contain the
+    # exact same spoken request as a voice note. Only the audio track is sent
+    # to the transcription API; video pixels are never treated as VOD here.
+    video_note = message.get("video_note")
+    if isinstance(video_note, dict) and video_note.get("file_id"):
+        return {**video_note, "_bco_media_kind": "video_note", "mime_type": "audio/mp4"}
     return None
 
 
 def _audio_suffix(payload: Mapping[str, Any]) -> str:
+    if str(payload.get("_bco_media_kind") or "") == "video_note":
+        return ".mp4"
     name = str(payload.get("file_name") or "").strip().casefold()
     for suffix in (".ogg", ".oga", ".opus", ".mp3", ".m4a", ".mp4", ".wav", ".webm", ".flac"):
         if name.endswith(suffix):
@@ -144,6 +155,7 @@ class TelegramVoiceIngress:
             synthetic = dict(transformed.get(key) or {})
             synthetic.pop("voice", None)
             synthetic.pop("audio", None)
+            synthetic.pop("video_note", None)
             transformed[key] = synthetic
 
         synthetic["text"] = str(text or "")[:12000]
@@ -200,7 +212,7 @@ class TelegramVoiceIngress:
         return transformed, True
 
     async def transform(self, update: Mapping[str, Any] | None) -> tuple[dict[str, Any], bool]:
-        """Normalize Telegram voice/audio into the same text Intelligence Core."""
+        """Normalize Telegram voice/audio/video-note into the same text Intelligence Core."""
         if not self.enabled or not isinstance(update, Mapping):
             return dict(update or {}), False
 
@@ -238,12 +250,13 @@ class TelegramVoiceIngress:
             )
             return dict(update), True
 
+        # Transcription and speech synthesis have independent cost budgets.
         if self.usage_guard is not None:
             try:
-                decision = self.usage_guard.check(chat_id, "voice")
+                decision = self.usage_guard.check(chat_id, "stt")
                 if not bool(getattr(decision, "allowed", True)):
                     wait = max(1, int(getattr(decision, "retry_after_s", 1) or 1))
-                    await self.tg.send_message(chat_id, f"🎙 Голосовой ввод на cooldown. Повтори примерно через {wait} сек.")
+                    await self.tg.send_message(chat_id, f"🎙 Распознавание на cooldown. Повтори примерно через {wait} сек.")
                     return dict(update), True
             except Exception:
                 pass
@@ -290,7 +303,7 @@ class TelegramVoiceIngress:
             log.warning("voice transcription rejected chat_id=%s error=%s", chat_id, type(exc).__name__)
             await self.tg.send_message(
                 chat_id,
-                "🎙 Не смог надёжно разобрать голосовое. Попробуй ещё раз — я поддерживаю Telegram voice, MP3, M4A, WAV и WebM.",
+                "🎙 Не смог надёжно разобрать сообщение. Попробуй ещё раз — поддерживаются Telegram voice, audio и video note, а также MP3, M4A, WAV и WebM.",
             )
             return dict(update), True
         except Exception as exc:
@@ -303,7 +316,7 @@ class TelegramVoiceIngress:
 
         transcript = " ".join(str(result.text or "").split()).strip()
         if len(transcript) < 2:
-            await self.tg.send_message(chat_id, "🎙 В голосовом почти не было распознаваемой речи.")
+            await self.tg.send_message(chat_id, "🎙 В сообщении почти не было распознаваемой речи.")
             return dict(update), True
 
         threshold = max(0.0, min(1.0, float(self.confidence_threshold or 0.0)))
@@ -351,8 +364,9 @@ class TelegramVoiceIngress:
             confirmed=False,
         )
         log.info(
-            "voice transcribed chat_id=%s duration_s=%s chars=%s confidence=%s model=%s fallback=%s context=%s",
+            "voice transcribed chat_id=%s media=%s duration_s=%s chars=%s confidence=%s model=%s fallback=%s context=%s",
             chat_id,
+            str(voice.get("_bco_media_kind") or "audio")[:16],
             duration,
             len(transcript),
             "unknown" if confidence is None else f"{confidence:.3f}",

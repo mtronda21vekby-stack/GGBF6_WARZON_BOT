@@ -27,12 +27,14 @@ def test_legacy_studio_master_remains_available_only_for_local_piper_rescue():
 def test_natural_cloud_encoder_is_separate_from_aggressive_piper_chain():
     source = Path(__file__).parents[1] / "app" / "services" / "voice" / "natural_audio.py"
     text = source.read_text(encoding="utf-8")
-    assert "highpass=f=45" in text
+    assert "highpass=f=42" in text
     assert "alimiter=" in text
     assert "acompressor" not in text
     assert "equalizer=" not in text
     assert "loudnorm" not in text
     assert "libopus" in text
+    assert '"-application",\n        "audio"' in text
+    assert '"-application",\n        "voip"' not in text
 
 
 def test_speech_cleaner_retains_paragraph_boundaries_for_prosody():
@@ -71,3 +73,4 @@ def test_voice_direction_rejects_announcer_and_over_enunciation():
     assert "over-enunciate" in instructions
     assert "never shout" in instructions
     assert "real person" in instructions
+    assert "repetitive falling cadence" in instructions

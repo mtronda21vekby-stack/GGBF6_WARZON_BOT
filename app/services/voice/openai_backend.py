@@ -65,11 +65,7 @@ def _voice_character(profile: Mapping[str, Any]) -> str:
 
 
 def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str:
-    """Short steering works better than an over-constrained studio script.
-
-    The audio model already owns the timbre. We only steer conversational intent,
-    persona and a few failure modes that made earlier BCO speech sound synthetic.
-    """
+    """Steer natural conversational intent without over-constraining timbre."""
     data = dict(profile or {})
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
@@ -81,8 +77,9 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
         "Sound human and spontaneous, not like a narrator, announcer, audiobook, call center, movie trailer, radio operator or generic AI assistant.",
         "Do not imitate or reference any real person. This is a synthetic voice.",
         "Use relaxed connected speech, natural micro-pauses and uneven emphasis; do not over-enunciate every word or stress every sentence equally.",
+        "Avoid a repetitive falling cadence at the end of every sentence; group closely related phrases into one natural thought and breathe when the idea changes.",
         "Do not read markdown, emoji, URLs, separators, UI labels or BLACK CROWN headers aloud.",
-        "Keep English FPS terms natural inside Russian speech and preserve negations, weapon names, numbers and tactical meaning.",
+        "Keep English FPS terms natural inside Russian speech. Do not translate weapon, map, mode or product names; preserve negations, numbers and tactical meaning exactly.",
         _voice_character(data),
     ]
 
@@ -121,9 +118,6 @@ def voice_speed(profile: Mapping[str, Any] | None) -> float:
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
     emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
 
-    # Earlier BCO releases deliberately ran TEAMMATE above 1.04x. Combined
-    # with strong presence processing that could sound rushed and synthetic.
-    # v23 stays close to the model's native timing.
     speed = 0.975 if persona == "COACH" else 1.0
     if bool(data.get("_bco_voice_reply")):
         speed += 0.005
@@ -164,8 +158,6 @@ class OpenAITTSBackend:
         explicit = str(data.get("tts_voice") or "").strip()
         if explicit:
             return normalize_tts_voice(explicit, self.default_voice)
-        # User selection is authoritative. Persona no longer silently swaps the
-        # timbre underneath the player; without a selection we use Marin.
         return self.default_voice
 
     async def close(self) -> None:
@@ -188,7 +180,7 @@ class OpenAITTSBackend:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/natural-voice-v23",
+            "User-Agent": "BLACK-CROWN-OPS/voice-intelligence-v24",
             "X-Client-Request-Id": str(uuid.uuid4()),
         }
         output.parent.mkdir(parents=True, exist_ok=True)

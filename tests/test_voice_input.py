@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.services.voice.ingress import TelegramVoiceIngress
 from app.services.voice.transcription import TranscriptionResult
@@ -41,7 +42,7 @@ class FakeTranscription:
         self.confidence = confidence
         self.paths: list[Path] = []
 
-    async def transcribe_result(self, path):
+    async def transcribe_result(self, path, **kwargs):
         self.paths.append(Path(path))
         return TranscriptionResult(
             text=self.text,
@@ -49,6 +50,16 @@ class FakeTranscription:
             model=self.model,
             language="ru",
         )
+
+
+class RecordingGuard:
+    def __init__(self, allowed: bool = True):
+        self.allowed = allowed
+        self.categories: list[str] = []
+
+    def check(self, subject, category: str):
+        self.categories.append(category)
+        return SimpleNamespace(allowed=self.allowed, retry_after_s=7)
 
 
 def run(coro):
@@ -67,6 +78,24 @@ def voice_update(*, duration: int = 14, size: int = 24000):
                 "file_unique_id": "unique",
                 "duration": duration,
                 "mime_type": "audio/ogg",
+                "file_size": size,
+            },
+        },
+    }
+
+
+def video_note_update(*, duration: int = 11, size: int = 32000):
+    return {
+        "update_id": 79,
+        "message": {
+            "message_id": 9,
+            "chat": {"id": 123, "type": "private"},
+            "from": {"id": 123, "username": "operator"},
+            "video_note": {
+                "file_id": "round-video-file",
+                "file_unique_id": "video-unique",
+                "duration": duration,
+                "length": 360,
                 "file_size": size,
             },
         },
@@ -115,6 +144,54 @@ def test_high_confidence_voice_becomes_normal_text_update_for_existing_router():
     assert tg.messages == []
 
 
+def test_video_note_audio_is_transcribed_into_same_intelligence_core():
+    tg = FakeTelegram()
+    transcription = FakeTranscription(text="Разбери мой последний пуш на хайграунд.", confidence=0.91)
+    ingress = TelegramVoiceIngress(tg=tg, transcription=transcription, enabled=True)
+
+    transformed, handled = run(ingress.transform(video_note_update()))
+
+    assert handled is True
+    message = transformed["message"]
+    assert message["text"] == "Разбери мой последний пуш на хайграунд."
+    assert message["_bco_input_mode"] == "voice"
+    assert "video_note" not in message
+    assert tg.downloads[0][0] == "round-video-file"
+    assert transcription.paths[0].suffix == ".mp4"
+
+
+def test_incoming_transcription_uses_stt_budget_not_tts_voice_budget():
+    tg = FakeTelegram()
+    guard = RecordingGuard()
+    ingress = TelegramVoiceIngress(
+        tg=tg,
+        transcription=FakeTranscription(),
+        usage_guard=guard,
+        enabled=True,
+    )
+
+    transformed, handled = run(ingress.transform(voice_update()))
+
+    assert handled is True
+    assert transformed["message"]["_bco_input_mode"] == "voice"
+    assert guard.categories == ["stt"]
+
+
+def test_stt_cooldown_consumes_media_without_calling_transcription():
+    tg = FakeTelegram()
+    guard = RecordingGuard(allowed=False)
+    transcription = FakeTranscription()
+    ingress = TelegramVoiceIngress(tg=tg, transcription=transcription, usage_guard=guard)
+
+    transformed, handled = run(ingress.transform(voice_update()))
+
+    assert handled is True
+    assert "voice" in transformed["message"]
+    assert transcription.paths == []
+    assert guard.categories == ["stt"]
+    assert "7 сек" in tg.messages[-1][1]
+
+
 def test_low_confidence_voice_requires_confirmation_before_ai_or_memory():
     tg = FakeTelegram()
     transcription = FakeTranscription(text="Пушить сейчас или держать высоту?", confidence=0.32)
@@ -153,12 +230,7 @@ def test_low_confidence_retry_discards_pending_transcript():
 
     run(ingress.transform(voice_update()))
     _, _, markup = tg.messages[0]
-    retry = next(
-        button
-        for row in markup["inline_keyboard"]
-        for button in row
-        if "RETRY" in button["text"]
-    )
+    retry = next(button for row in markup["inline_keyboard"] for button in row if "RETRY" in button["text"])
     transformed, handled = run(ingress.transform(confirmation_update(retry["callback_data"])))
 
     assert handled is True
