@@ -23,6 +23,7 @@ on:
       - feature/bco-causal-operator-context-v26
       - feature/bco-mission-evidence-fusion-v27
       - feature/bco-longitudinal-operator-intelligence-v28
+      - feature/bco-premium-deep-history-v29
   pull_request:
     branches:
       - main
@@ -118,7 +119,7 @@ jobs:
           EXPECTED_VERSION="$(python -c 'from app.release import APP_VERSION; print(APP_VERSION)')"
           echo "Render deploy trigger mode=${DEPLOY_TRIGGER_MODE:-unknown}"
           echo "Waiting for BLACK CROWN OPS ${EXPECTED_VERSION} at ${PRODUCTION_URL}"
-          rm -f /tmp/bco-health.json /tmp/bco-runtime.json /tmp/bco-live.js /tmp/bco-cinematic.css /tmp/bco-operator.js /tmp/bco-operator.css
+          rm -f /tmp/bco-health.json /tmp/bco-runtime.json /tmp/bco-live.js /tmp/bco-cinematic.css /tmp/bco-operator.js /tmp/bco-operator.css /tmp/bco-deep-history.js /tmp/bco-deep-api.json
 
           for attempt in $(seq 1 60); do
             http_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-health.json -w '%{http_code}' "${PRODUCTION_URL}/health/details" || true)"
@@ -165,6 +166,10 @@ jobs:
               and features.get('operator_longitudinal_intelligence') is True
               and features.get('operator_longitudinal_contradiction_detection') is True
               and features.get('operator_longitudinal_no_causal_claims') is True
+              and features.get('premium_deep_history') is True
+              and features.get('premium_deep_history_server_authoritative') is True
+              and features.get('premium_client_authority') is False
+              and features.get('premium_link_does_not_grant_entitlement') is True
               and operator.get('enabled') is True
               and operator.get('adaptive_missions') is True
               and operator.get('unknown_remains_unknown') is True
@@ -180,6 +185,12 @@ jobs:
               and operator.get('longitudinal_contradiction_detection') is True
               and operator.get('longitudinal_association_rule') == 'association_not_causation'
               and operator.get('longitudinal_causal_claims') is False
+              and operator.get('premium_deep_history') is True
+              and operator.get('premium_deep_history_schema') == 'bco_premium_deep_history_v29'
+              and operator.get('premium_deep_history_max_cycles') == 36
+              and operator.get('premium_deep_history_authority') == 'server_bco_premium'
+              and operator.get('premium_link_grants_entitlement') is False
+              and operator.get('premium_client_authority') is False
               and voice.get('input_configured') is True
               and voice.get('transcription_model') == 'gpt-4o-transcribe'
               and voice.get('transcription_fallback_model') == 'gpt-4o-mini-transcribe'
@@ -197,17 +208,23 @@ jobs:
                 css_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-cinematic.css -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.cinematic.css" || true)"
                 operator_js_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-operator.js -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.operator.js" || true)"
                 operator_css_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-operator.css -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.operator.css" || true)"
+                deep_js_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-deep-history.js -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.deep-history.js" || true)"
                 operator_api_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-operator-api.json -w '%{http_code}' "${PRODUCTION_URL}/webapp/api/operator-intelligence" || true)"
+                deep_api_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-deep-api.json -w '%{http_code}' "${PRODUCTION_URL}/webapp/api/operator-deep-history" || true)"
 
                 if [ "${runtime_code}" = "200" ] && [ "${live_code}" = "200" ] && [ "${css_code}" = "200" ] && \
-                   [ "${operator_js_code}" = "200" ] && [ "${operator_css_code}" = "200" ] && [ "${operator_api_code}" = "401" ] && \
+                   [ "${operator_js_code}" = "200" ] && [ "${operator_css_code}" = "200" ] && [ "${deep_js_code}" = "200" ] && \
+                   [ "${operator_api_code}" = "401" ] && [ "${deep_api_code}" = "401" ] && \
                    grep -q '"v18_overlay":true' /tmp/bco-runtime.json && \
                    grep -q 'Live Intelligence + Cinematic Runtime' /tmp/bco-live.js && \
                    grep -q 'Cinematic Technical Design System' /tmp/bco-cinematic.css && \
                    grep -q 'Operator Twin / Adaptive Mission Intelligence' /tmp/bco-operator.js && \
                    grep -q 'SAMPLED-FRAME ONLY / NO AUTO-COMPLETE' /tmp/bco-operator.js && \
+                   grep -q 'server-authoritative entitlement only' /tmp/bco-deep-history.js && \
+                   grep -q 'server_bco_premium' /tmp/bco-deep-history.js && \
+                   grep -q 'Account linking alone does not unlock it' /tmp/bco-deep-history.js && \
                    grep -q 'Operator Twin technical dossier' /tmp/bco-operator.css; then
-                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, duplex voice=ON, live intelligence=ON, operator twin=ON, mission control=ON, causal context=ON, mission evidence fusion=ON, longitudinal intelligence=ON, causal_claims=OFF"
+                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, duplex voice=ON, live intelligence=ON, operator twin=ON, mission evidence=ON, longitudinal=ON, premium deep history=ON, server entitlement authority=ON, client premium authority=OFF"
                   cat /tmp/bco-health.json
                   cat /tmp/bco-runtime.json
                   exit 0

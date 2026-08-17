@@ -151,7 +151,7 @@ def create_app() -> FastAPI:
         from app.webapp.command_center_router import bind_runtime as command_center_bind_runtime
         from app.webapp.command_center_router import router as command_center_router
         app.include_router(command_center_router)
-        command_center_bind_runtime(store=store, profiles=profiles)
+        command_center_bind_runtime(store=store, profiles=profiles, entitlements=entitlement_service)
         log.info("Command Center runtime bind: OK")
     except Exception as exc:
         log.exception("Command Center runtime bind FAILED: %s", type(exc).__name__)
