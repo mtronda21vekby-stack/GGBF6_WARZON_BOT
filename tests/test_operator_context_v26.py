@@ -70,24 +70,47 @@ def _operator_snapshot():
         "session": {
             "phase": "LIVE_OBJECTIVE",
             "last_review": {"focus": "rotations", "outcome": "mixed", "at": "2026-08-17T10:00:00+00:00"},
+            "mission_evidence": {
+                "classification": "mission_relevant_evidence_high",
+                "confidence": "high",
+                "clips": 2,
+                "evidence_count": 5,
+                "sampled_frames": 8,
+                "source": "vision_sampled_frames",
+                "latest_at": "2026-08-17T11:30:00+00:00",
+                "does_not_complete_mission": True,
+                "signals": [{
+                    "kind": "timeline",
+                    "label": "late rotation after low-value chase",
+                    "category": "decision",
+                    "confidence": 0.91,
+                    "timestamp": "00:17",
+                    "weight": 777,
+                }],
+            },
         },
     }
 
 
 def test_operator_context_projection_strips_internal_weights_and_preserves_uncertainty():
     projected = OperatorContextProjector().project(_operator_snapshot())
-    assert projected["schema"] == "bco_operator_context_v26"
-    assert projected["truth_contract"] == "never_promote_inference; unknown_remains_unknown"
+    assert projected["schema"] == "bco_operator_context_v27"
+    assert "unknown_remains_unknown" in projected["truth_contract"]
+    assert "mission_evidence_does_not_complete" in projected["truth_contract"]
     assert projected["mission"]["status"] == "active"
     assert projected["session"]["phase"] == "LIVE_OBJECTIVE"
     assert projected["claims"][0]["domain"] == "rotations"
     assert projected["claims"][0]["claim_class"] == "high_confidence_player_pattern"
     assert projected["claims"][0]["evidence_count"] == 4
     assert "tilt_susceptibility" in projected["unknown_dimensions"]
+    mission_evidence = projected["session"]["mission_evidence"]
+    assert mission_evidence["does_not_complete_mission"] is True
+    assert mission_evidence["source"] == "vision_sampled_frames"
     rendered = repr(projected)
     assert "_priority" not in rendered
     assert "'weight'" not in rendered
     assert "999" not in rendered
+    assert "777" not in rendered
 
 
 def test_prompt_builder_uses_calibrated_operator_context_and_quarantines_raw_derived_scores():
@@ -113,6 +136,8 @@ def test_prompt_builder_uses_calibrated_operator_context_and_quarantines_raw_der
     assert "LIVE_OBJECTIVE" in system
     assert "high_confidence_player_pattern" in system
     assert "Unknown dimensions remain unknown" in system
+    assert "sampled-frame evidence" in system
+    assert "automatic CLEAN/MIXED/FAILED" in system
     assert "dangerous_internal_score" not in system
     assert "unbounded_guess" not in system
     assert "weight=999" not in system
@@ -156,7 +181,7 @@ class _Memory:
 
 class _OperatorContext:
     def context(self, chat_id):
-        return {"schema": "bco_operator_context_v26", "mission": {"status": "active"}}
+        return {"schema": "bco_operator_context_v27", "mission": {"status": "active"}}
 
 
 class _Store:
@@ -172,7 +197,7 @@ def test_shared_conversation_boundary_injects_operator_context_only_for_trusted_
     service.operator_context = _OperatorContext()
     trusted_profile = {"game": "Warzone", "_chat_id": 77}
     assert service.reply(text="что делать", profile=trusted_profile, history=[]) == "ok"
-    assert brain.last_context["operator_context"]["schema"] == "bco_operator_context_v26"
+    assert brain.last_context["operator_context"]["schema"] == "bco_operator_context_v27"
 
     profiles.trusted = False
     brain.last_context = None

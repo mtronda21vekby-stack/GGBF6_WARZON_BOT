@@ -8,6 +8,7 @@ from typing import Any
 from app.services.brain.intents import Intent, classify_intent
 from app.services.player_memory.analytics import PlayerAnalytics
 from app.services.player_memory.extractor import extract_player_memory
+from app.services.vod.mission_evidence import MissionEvidenceFusionService
 
 
 _SIGNIFICANT_INTENTS = {
@@ -184,15 +185,16 @@ class PlayerMemoryService:
         profile: dict[str, Any],
         result: Any,
         trusted: bool = True,
-    ) -> None:
-        """Persist only high-confidence evidence from sampled VOD frames.
+    ) -> dict[str, Any] | None:
+        """Persist high-confidence sampled-frame evidence and correlate it to an active mission.
 
         VOD vision is deliberately not treated as continuous-video truth.
         Findings below the confidence threshold remain in the report/episode
-        but do not become recurring player mistakes.
+        but do not become recurring player mistakes. Mission correlation is
+        evidence-only: it can never complete or fail a mission automatically.
         """
         if not trusted:
-            return
+            return None
         cid = int(chat_id)
 
         payload = {}
@@ -241,6 +243,12 @@ class PlayerMemoryService:
         except Exception:
             pass
 
+        fusion_event: dict[str, Any] | None = None
+        try:
+            fusion_event = MissionEvidenceFusionService(store=self.store).correlate_vod(cid, result)
+        except Exception:
+            fusion_event = None
+
         summary = str(getattr(result, "summary", "") or "").strip()
         next_drill = str(getattr(result, "next_drill", "") or "").strip()
         patch: dict[str, Any] = {}
@@ -255,3 +263,4 @@ class PlayerMemoryService:
                 pass
 
         self._refresh_derived(cid, profile)
+        return fusion_event

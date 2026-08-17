@@ -139,6 +139,9 @@ def readiness_snapshot(
     operator_context_bridge = bool(
         getattr(settings, "operator_context_bridge_enabled", _env_on("OPERATOR_CONTEXT_BRIDGE_ENABLED"))
     )
+    mission_vod_fusion = bool(
+        getattr(settings, "mission_vod_evidence_fusion_enabled", _env_on("MISSION_VOD_EVIDENCE_FUSION_ENABLED"))
+    )
 
     live_intelligence_snapshot = {
         "telegram_drafts": telegram_live_drafts,
@@ -153,7 +156,10 @@ def readiness_snapshot(
         "adaptive_missions": operator_intelligence and adaptive_missions,
         "context_bridge": operator_intelligence and operator_context_bridge,
         "shared_brain_context": operator_intelligence and operator_context_bridge,
-        "context_schema": "bco_operator_context_v26",
+        "context_schema": "bco_operator_context_v27",
+        "mission_evidence_fusion": operator_intelligence and adaptive_missions and mission_vod_fusion,
+        "mission_evidence_source": "vision_sampled_frames",
+        "mission_evidence_autocomplete": False,
         "truth_model": "verified_fact|high_confidence_player_pattern|weak_pattern|hypothesis|unknown",
         "unknown_remains_unknown": True,
         "session_lifecycle": ["PRE_SESSION", "LIVE_OBJECTIVE", "POST_SESSION_REVIEW", "MEMORY_UPDATE", "NEXT_MISSION"],
@@ -187,6 +193,8 @@ def readiness_snapshot(
         "operator_session_lifecycle": operator_intelligence and adaptive_missions,
         "operator_context_bridge": operator_intelligence and operator_context_bridge,
         "operator_causal_intelligence": operator_intelligence and operator_context_bridge,
+        "mission_vod_evidence_fusion": operator_intelligence and adaptive_missions and mission_vod_fusion,
+        "mission_vod_evidence_no_autocomplete": True,
         "persistence_recovery": bool(recovery_fn),
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
         "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),

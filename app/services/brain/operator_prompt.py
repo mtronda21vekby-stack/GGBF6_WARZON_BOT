@@ -26,12 +26,13 @@ def render_operator_context(player_context: Mapping[str, Any] | None) -> str:
     state = raw.get("state") if isinstance(raw.get("state"), Mapping) else {}
     session = raw.get("session") if isinstance(raw.get("session"), Mapping) else {}
     mission = raw.get("mission") if isinstance(raw.get("mission"), Mapping) else {}
+    mission_evidence = session.get("mission_evidence") if isinstance(session.get("mission_evidence"), Mapping) else {}
     claims = list(raw.get("claims") or [])[:8]
     unknown = [_clean(x, 40) for x in list(raw.get("unknown_dimensions") or [])[:12] if _clean(x, 40)]
 
     lines = [
-        f"schema={_clean(raw.get('schema'), 64) or 'bco_operator_context_v26'}",
-        "truth_contract=never promote inference; unknown remains unknown",
+        f"schema={_clean(raw.get('schema'), 64) or 'bco_operator_context_v27'}",
+        "truth_contract=never promote inference; unknown remains unknown; sampled-frame mission evidence never completes a mission",
         (
             "operator_state="
             f"readiness:{_clean(state.get('readiness'), 32) or 'UNKNOWN'}, "
@@ -52,6 +53,25 @@ def render_operator_context(player_context: Mapping[str, Any] | None) -> str:
             f"- success_condition={_clean(mission.get('success_condition'), 500) or 'unknown'}",
             f"- calibration={bool(mission.get('calibration', False))}",
         ])
+
+    if mission_evidence:
+        lines.extend([
+            "mission_sampled_frame_evidence:",
+            f"- classification={_clean(mission_evidence.get('classification'), 64) or 'unknown'}",
+            f"- confidence={_clean(mission_evidence.get('confidence'), 20) or 'unknown'}",
+            f"- clips={int(mission_evidence.get('clips') or 0)}; evidence_count={int(mission_evidence.get('evidence_count') or 0)}; sampled_frames={int(mission_evidence.get('sampled_frames') or 0)}",
+            f"- source={_clean(mission_evidence.get('source'), 48) or 'vision_sampled_frames'}",
+            "- rule=this evidence may inform the current mission analysis, but must never be described as continuous-video truth or as an automatic CLEAN/MIXED/FAILED mission result",
+        ])
+        for signal in list(mission_evidence.get("signals") or [])[:4]:
+            if not isinstance(signal, Mapping):
+                continue
+            lines.append(
+                "  sampled_signal: "
+                f"category={_clean(signal.get('category'), 32) or 'unknown'}; "
+                f"confidence={signal.get('confidence')}; timestamp={_clean(signal.get('timestamp'), 32)}; "
+                f"label={_clean(signal.get('label'), 180)}"
+            )
 
     if claims:
         lines.append("calibrated_claims:")
@@ -88,4 +108,4 @@ def render_operator_context(player_context: Mapping[str, Any] | None) -> str:
             "last_session_review="
             f"focus:{_clean(review.get('focus'), 40)}, outcome:{_clean(review.get('outcome'), 24)}, at:{_clean(review.get('at'), 64)}"
         )
-    return "\n".join(lines)[:7000]
+    return "\n".join(lines)[:7600]

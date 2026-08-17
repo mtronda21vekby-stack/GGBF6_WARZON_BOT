@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.services.vod.mission_evidence import format_mission_evidence
 from app.services.vod.service import (
     VODAnalysisService,
     VODCapabilityError,
@@ -161,17 +162,10 @@ class VODTelegramIngress:
             return True
 
         report = self.vod.format_report(result)
-
-        try:
-            if self.store is not None:
-                self.store.add(chat_id, "user", f"[VOD media] {note or 'gameplay clip'}")
-                self.store.add(chat_id, "assistant", report)
-        except Exception:
-            pass
-
+        fusion_event = None
         if self.player_memory is not None:
             try:
-                self.player_memory.observe_vod(
+                fusion_event = self.player_memory.observe_vod(
                     chat_id=chat_id,
                     profile=dict(profile or {}),
                     result=result,
@@ -179,6 +173,14 @@ class VODTelegramIngress:
                 )
             except Exception as exc:
                 log.warning("vod memory write failed chat_id=%s error=%s", chat_id, type(exc).__name__)
+        report += format_mission_evidence(fusion_event)
+
+        try:
+            if self.store is not None:
+                self.store.add(chat_id, "user", f"[VOD media] {note or 'gameplay clip'}")
+                self.store.add(chat_id, "assistant", report)
+        except Exception:
+            pass
 
         await self.tg.send_message(chat_id, report)
         return True

@@ -1,4 +1,4 @@
-/* BLACK CROWN OPS v25 — Operator Twin / Adaptive Mission Intelligence */
+/* BLACK CROWN OPS v25 — Operator Twin / Adaptive Mission Intelligence; v27 mission evidence fusion */
 (() => {
   "use strict";
   if (window.__BCO_OPERATOR_V25_LOADED__) return;
@@ -88,6 +88,7 @@
         <section class="bco-op-card">
           <div class="bco-op-title"><span>SESSION LIFECYCLE</span><small>persistent</small></div>
           <div class="bco-op-flow"><i>PRE-SESSION</i><b>→</b><i>LIVE OBJECTIVE</i><b>→</b><i>POST-SESSION REVIEW</i><b>→</b><i>MEMORY UPDATE</i><b>→</b><i>NEXT MISSION</i></div>
+          <div id="bcoOpEvidence" class="bco-op-review"></div>
           <div id="bcoOpReview" class="bco-op-review"></div>
         </section>
         <div id="bcoOpStatus" class="bco-op-status">Telegram identity required.</div>
@@ -171,6 +172,14 @@
         actionButton("MIXED", "primary", () => completeMission(mission.id, "mixed")),
         actionButton("FAILED", "danger", () => completeMission(mission.id, "failed")),
       );
+    }
+
+    const missionEvidence = session.mission_evidence;
+    const evidenceEl = $("#bcoOpEvidence");
+    if (evidenceEl) {
+      evidenceEl.textContent = missionEvidence
+        ? `MISSION EVIDENCE // ${String(missionEvidence.classification || "unknown").replaceAll("_", " ").toUpperCase()} • ${Number(missionEvidence.clips || 0)} CLIPS • ${Number(missionEvidence.evidence_count || 0)} SIGNALS • SAMPLED-FRAME ONLY / NO AUTO-COMPLETE`
+        : "MISSION EVIDENCE // no correlated VOD evidence yet.";
     }
 
     const review = session.last_review;
