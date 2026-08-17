@@ -56,6 +56,8 @@ def create_app() -> FastAPI:
     transcription_backend = OpenAITranscriptionBackend(
         api_key=settings.openai_api_key,
         model=settings.voice_transcription_model,
+        fallback_model=settings.voice_transcription_fallback_model,
+        language=settings.voice_transcription_language,
         timeout_s=settings.voice_transcription_timeout_s,
         max_bytes=settings.voice_input_max_bytes,
     )
@@ -66,6 +68,8 @@ def create_app() -> FastAPI:
         enabled=settings.voice_input_enabled,
         max_bytes=settings.voice_input_max_bytes,
         max_duration_s=settings.voice_input_max_duration_s,
+        confidence_threshold=settings.voice_transcription_confidence_threshold,
+        confirmation_ttl_s=settings.voice_transcript_confirmation_ttl_s,
     )
 
     @asynccontextmanager
@@ -253,16 +257,18 @@ def create_app() -> FastAPI:
             return JSONResponse({"ok": True, "duplicate": True})
 
         upd = Update.parse(raw)
+        input_mode = "text"
 
-        # Voice notes are normalized into ordinary text updates before every
-        # deterministic command and AI boundary, so voice and typed input use
-        # the exact same intent, memory, currentness and answer-quality stack.
+        # Voice notes become ordinary text before every deterministic command
+        # and AI boundary. Low-confidence STT is held for explicit confirmation
+        # so uncertain audio never contaminates tactical memory.
         try:
             transformed, voice_handled = await voice_ingress.transform(upd)
             if voice_handled:
                 upd = transformed
                 msg = (upd.get("message") or upd.get("edited_message") or {}) if isinstance(upd, dict) else {}
-                if not isinstance(msg, dict) or msg.get("_bco_input_mode") != "voice":
+                input_mode = str(msg.get("_bco_input_mode") or "") if isinstance(msg, dict) else ""
+                if not input_mode.startswith("voice"):
                     return JSONResponse({"ok": True, "voice_consumed": True})
         except Exception as exc:
             log.exception("voice ingress pre-handler crashed: %s", type(exc).__name__)
@@ -326,7 +332,7 @@ def create_app() -> FastAPI:
             log.exception("Unhandled error: %s", exc)
 
         try:
-            await voice_controller.maybe_auto(chat_id, before_voice_signature)
+            await voice_controller.maybe_auto(chat_id, before_voice_signature, input_mode=input_mode)
         except Exception as exc:
             log.warning("voice auto post-handler failed: %s", type(exc).__name__)
 
