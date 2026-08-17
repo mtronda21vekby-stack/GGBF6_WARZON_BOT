@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from app.services.operator_intelligence.exploration_budget import AdaptiveExplorationBudget
 from app.services.operator_intelligence.strategy_portfolio import StrategyPortfolioCalibration
 
 
@@ -12,8 +13,8 @@ class PremiumAdaptiveStrategyService:
     """Build a bounded next-objective strategy from Premium Deep History.
 
     Entitlement is resolved by the server route before this service is called.
-    v32 may calibrate strategy-class priority using prior associative outcome
-    windows, but it never accepts a Premium flag and never claims causation.
+    Portfolio priors and v33 exploration are associative and deterministic:
+    repeated strategy classes may rotate only to a close evidence-backed peer.
     """
 
     def build(
@@ -89,13 +90,15 @@ class PremiumAdaptiveStrategyService:
                 10,
             )
 
-        if candidates:
-            chosen = max(candidates, key=lambda x: (int(x["score"]), int(x["base_priority"])))
+        chosen, exploration = AdaptiveExplorationBudget.choose(candidates, portfolio_data)
+        if chosen is not None:
             selected = dict(chosen["selected"])
             strategy_class = str(chosen["strategy_class"])
             rationale = str(chosen["rationale"])
             portfolio_adjustment = int(chosen["portfolio_adjustment"])
             selection_score = int(chosen["score"])
+            if exploration.get("rotated") is True:
+                rationale += " Deterministic exploration rotated to a close evidence-backed alternative after repeated use of the top class."
         else:
             selected = {}
             strategy_class = "calibration"
@@ -148,7 +151,7 @@ class PremiumAdaptiveStrategyService:
 
         class_row = ((portfolio_data.get("classes") or {}).get(strategy_class) or {}) if isinstance(portfolio_data.get("classes"), Mapping) else {}
         return {
-            "schema": "bco_premium_adaptive_strategy_v32",
+            "schema": "bco_premium_adaptive_strategy_v33",
             "strategy_class": strategy_class,
             "focus": focus,
             "confidence": confidence,
@@ -158,13 +161,14 @@ class PremiumAdaptiveStrategyService:
             "next_adaptation": next_adaptation,
             "mission_alignment": mission_alignment,
             "portfolio_calibration": {
-                "schema": str(portfolio_data.get("schema") or "bco_strategy_portfolio_v32"),
+                "schema": str(portfolio_data.get("schema") or "bco_strategy_portfolio_v33"),
                 "state": str(class_row.get("state") or "explore"),
                 "evaluated_windows": max(0, int(class_row.get("evaluated") or 0)),
                 "priority_adjustment": portfolio_adjustment,
                 "selection_score": selection_score,
                 "insufficient_data_preserves_exploration": True,
             },
+            "exploration_budget": exploration,
             "evidence": {
                 "observed_cycles": observed_cycles,
                 "focus_cycles": selected_cycles,
@@ -184,6 +188,9 @@ class PremiumAdaptiveStrategyService:
                 "sampled_frame_vod_does_not_autocomplete": True,
                 "strategy_is_recommendation_not_fact": True,
                 "portfolio_priority_is_associative": True,
+                "exploration_is_deterministic": True,
+                "exploration_requires_evidence_backed_alternative": True,
+                "strong_signal_not_overridden_by_exploration": True,
                 "no_strategy_class_permanently_blocked": True,
             },
         }
