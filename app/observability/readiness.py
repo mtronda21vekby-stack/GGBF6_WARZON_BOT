@@ -92,9 +92,7 @@ def readiness_snapshot(
     voice_high_fidelity_enabled = bool(getattr(settings, "voice_high_fidelity_enabled", True))
     voice_local_fallback_enabled = bool(getattr(settings, "voice_local_fallback_enabled", True))
     voice_follow_input = bool(getattr(settings, "voice_follow_input_enabled", True))
-    local_only = voice_provider in {
-        "local", "offline", "piper_only", "piper-only", "local_only",
-    }
+    local_only = voice_provider in {"local", "offline", "piper_only", "piper-only", "local_only"}
     cloud_tts_configured = voice_enabled and voice_high_fidelity_enabled and ai_configured and not local_only
     voice_input_configured = voice_input_enabled and ai_configured
     voice_snapshot = {
@@ -102,13 +100,9 @@ def readiness_snapshot(
         "input_enabled": voice_input_enabled,
         "input_configured": voice_input_configured,
         "transcription_model": str(getattr(settings, "voice_transcription_model", "gpt-4o-transcribe") or "")[:64],
-        "transcription_fallback_model": str(
-            getattr(settings, "voice_transcription_fallback_model", "gpt-4o-mini-transcribe") or ""
-        )[:64],
+        "transcription_fallback_model": str(getattr(settings, "voice_transcription_fallback_model", "gpt-4o-mini-transcribe") or "")[:64],
         "transcription_language": str(getattr(settings, "voice_transcription_language", "ru") or "")[:8],
-        "transcription_confidence_threshold": max(
-            0.0, min(1.0, float(getattr(settings, "voice_transcription_confidence_threshold", 0.58) or 0.58)),
-        ),
+        "transcription_confidence_threshold": max(0.0, min(1.0, float(getattr(settings, "voice_transcription_confidence_threshold", 0.58) or 0.58))),
         "input_max_duration_s": int(getattr(settings, "voice_input_max_duration_s", 300) or 300),
         "follow_input_enabled": voice_follow_input,
         "requested_provider": voice_provider[:32],
@@ -136,12 +130,9 @@ def readiness_snapshot(
     webapp_cinematic = bool(getattr(settings, "webapp_cinematic_ui_enabled", True))
     operator_intelligence = bool(getattr(settings, "operator_intelligence_enabled", True))
     adaptive_missions = bool(getattr(settings, "adaptive_mission_control_enabled", True))
-    operator_context_bridge = bool(
-        getattr(settings, "operator_context_bridge_enabled", _env_on("OPERATOR_CONTEXT_BRIDGE_ENABLED"))
-    )
-    mission_vod_fusion = bool(
-        getattr(settings, "mission_vod_evidence_fusion_enabled", _env_on("MISSION_VOD_EVIDENCE_FUSION_ENABLED"))
-    )
+    operator_context_bridge = bool(getattr(settings, "operator_context_bridge_enabled", _env_on("OPERATOR_CONTEXT_BRIDGE_ENABLED")))
+    mission_vod_fusion = bool(getattr(settings, "mission_vod_evidence_fusion_enabled", _env_on("MISSION_VOD_EVIDENCE_FUSION_ENABLED")))
+    longitudinal = _env_on("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED")
 
     live_intelligence_snapshot = {
         "telegram_drafts": telegram_live_drafts,
@@ -156,10 +147,16 @@ def readiness_snapshot(
         "adaptive_missions": operator_intelligence and adaptive_missions,
         "context_bridge": operator_intelligence and operator_context_bridge,
         "shared_brain_context": operator_intelligence and operator_context_bridge,
-        "context_schema": "bco_operator_context_v27",
+        "context_schema": "bco_operator_context_v28",
         "mission_evidence_fusion": operator_intelligence and adaptive_missions and mission_vod_fusion,
         "mission_evidence_source": "vision_sampled_frames",
         "mission_evidence_autocomplete": False,
+        "longitudinal_intelligence": operator_intelligence and longitudinal,
+        "longitudinal_schema": "bco_longitudinal_operator_v28",
+        "longitudinal_minimum_cycles": 3,
+        "longitudinal_contradiction_detection": True,
+        "longitudinal_association_rule": "association_not_causation",
+        "longitudinal_causal_claims": False,
         "truth_model": "verified_fact|high_confidence_player_pattern|weak_pattern|hypothesis|unknown",
         "unknown_remains_unknown": True,
         "session_lifecycle": ["PRE_SESSION", "LIVE_OBJECTIVE", "POST_SESSION_REVIEW", "MEMORY_UPDATE", "NEXT_MISSION"],
@@ -195,6 +192,9 @@ def readiness_snapshot(
         "operator_causal_intelligence": operator_intelligence and operator_context_bridge,
         "mission_vod_evidence_fusion": operator_intelligence and adaptive_missions and mission_vod_fusion,
         "mission_vod_evidence_no_autocomplete": True,
+        "operator_longitudinal_intelligence": operator_intelligence and longitudinal,
+        "operator_longitudinal_contradiction_detection": True,
+        "operator_longitudinal_no_causal_claims": True,
         "persistence_recovery": bool(recovery_fn),
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
         "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),
@@ -209,10 +209,7 @@ def readiness_snapshot(
     return {
         "ok": required_ok,
         "status": status,
-        "release": {
-            "version": str(app_version or "unknown")[:32],
-            "contract": str(release_contract or "unknown")[:64],
-        },
+        "release": {"version": str(app_version or "unknown")[:32], "contract": str(release_contract or "unknown")[:64]},
         "storage": {
             "configured_mode": str(getattr(settings, "storage_backend", "auto") or "auto")[:32],
             "active_adapter": storage_class[:64],

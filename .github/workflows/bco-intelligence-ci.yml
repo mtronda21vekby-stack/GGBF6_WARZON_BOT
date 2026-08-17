@@ -22,6 +22,7 @@ on:
       - feature/bco-operator-twin-missions-v25
       - feature/bco-causal-operator-context-v26
       - feature/bco-mission-evidence-fusion-v27
+      - feature/bco-longitudinal-operator-intelligence-v28
   pull_request:
     branches:
       - main
@@ -161,15 +162,24 @@ jobs:
               and features.get('operator_causal_intelligence') is True
               and features.get('mission_vod_evidence_fusion') is True
               and features.get('mission_vod_evidence_no_autocomplete') is True
+              and features.get('operator_longitudinal_intelligence') is True
+              and features.get('operator_longitudinal_contradiction_detection') is True
+              and features.get('operator_longitudinal_no_causal_claims') is True
               and operator.get('enabled') is True
               and operator.get('adaptive_missions') is True
               and operator.get('unknown_remains_unknown') is True
               and operator.get('context_bridge') is True
               and operator.get('shared_brain_context') is True
-              and operator.get('context_schema') == 'bco_operator_context_v27'
+              and operator.get('context_schema') == 'bco_operator_context_v28'
               and operator.get('mission_evidence_fusion') is True
               and operator.get('mission_evidence_source') == 'vision_sampled_frames'
               and operator.get('mission_evidence_autocomplete') is False
+              and operator.get('longitudinal_intelligence') is True
+              and operator.get('longitudinal_schema') == 'bco_longitudinal_operator_v28'
+              and operator.get('longitudinal_minimum_cycles') == 3
+              and operator.get('longitudinal_contradiction_detection') is True
+              and operator.get('longitudinal_association_rule') == 'association_not_causation'
+              and operator.get('longitudinal_causal_claims') is False
               and voice.get('input_configured') is True
               and voice.get('transcription_model') == 'gpt-4o-transcribe'
               and voice.get('transcription_fallback_model') == 'gpt-4o-mini-transcribe'
@@ -197,7 +207,7 @@ jobs:
                    grep -q 'Operator Twin / Adaptive Mission Intelligence' /tmp/bco-operator.js && \
                    grep -q 'SAMPLED-FRAME ONLY / NO AUTO-COMPLETE' /tmp/bco-operator.js && \
                    grep -q 'Operator Twin technical dossier' /tmp/bco-operator.css; then
-                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, duplex voice=ON, live intelligence=ON, operator twin=ON, mission control=ON, causal context=ON, mission evidence fusion=ON, autocomplete=OFF"
+                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, duplex voice=ON, live intelligence=ON, operator twin=ON, mission control=ON, causal context=ON, mission evidence fusion=ON, longitudinal intelligence=ON, causal_claims=OFF"
                   cat /tmp/bco-health.json
                   cat /tmp/bco-runtime.json
                   exit 0

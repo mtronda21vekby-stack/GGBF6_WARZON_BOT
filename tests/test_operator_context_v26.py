@@ -67,6 +67,23 @@ def _operator_snapshot():
             "confidence": "high",
             "calibration": False,
         },
+        "longitudinal": {
+            "schema": "bco_longitudinal_operator_v28",
+            "minimum_cycles": 3,
+            "completed_cycles": 4,
+            "directional_ready": True,
+            "trend": "stable",
+            "volatility": "moderate",
+            "confidence": "medium",
+            "contradictions": 1,
+            "contradiction_detected": True,
+            "vod_correlated_cycles": 2,
+            "dominant_focus": "rotations",
+            "association_rule": "association_not_causation",
+            "causal_claims": False,
+            "single_session_proves_improvement": False,
+            "interpretation": "Association only.",
+        },
         "session": {
             "phase": "LIVE_OBJECTIVE",
             "last_review": {"focus": "rotations", "outcome": "mixed", "at": "2026-08-17T10:00:00+00:00"},
@@ -94,9 +111,10 @@ def _operator_snapshot():
 
 def test_operator_context_projection_strips_internal_weights_and_preserves_uncertainty():
     projected = OperatorContextProjector().project(_operator_snapshot())
-    assert projected["schema"] == "bco_operator_context_v27"
+    assert projected["schema"] == "bco_operator_context_v28"
     assert "unknown_remains_unknown" in projected["truth_contract"]
     assert "mission_evidence_does_not_complete" in projected["truth_contract"]
+    assert "association_not_causation" in projected["truth_contract"]
     assert projected["mission"]["status"] == "active"
     assert projected["session"]["phase"] == "LIVE_OBJECTIVE"
     assert projected["claims"][0]["domain"] == "rotations"
@@ -106,6 +124,9 @@ def test_operator_context_projection_strips_internal_weights_and_preserves_uncer
     mission_evidence = projected["session"]["mission_evidence"]
     assert mission_evidence["does_not_complete_mission"] is True
     assert mission_evidence["source"] == "vision_sampled_frames"
+    assert projected["longitudinal"]["minimum_cycles"] == 3
+    assert projected["longitudinal"]["association_rule"] == "association_not_causation"
+    assert projected["longitudinal"]["causal_claims"] is False
     rendered = repr(projected)
     assert "_priority" not in rendered
     assert "'weight'" not in rendered
@@ -181,7 +202,7 @@ class _Memory:
 
 class _OperatorContext:
     def context(self, chat_id):
-        return {"schema": "bco_operator_context_v27", "mission": {"status": "active"}}
+        return {"schema": "bco_operator_context_v28", "mission": {"status": "active"}, "longitudinal": {"causal_claims": False}}
 
 
 class _Store:
@@ -197,7 +218,8 @@ def test_shared_conversation_boundary_injects_operator_context_only_for_trusted_
     service.operator_context = _OperatorContext()
     trusted_profile = {"game": "Warzone", "_chat_id": 77}
     assert service.reply(text="что делать", profile=trusted_profile, history=[]) == "ok"
-    assert brain.last_context["operator_context"]["schema"] == "bco_operator_context_v27"
+    assert brain.last_context["operator_context"]["schema"] == "bco_operator_context_v28"
+    assert brain.last_context["operator_context"]["longitudinal"]["causal_claims"] is False
 
     profiles.trusted = False
     brain.last_context = None

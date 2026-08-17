@@ -147,7 +147,9 @@ def test_operator_snapshot_and_context_expose_evidence_but_not_outcome_authority
     assert snapshot["session"]["phase"] == "LIVE_OBJECTIVE"
 
     projected = OperatorContextProjector().project(snapshot)
-    assert projected["schema"] == "bco_operator_context_v27"
+    assert projected["schema"] == "bco_operator_context_v28"
+    assert projected["longitudinal"]["association_rule"] == "association_not_causation"
+    assert projected["longitudinal"]["causal_claims"] is False
     projected_evidence = projected["session"]["mission_evidence"]
     assert projected_evidence["does_not_complete_mission"] is True
     assert projected_evidence["source"] == "vision_sampled_frames"

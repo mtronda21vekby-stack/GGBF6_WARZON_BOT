@@ -21,8 +21,8 @@ class OperatorContextProjector:
     """Project the full Operator Twin into a bounded prompt-safe context.
 
     Internal evidence weights and scoring mechanics never cross this boundary.
-    v27 additionally exposes bounded sampled-frame evidence correlated to the
-    active mission, while explicitly preserving that evidence != outcome.
+    v28 exposes only bounded longitudinal interpretation with an explicit
+    association-not-causation contract and contradiction telemetry.
     """
 
     max_claims: int = 8
@@ -89,6 +89,27 @@ class OperatorContextProjector:
             "signals": signals,
         }
 
+    def _longitudinal(self, raw: Mapping[str, Any] | None) -> dict[str, Any]:
+        if not isinstance(raw, Mapping):
+            return {}
+        return {
+            "schema": self._text(raw.get("schema"), 64) or "bco_longitudinal_operator_v28",
+            "minimum_cycles": max(3, min(12, int(raw.get("minimum_cycles") or 3))),
+            "completed_cycles": max(0, min(99, int(raw.get("completed_cycles") or 0))),
+            "directional_ready": bool(raw.get("directional_ready", False)),
+            "trend": self._text(raw.get("trend"), 24) or "unknown",
+            "volatility": self._text(raw.get("volatility"), 24) or "unknown",
+            "confidence": self._text(raw.get("confidence"), 24) or "unknown",
+            "contradictions": max(0, min(99, int(raw.get("contradictions") or 0))),
+            "contradiction_detected": bool(raw.get("contradiction_detected", False)),
+            "vod_correlated_cycles": max(0, min(99, int(raw.get("vod_correlated_cycles") or 0))),
+            "dominant_focus": self._text(raw.get("dominant_focus"), 40) or "unknown",
+            "association_rule": "association_not_causation",
+            "causal_claims": False,
+            "single_session_proves_improvement": False,
+            "interpretation": self._text(raw.get("interpretation"), 500),
+        }
+
     def project(self, snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         data = dict(snapshot or {})
         operator = data.get("operator") if isinstance(data.get("operator"), Mapping) else {}
@@ -142,6 +163,9 @@ class OperatorContextProjector:
         mission_evidence = self._mission_evidence(
             session_raw.get("mission_evidence") if isinstance(session_raw.get("mission_evidence"), Mapping) else None
         )
+        longitudinal = self._longitudinal(
+            data.get("longitudinal") if isinstance(data.get("longitudinal"), Mapping) else None
+        )
 
         truth = operator.get("truth_model") if isinstance(operator.get("truth_model"), Mapping) else {}
         truth_summary = {
@@ -153,8 +177,8 @@ class OperatorContextProjector:
         }
 
         return {
-            "schema": "bco_operator_context_v27",
-            "truth_contract": "never_promote_inference; unknown_remains_unknown; mission_evidence_does_not_complete",
+            "schema": "bco_operator_context_v28",
+            "truth_contract": "never_promote_inference; unknown_remains_unknown; mission_evidence_does_not_complete; association_not_causation",
             "state": {
                 "readiness": self._text(operator.get("readiness"), 32) or "UNKNOWN",
                 "risk": self._text(operator.get("risk"), 32) or "UNKNOWN",
@@ -165,6 +189,7 @@ class OperatorContextProjector:
             "unknown_dimensions": unknown_dimensions[:12],
             "truth_summary": truth_summary,
             "mission": mission,
+            "longitudinal": longitudinal,
             "session": {
                 "phase": self._text(session_raw.get("phase"), 40) or "PRE_SESSION",
                 "last_review": last_review,
