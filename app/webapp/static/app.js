@@ -21,7 +21,15 @@
   window.__BCO_APP_BOOT_PROMISE__ = loadScript("/webapp/bco.i18n.js","__BCO_I18N_V38_LOADED__")
     .catch((error)=>{console.warn("[BCO v38] i18n coordinator unavailable; base UI remains active",error);return false;})
     .then(()=>Promise.all([loadScript("/webapp/app.base.js","__BCO_APP_BASE_LOADED__"),loadRuntimeFlags()]))
-    .then(([,flags])=>{window.__BCO_APP_BASE_LOADED__=true;if(flags&&flags.v18_overlay===false){window.__BCO_LIVE_LAYER_LOADED__=false;window.__BCO_V18_READY__=false;return false;}return loadScript("/webapp/bco.live.js","__BCO_LIVE_LAYER_LOADED__");})
+    .then(([, flags]) => {
+      window.__BCO_APP_BASE_LOADED__ = true;
+      if (flags.v18_overlay === false) {
+        window.__BCO_LIVE_LAYER_LOADED__ = false;
+        window.__BCO_V18_READY__ = false;
+        return false;
+      }
+      return loadScript("/webapp/bco.live.js", "__BCO_LIVE_LAYER_LOADED__");
+    })
     .then((loaded)=>{if(loaded!==false){window.__BCO_LIVE_LAYER_LOADED__=true;window.__BCO_V18_READY__=true;}return loadScript("/webapp/bco.operator.js","__BCO_OPERATOR_V25_LOADED__").catch((error)=>{window.__BCO_OPERATOR_V25_LOADED__=false;console.warn("[BCO] Operator Twin unavailable",error);return false;});})
     .then(()=>loadScript("/webapp/bco.orchestrator.js","__BCO_MISSION_ORCHESTRATOR_V36_LOADED__").catch((error)=>{window.__BCO_MISSION_ORCHESTRATOR_V36_LOADED__=false;console.warn("[BCO v36] Mission Orchestrator unavailable",error);return false;}))
     .then(()=>loadScript("/webapp/bco.deep-history.js","__BCO_DEEP_HISTORY_V29_LOADED__").catch((error)=>{window.__BCO_DEEP_HISTORY_V29_LOADED__=false;console.warn("[BCO v29] Deep History unavailable",error);return false;}))
