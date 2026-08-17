@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-APP_VERSION = "28.0.0"
-RELEASE_CONTRACT = "bco-longitudinal-operator-intelligence-v28"
+APP_VERSION = "29.0.0"
+RELEASE_CONTRACT = "bco-premium-deep-history-v29"
