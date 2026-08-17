@@ -136,7 +136,7 @@ def test_prompt_builder_uses_calibrated_operator_context_and_quarantines_raw_der
     assert "LIVE_OBJECTIVE" in system
     assert "high_confidence_player_pattern" in system
     assert "Unknown dimensions remain unknown" in system
-    assert "sampled-frame evidence" in system
+    assert "sampled-frame mission evidence" in system
     assert "automatic CLEAN/MIXED/FAILED" in system
     assert "dangerous_internal_score" not in system
     assert "unbounded_guess" not in system
