@@ -8,7 +8,16 @@
     if (marker && window[marker]) return Promise.resolve(true);
     return new Promise((resolve,reject)=>{ const existing=document.querySelector(`script[data-bco-src="${src}"]`); if(existing){existing.addEventListener("load",()=>resolve(true),{once:true});existing.addEventListener("error",()=>reject(new Error(`Failed: ${src}`)),{once:true});return;} const script=document.createElement("script");script.src=`${src}?build=${encodeURIComponent(build)}`;script.async=false;script.dataset.bcoSrc=src;script.onload=()=>resolve(true);script.onerror=()=>reject(new Error(`Failed: ${src}`));document.body.appendChild(script); });
   }
-  async function loadRuntimeFlags(){const controller=new AbortController();const timeout=window.setTimeout(()=>controller.abort(),3500);try{const response=await fetch(`/webapp/api/runtime?build=${encodeURIComponent(build)}`,{method:"POST",cache:"no-store",credentials:"same-origin",signal:controller.signal});if(!response.ok)throw new Error(`runtime HTTP ${response.status}`);const payload=await response.json();const flags=payload&&payload.webapp?payload.webapp:{};window.__BCO_RUNTIME_FLAGS__=flags;return flags;}catch(error){const fallback={live_stream:true,cinematic_ui:true,v18_overlay:true,transport:"ndjson",runtime_unavailable:true};window.__BCO_RUNTIME_FLAGS__=fallback;console.warn("[BCO] runtime capability check unavailable",error);return fallback;}finally{window.clearTimeout(timeout);}}
+  async function loadRuntimeFlags(){
+    const controller=new AbortController(); const timeout=window.setTimeout(()=>controller.abort(),3500);
+    try {
+      const response=await fetch(`/webapp/api/runtime?build=${encodeURIComponent(build)}`, { method: "POST", cache: "no-store", credentials: "same-origin", signal: controller.signal });
+      if(!response.ok) throw new Error(`runtime HTTP ${response.status}`);
+      const payload=await response.json(); const flags=payload&&payload.webapp?payload.webapp:{}; window.__BCO_RUNTIME_FLAGS__=flags; return flags;
+    } catch(error) {
+      const fallback={live_stream:true,cinematic_ui:true,v18_overlay:true,transport:"ndjson",runtime_unavailable:true}; window.__BCO_RUNTIME_FLAGS__=fallback; console.warn("[BCO] runtime capability check unavailable",error); return fallback;
+    } finally { window.clearTimeout(timeout); }
+  }
   window.__BCO_APP_BOOT_PROMISE__ = loadScript("/webapp/bco.i18n.js","__BCO_I18N_V38_LOADED__")
     .catch((error)=>{console.warn("[BCO v38] i18n coordinator unavailable; base UI remains active",error);return false;})
     .then(()=>Promise.all([loadScript("/webapp/app.base.js","__BCO_APP_BASE_LOADED__"),loadRuntimeFlags()]))
