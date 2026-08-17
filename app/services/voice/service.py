@@ -61,9 +61,10 @@ class VoiceService:
         self._provider_setting = str(getattr(self.settings, "voice_provider", "auto") or "auto").strip().casefold()
         self._high_fidelity_enabled = _bool_setting(self.settings, "voice_high_fidelity_enabled", True)
         self._local_fallback_enabled = _bool_setting(self.settings, "voice_local_fallback_enabled", True)
+        self._follow_input_enabled = _bool_setting(self.settings, "voice_follow_input_enabled", True)
         self._opus_bitrate_kbps = max(
             32,
-            min(int(getattr(self.settings, "voice_opus_bitrate_kbps", 48) or 48), 96),
+            min(int(getattr(self.settings, "voice_opus_bitrate_kbps", 64) or 64), 96),
         )
 
         if self.backend is None:
@@ -106,11 +107,27 @@ class VoiceService:
     def high_fidelity_active(self) -> bool:
         return bool(self.cloud_backend is not None and getattr(self.cloud_backend, "configured", True))
 
+    @property
+    def follow_input_active(self) -> bool:
+        return bool(self.enabled and self._follow_input_enabled)
+
     def mode_for(self, profile: Mapping[str, Any] | None) -> TTSMode:
         return normalize_tts_mode((profile or {}).get("tts_mode"))
 
-    def should_auto(self, profile: Mapping[str, Any] | None) -> bool:
-        return self.enabled and self.mode_for(profile) == TTSMode.AUTO
+    def should_auto(self, profile: Mapping[str, Any] | None, *, input_mode: str = "text") -> bool:
+        if not self.enabled:
+            return False
+        data = dict(profile or {})
+        mode = self.mode_for(data)
+        if mode == TTSMode.AUTO:
+            return True
+        # Explicit OFF must always win. Smart duplex only applies before the
+        # player has chosen a TTS mode, so speaking to the bot feels natural
+        # without overriding a deliberate preference.
+        explicit_mode = "tts_mode" in data and str(data.get("tts_mode") or "").strip() != ""
+        if explicit_mode:
+            return False
+        return self.follow_input_active and str(input_mode or "").startswith("voice")
 
     def voice_name_for(self, profile: Mapping[str, Any] | None = None) -> str:
         if self.high_fidelity_active and callable(getattr(self.cloud_backend, "voice_for", None)):
@@ -138,6 +155,7 @@ class VoiceService:
             "provider": provider,
             "voice": self.voice_name_for(profile).upper(),
             "local_fallback": fallback,
+            "follow_input": self.follow_input_active,
         }
 
     async def close(self) -> None:
@@ -182,7 +200,7 @@ class VoiceService:
     async def synthesize(self, text: str, profile: Mapping[str, Any] | None = None) -> VoiceArtifact:
         if not self.enabled:
             raise RuntimeError("Voice/TTS is disabled")
-        spoken = clean_tts_text(text, int(getattr(self.settings, "voice_max_chars", 1800) or 1800))
+        spoken = clean_tts_text(text, int(getattr(self.settings, "voice_max_chars", 2200) or 2200))
         if not spoken:
             raise ValueError("Nothing useful to synthesize")
 
