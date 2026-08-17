@@ -35,13 +35,16 @@ def _settings():
         live_knowledge_enabled=True,
         vod_enabled=True,
         voice_enabled=True,
+        voice_input_enabled=True,
+        voice_transcription_model="gpt-4o-mini-transcribe",
+        voice_input_max_duration_s=300,
         voice_provider="auto",
         voice_high_fidelity_enabled=True,
         voice_local_fallback_enabled=True,
         voice_openai_model="gpt-4o-mini-tts",
         voice_openai_voice="cedar",
         voice_model_name="ru_RU-denis-medium",
-        voice_opus_bitrate_kbps=48,
+        voice_opus_bitrate_kbps=64,
         usage_guard_enabled=True,
         telegram_max_update_bytes=256 * 1024,
         premium_link_enabled=True,
@@ -53,8 +56,8 @@ def _settings():
 
 
 def test_release_contract_is_explicit_and_readiness_exposes_version_only():
-    assert APP_VERSION == "18.0.0"
-    assert RELEASE_CONTRACT == "bco-live-intelligence-v18"
+    assert APP_VERSION == "19.0.0"
+    assert RELEASE_CONTRACT == "bco-voice-intelligence-v19"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -62,7 +65,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "18.0.0", "contract": "bco-live-intelligence-v18"}
+    assert snap["release"] == {"version": "19.0.0", "contract": "bco-voice-intelligence-v19"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_inline_navigation"] is True
@@ -70,6 +73,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
     assert snap["features"]["telegram_live_intelligence_drafts"] is True
     assert snap["features"]["webapp_live_intelligence_stream"] is True
     assert snap["features"]["webapp_cinematic_ui"] is True
+    assert snap["features"]["voice_input"] is True
     assert snap["features"]["voice_high_fidelity"] is True
     assert snap["features"]["voice_local_fallback"] is True
     assert snap["live_intelligence"] == {
@@ -82,6 +86,10 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
     }
     assert snap["voice_runtime"] == {
         "enabled": True,
+        "input_enabled": True,
+        "input_configured": True,
+        "transcription_model": "gpt-4o-mini-transcribe",
+        "input_max_duration_s": 300,
         "requested_provider": "auto",
         "active_strategy": "cloud_first_local_fallback",
         "high_fidelity_enabled": True,
@@ -90,7 +98,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         "cloud_model": "gpt-4o-mini-tts",
         "default_voice": "cedar",
         "local_model": "ru_RU-denis-medium",
-        "opus_bitrate_kbps": 48,
+        "opus_bitrate_kbps": 64,
     }
     assert snap["storage"]["recovery"]["last_probe_ok"] is True
     rendered = repr(snap)
