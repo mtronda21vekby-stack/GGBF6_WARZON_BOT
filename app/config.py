@@ -31,8 +31,7 @@ class Settings(BaseSettings):
     telegram_aaa_console_enabled: bool = _env_on("TELEGRAM_AAA_CONSOLE_ENABLED")
     telegram_live_drafts_enabled: bool = _env_on("TELEGRAM_LIVE_DRAFTS_ENABLED")
 
-    # Mini App presentation / streaming. Each layer is independently reversible
-    # without touching stored player state.
+    # Mini App presentation / streaming.
     webapp_live_stream_enabled: bool = _env_on("WEBAPP_LIVE_STREAM_ENABLED")
     webapp_cinematic_ui_enabled: bool = _env_on("WEBAPP_CINEMATIC_UI_ENABLED")
 
@@ -95,8 +94,7 @@ class Settings(BaseSettings):
     voice_input_max_duration_s: int = int(os.getenv("VOICE_INPUT_MAX_DURATION_S", "300"))
     voice_transcript_confirmation_ttl_s: int = int(os.getenv("VOICE_TRANSCRIPT_CONFIRMATION_TTL_S", "120"))
 
-    # Hybrid voice output: steerable cloud TTS first, local Piper fallback always ready.
-    # Lossless cloud WAV is mastered server-side and encoded once to Telegram-native Ogg Opus.
+    # Hybrid output: natural OpenAI speech first, local Piper fallback always ready.
     voice_enabled: bool = _env_on("VOICE_ENABLED")
     voice_follow_input_enabled: bool = _env_on("VOICE_FOLLOW_INPUT_ENABLED")
     voice_provider: str = os.getenv("VOICE_PROVIDER", "auto")
@@ -106,12 +104,12 @@ class Settings(BaseSettings):
     voice_model_dir: str = os.getenv("VOICE_MODEL_DIR", ".bco_voice")
     voice_model_timeout_s: float = float(os.getenv("VOICE_MODEL_TIMEOUT_S", "120"))
     voice_max_chars: int = int(os.getenv("VOICE_MAX_CHARS", "3200"))
-    # Voice-to-voice replies remain shorter than the authoritative written answer
-    # but now retain enough context for natural reasoning and spoken transitions.
     voice_duplex_max_chars: int = int(os.getenv("VOICE_DUPLEX_MAX_CHARS", "1800"))
     voice_opus_bitrate_kbps: int = int(os.getenv("VOICE_OPUS_BITRATE_KBPS", "72"))
     voice_openai_model: str = os.getenv("VOICE_OPENAI_MODEL", "gpt-4o-mini-tts")
-    voice_openai_voice: str = os.getenv("VOICE_OPENAI_VOICE", "cedar")
+    # v23 defaults to Marin. An existing Render ENV override still wins, so the
+    # rollout is reversible without code changes.
+    voice_openai_voice: str = os.getenv("VOICE_OPENAI_VOICE", "marin")
     voice_openai_timeout_s: float = float(os.getenv("VOICE_OPENAI_TIMEOUT_S", "45"))
     voice_openai_max_bytes: int = int(os.getenv("VOICE_OPENAI_MAX_BYTES", str(20 * 1024 * 1024)))
 

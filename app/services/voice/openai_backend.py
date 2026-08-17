@@ -13,7 +13,7 @@ log = logging.getLogger("bco.voice.openai")
 
 OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
 DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
-DEFAULT_TTS_VOICE = "cedar"
+DEFAULT_TTS_VOICE = "marin"
 ALLOWED_TTS_VOICES = frozenset(
     {
         "alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx",
@@ -42,26 +42,34 @@ def _content_direction(text: str) -> str:
     clean = " ".join(str(text or "").split()).strip()
     if not clean:
         return ""
-    clauses = clean.count(".") + clean.count("!") + clean.count("?") + clean.count(";")
-    if len(clean) <= 220 and clauses <= 3:
-        return (
-            "Treat this as a short tactical callout. Enter immediately, keep one compact breath arc, "
-            "and land the final action with a clean low ending."
-        )
-    if len(clean) >= 1200:
-        return (
-            "Treat this as a longer coaching debrief. Group meaning into audible paragraphs, slightly reset the breath between "
-            "cause, correction and next action, and keep the final third as controlled as the opening."
-        )
-    if any(marker in clean for marker in ("Перв", "Втор", "1.", "2.", "•")):
-        return (
-            "The answer contains priorities. Separate each priority with a short natural pause and a small change in emphasis, "
-            "but never sound like a list-reading accessibility voice."
-        )
-    return "Use one natural conversational arc: context, decisive insight, then the actionable ending."
+    if len(clean) <= 220:
+        return "Deliver it as one natural short spoken reply, not as a read-out script."
+    if len(clean) >= 1100:
+        return "For the longer answer, use natural conversational paragraph breaks and reset the breath only when the idea changes."
+    return "Keep a natural conversational arc and let the actionable ending land clearly."
+
+
+def _voice_character(profile: Mapping[str, Any]) -> str:
+    voice = normalize_tts_voice(profile.get("tts_voice"))
+    if voice == "marin":
+        return "Use a warm, modern, soft and confident synthetic delivery with light expressive color and no artificial sweetness."
+    if voice == "coral":
+        return "Use a warm, friendly and grounded synthetic delivery with relaxed energy and clean articulation."
+    if voice == "shimmer":
+        return "Use a lighter, clear and lively synthetic delivery; keep it mature, calm and never cartoonish."
+    if voice == "nova":
+        return "Use a clean, bright and conversational synthetic delivery with restrained energy."
+    if voice == "cedar":
+        return "Use a lower, composed tactical synthetic delivery with natural speech rhythm and no announcer effect."
+    return "Use the selected synthetic voice naturally and conversationally."
 
 
 def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str:
+    """Short steering works better than an over-constrained studio script.
+
+    The audio model already owns the timbre. We only steer conversational intent,
+    persona and a few failure modes that made earlier BCO speech sound synthetic.
+    """
     data = dict(profile or {})
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
@@ -69,55 +77,38 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
     duplex_reply = bool(data.get("_bco_voice_reply"))
 
     instructions = [
-        "Speak fluent natural Russian in a close-mic premium studio style with a neutral native Russian accent.",
-        "The voice is synthetic: do not imitate, reference, or resemble any real named person.",
-        "Sound like a highly experienced competitive-FPS operator speaking to one player, not like a generic assistant.",
-        "Keep the signal dry and intimate: no announcer voice, movie trailer voice, radio distortion, reverb, whisper effect, or theatrical growl.",
-        "Use human breath groups, micro-pauses, variable sentence length, clean consonants and relaxed connected speech.",
-        "Avoid the synthetic assistant cadence where every phrase receives equal stress or every sentence rises at the end.",
-        "Give at most one strong emphasis per thought. Let secondary information stay quieter and faster.",
-        "Pronounce Russian naturally and English gaming terms confidently inside Russian speech without caricaturing an English accent.",
-        "Preserve weapon names, map names, negations, quantities and tactical abbreviations exactly in meaning.",
-        "Do not read markdown, emoji, separators, URLs, UI chrome, bullet symbols, or the BLACK CROWN brand header aloud.",
-        "Never add filler, greetings, laughter, sighs, sound effects or a sign-off that is not present in the text.",
-        "Finish instructions with a calm decisive downward cadence rather than exaggerated emphasis.",
+        "Speak fluent natural Russian to one person in a close conversational voice.",
+        "Sound human and spontaneous, not like a narrator, announcer, audiobook, call center, movie trailer, radio operator or generic AI assistant.",
+        "Do not imitate or reference any real person. This is a synthetic voice.",
+        "Use relaxed connected speech, natural micro-pauses and uneven emphasis; do not over-enunciate every word or stress every sentence equally.",
+        "Do not read markdown, emoji, URLs, separators, UI labels or BLACK CROWN headers aloud.",
+        "Keep English FPS terms natural inside Russian speech and preserve negations, weapon names, numbers and tactical meaning.",
+        _voice_character(data),
     ]
 
     if duplex_reply:
-        instructions.extend([
-            "This is a direct reply to a voice message. Continue the conversation immediately as if the player is still in comms.",
-            "Do not sound like you are reading an article or prepared script; answer the player conversationally and directly.",
-            "The first sentence should arrive quickly and naturally; do not introduce or summarize the fact that you are answering.",
-            "Use fewer formal pauses, smoother connected phrasing and a compact spoken form while the complete written answer remains visible.",
-        ])
+        instructions.append(
+            "This directly answers the player's voice message: enter the answer immediately, keep it conversational, and avoid an intro or recap of the question."
+        )
 
     if persona == "COACH":
-        instructions.extend([
-            "Use a measured one-on-one elite esports coach manner: calm authority, slightly warmer tone, controlled pacing.",
-            "Pause briefly before the root cause, the correction and the measurable next action.",
-            "Criticism is precise and emotionally neutral; encouragement is brief and earned.",
-        ])
+        instructions.append(
+            "As COACH, be calm and attentive: slightly slower, warmer, and emphasize only the root cause and next correction."
+        )
     else:
-        instructions.extend([
-            "Use the manner of a trusted high-level squad teammate on clean comms: brisk, direct, composed and easy to process under pressure.",
-            "Short tactical sentences may connect tightly; strategic explanations may breathe slightly more.",
-        ])
+        instructions.append(
+            "As TEAMMATE, be concise and natural like a strong squadmate speaking privately between fights, not military roleplay."
+        )
 
     if brain == "DEMON":
-        instructions.append(
-            "Add restrained intensity through firmer consonants and endings, without shouting, theatrical pitch lowering, or roleplay."
-        )
+        instructions.append("For DEMON mode, sound more decisive, but never shout, growl or artificially lower the pitch.")
     elif brain == "PRO":
-        instructions.append("Use precise professional emphasis and a focused tournament-review cadence.")
-    else:
-        instructions.append("Keep the delivery relaxed, transparent and immediately understandable on first listen.")
+        instructions.append("For PRO mode, keep confident professional precision without sounding formal.")
 
     if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
-        instructions.append(
-            "Lower emotional intensity because the player may be overloaded: reduce vocal energy, widen the most important pause slightly, and make the correction exceptionally clear."
-        )
+        instructions.append("The player may be overloaded: lower the energy slightly and make the key correction exceptionally easy to hear.")
     elif emotion in {"HYPE", "EXCITED"}:
-        instructions.append("Allow modest extra energy and faster transitions while preserving diction and control.")
+        instructions.append("Allow a little extra energy while keeping the delivery controlled and natural.")
 
     content = _content_direction(text)
     if content:
@@ -128,19 +119,19 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
 def voice_speed(profile: Mapping[str, Any] | None) -> float:
     data = dict(profile or {})
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
-    brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
     emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
 
-    speed = 0.98 if persona == "COACH" else 1.04
+    # Earlier BCO releases deliberately ran TEAMMATE above 1.04x. Combined
+    # with strong presence processing that could sound rushed and synthetic.
+    # v23 stays close to the model's native timing.
+    speed = 0.975 if persona == "COACH" else 1.0
     if bool(data.get("_bco_voice_reply")):
-        speed += 0.015
-    if brain == "DEMON":
         speed += 0.005
     if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
-        speed -= 0.025
+        speed -= 0.02
     elif emotion in {"HYPE", "EXCITED"}:
-        speed += 0.01
-    return max(0.90, min(speed, 1.08))
+        speed += 0.005
+    return max(0.94, min(speed, 1.025))
 
 
 class OpenAITTSBackend:
@@ -173,8 +164,9 @@ class OpenAITTSBackend:
         explicit = str(data.get("tts_voice") or "").strip()
         if explicit:
             return normalize_tts_voice(explicit, self.default_voice)
-        persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
-        return "marin" if persona == "COACH" else self.default_voice
+        # User selection is authoritative. Persona no longer silently swaps the
+        # timbre underneath the player; without a selection we use Marin.
+        return self.default_voice
 
     async def close(self) -> None:
         if self._owns_client:
@@ -196,7 +188,7 @@ class OpenAITTSBackend:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/voice-studio-v22",
+            "User-Agent": "BLACK-CROWN-OPS/natural-voice-v23",
             "X-Client-Request-Id": str(uuid.uuid4()),
         }
         output.parent.mkdir(parents=True, exist_ok=True)

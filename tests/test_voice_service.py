@@ -42,7 +42,7 @@ class FakeCloud:
         self.calls: list[tuple[str, dict]] = []
 
     def voice_for(self, profile):
-        return str((profile or {}).get("tts_voice") or "cedar")
+        return str((profile or {}).get("tts_voice") or "marin")
 
     async def synthesize_wav(self, text: str, output_path: str | Path, profile=None):
         self.calls.append((text, dict(profile or {})))
@@ -57,6 +57,7 @@ class FakeCloud:
 def _settings(**overrides):
     base = dict(
         voice_enabled=True,
+        voice_follow_input_enabled=True,
         voice_provider="auto",
         voice_high_fidelity_enabled=True,
         voice_local_fallback_enabled=True,
@@ -67,7 +68,7 @@ def _settings(**overrides):
         voice_model_name="ru_RU-denis-medium",
         voice_model_timeout_s=120.0,
         voice_openai_model="gpt-4o-mini-tts",
-        voice_openai_voice="cedar",
+        voice_openai_voice="marin",
         voice_openai_timeout_s=45.0,
         voice_openai_max_bytes=20 * 1024 * 1024,
         openai_api_key="",
@@ -82,7 +83,7 @@ def test_tts_mode_normalization():
     assert normalize_tts_mode(None) == TTSMode.OFF
 
 
-def test_voice_service_generates_ogg_and_cleans_up():
+def test_local_voice_uses_rescue_master_and_generates_ogg():
     local = FakeBackend()
     service = VoiceService(_settings(), backend=local)
     artifact = asyncio.run(service.synthesize("🎯 Проверка голосового ответа.", {"voice": "TEAMMATE"}))
@@ -92,7 +93,7 @@ def test_voice_service_generates_ogg_and_cleans_up():
         assert "Проверка" in artifact.spoken_text
         assert artifact.provider == "piper"
         assert artifact.voice_name == "ru_RU-test-medium"
-        assert artifact.mastering == "studio-v2"
+        assert artifact.mastering == "piper-rescue-v2"
         assert artifact.opus_bitrate_kbps == 48
         assert len(local.calls) == 1
     finally:
@@ -101,7 +102,7 @@ def test_voice_service_generates_ogg_and_cleans_up():
         assert not temp.exists()
 
 
-def test_high_fidelity_cloud_voice_is_preferred_when_available():
+def test_high_fidelity_cloud_voice_uses_transparent_natural_mastering():
     local = FakeBackend()
     cloud = FakeCloud()
     service = VoiceService(_settings(), backend=local, cloud_backend=cloud)
@@ -116,16 +117,17 @@ def test_high_fidelity_cloud_voice_is_preferred_when_available():
         assert artifact.path.read_bytes()[:4] == b"OggS"
         assert artifact.provider == "openai"
         assert artifact.voice_name == "marin"
+        assert artifact.mastering == "natural-v3"
         assert len(cloud.calls) == 1
         assert local.calls == []
         description = service.describe({"tts_voice": "marin"})
         assert description == {
-            "provider": "OPENAI HIGH-FIDELITY",
+            "provider": "OPENAI NATURAL VOICE",
             "voice": "MARIN",
             "local_fallback": True,
-            "mastering": "STUDIO MASTER V2",
+            "mastering": "NATURAL MASTER V3",
             "opus_bitrate_kbps": 48,
-            "target_loudness_lufs": -16,
+            "cloud_processing": "transparent",
         }
     finally:
         artifact.cleanup()
@@ -146,6 +148,7 @@ def test_cloud_failure_falls_back_to_local_voice_without_losing_reply():
         assert artifact.path.read_bytes()[:4] == b"OggS"
         assert artifact.provider == "piper"
         assert artifact.voice_name == "ru_RU-test-medium"
+        assert artifact.mastering == "piper-rescue-v2"
         assert len(cloud.calls) == 1
         assert len(local.calls) == 1
     finally:

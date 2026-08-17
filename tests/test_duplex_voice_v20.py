@@ -62,21 +62,23 @@ def test_duplex_follow_input_has_runtime_kill_switch():
     assert service.should_auto({}, input_mode="voice") is False
 
 
-def test_short_callout_and_long_debrief_receive_distinct_speech_direction():
-    profile = {"voice": "TEAMMATE", "difficulty": "PRO"}
+def test_short_reply_and_long_debrief_receive_distinct_natural_direction():
+    profile = {"voice": "TEAMMATE", "difficulty": "PRO", "tts_voice": "marin"}
     short = voice_instructions(profile, "Два слева. Не пикай. Держи высоту.")
     long = voice_instructions(profile, "Причина ошибки. " * 90)
 
-    assert "short tactical callout" in short
-    assert "longer coaching debrief" in long
-    assert "single highest-value action" not in short
+    assert "one natural short spoken reply" in short
+    assert "longer answer" in long
+    assert "natural conversational paragraph breaks" in long
+    assert "read-out script" in short
 
 
-def test_demon_still_adds_one_controlled_priority_not_theatrical_delivery():
+def test_demon_adds_decisiveness_without_theatrical_delivery():
     instructions = voice_instructions(
-        {"voice": "TEAMMATE", "difficulty": "DEMON"},
+        {"voice": "TEAMMATE", "difficulty": "DEMON", "tts_voice": "marin"},
         "Не выходи из сильной позиции ради одного килла.",
     )
-    assert "restrained intensity" in instructions
-    assert "without shouting" in instructions
+    assert "more decisive" in instructions
+    assert "never shout" in instructions
     assert "movie trailer" in instructions
+    assert "artificially lower the pitch" in instructions

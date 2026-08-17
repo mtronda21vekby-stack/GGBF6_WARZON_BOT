@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from app.services.voice.audio import clean_tts_text, wav_to_ogg_opus
+from app.services.voice.natural_audio import wav_to_natural_ogg_opus
 from app.services.voice.openai_backend import OpenAITTSBackend, normalize_tts_voice
 from app.services.voice.piper_backend import PiperBackend, PiperModelManager
 
@@ -46,7 +47,7 @@ class VoiceArtifact:
     temp_dir: Path
     provider: str = "unknown"
     voice_name: str = ""
-    mastering: str = "studio-v2"
+    mastering: str = "natural-v3"
     opus_bitrate_kbps: int = 72
 
     def cleanup(self) -> None:
@@ -82,7 +83,7 @@ class VoiceService:
             self.cloud_backend = OpenAITTSBackend(
                 api_key=str(getattr(self.settings, "openai_api_key", "") or ""),
                 model=str(getattr(self.settings, "voice_openai_model", "gpt-4o-mini-tts") or "gpt-4o-mini-tts"),
-                default_voice=str(getattr(self.settings, "voice_openai_voice", "cedar") or "cedar"),
+                default_voice=str(getattr(self.settings, "voice_openai_voice", "marin") or "marin"),
                 timeout_s=float(getattr(self.settings, "voice_openai_timeout_s", 45.0) or 45.0),
                 max_bytes=int(
                     getattr(self.settings, "voice_openai_max_bytes", 20 * 1024 * 1024)
@@ -145,18 +146,20 @@ class VoiceService:
 
     def describe(self, profile: Mapping[str, Any] | None = None) -> dict[str, Any]:
         if self.high_fidelity_active:
-            provider = "OPENAI HIGH-FIDELITY"
+            provider = "OPENAI NATURAL VOICE"
             fallback = bool(self._local_fallback_enabled and self.backend is not None)
+            mastering = "NATURAL MASTER V3"
         else:
             provider = "PIPER LOCAL"
             fallback = False
+            mastering = "PIPER RESCUE MASTER V2"
         return {
             "provider": provider,
             "voice": self.voice_name_for(profile).upper(),
             "local_fallback": fallback,
-            "mastering": "STUDIO MASTER V2",
+            "mastering": mastering,
             "opus_bitrate_kbps": self._opus_bitrate_kbps,
-            "target_loudness_lufs": -16,
+            "cloud_processing": "transparent" if self.high_fidelity_active else "n/a",
         }
 
     async def close(self) -> None:
@@ -185,7 +188,7 @@ class VoiceService:
                 await result
             return wav_path.exists() and wav_path.stat().st_size > 44
         except Exception as exc:
-            log.warning("high-fidelity voice failed; using local fallback error=%s", type(exc).__name__)
+            log.warning("natural cloud voice failed; using local fallback error=%s", type(exc).__name__)
             return False
 
     async def _local_wav(
@@ -217,33 +220,42 @@ class VoiceService:
         wav_path = temp_dir / "reply.wav"
         ogg_path = temp_dir / "reply.ogg"
         provider = "piper"
+        mastering = "piper-rescue-v2"
         voice_name = self.voice_name_for(data)
         try:
             async with self._lock:
                 cloud_ok = await self._cloud_wav(spoken, wav_path, data)
                 if cloud_ok:
                     provider = "openai"
+                    mastering = "natural-v3"
                     voice_name = self.voice_name_for(data)
+                    await asyncio.to_thread(
+                        wav_to_natural_ogg_opus,
+                        wav_path,
+                        ogg_path,
+                        bitrate_kbps=self._opus_bitrate_kbps,
+                    )
                 else:
                     await self._local_wav(spoken, wav_path, data)
                     provider = "piper"
+                    mastering = "piper-rescue-v2"
                     local_name = getattr(self.backend, "model_name", None)
                     if local_name:
                         voice_name = str(local_name)
-                await asyncio.to_thread(
-                    wav_to_ogg_opus,
-                    wav_path,
-                    ogg_path,
-                    data,
-                    self._opus_bitrate_kbps,
-                )
+                    await asyncio.to_thread(
+                        wav_to_ogg_opus,
+                        wav_path,
+                        ogg_path,
+                        data,
+                        self._opus_bitrate_kbps,
+                    )
             return VoiceArtifact(
                 path=ogg_path,
                 spoken_text=spoken,
                 temp_dir=temp_dir,
                 provider=provider,
                 voice_name=voice_name,
-                mastering="studio-v2",
+                mastering=mastering,
                 opus_bitrate_kbps=self._opus_bitrate_kbps,
             )
         except Exception:

@@ -32,20 +32,35 @@ def _wav_bytes() -> bytes:
     return buffer.getvalue()
 
 
-def test_voice_normalization_and_profile_direction_are_bounded():
+def test_voice_normalization_defaults_to_marin_and_profile_direction_is_bounded():
     assert normalize_tts_voice("MARIN") == "marin"
-    assert normalize_tts_voice("not-a-real-voice") == "cedar"
+    assert normalize_tts_voice("CORAL") == "coral"
+    assert normalize_tts_voice("SHIMMER") == "shimmer"
+    assert normalize_tts_voice("not-a-real-voice") == "marin"
 
-    coach = voice_instructions({"voice": "COACH", "difficulty": "PRO"})
-    teammate = voice_instructions({"voice": "TEAMMATE", "difficulty": "DEMON"})
+    coach = voice_instructions({"voice": "COACH", "difficulty": "PRO", "tts_voice": "marin"})
+    teammate = voice_instructions({"voice": "TEAMMATE", "difficulty": "DEMON", "tts_voice": "cedar"})
 
     assert "natural Russian" in coach
-    assert "esports coach" in coach
-    assert "real named person" in coach
-    assert "squad teammate" in teammate
-    assert "restrained intensity" in teammate
-    assert voice_speed({"voice": "COACH"}) == 0.98
-    assert voice_speed({"voice": "TEAMMATE"}) == 1.04
+    assert "one person" in coach
+    assert "real person" in coach
+    assert "COACH" in coach
+    assert "TEAMMATE" in teammate
+    assert "never shout" in teammate
+    assert voice_speed({"voice": "COACH"}) == 0.975
+    assert voice_speed({"voice": "TEAMMATE"}) == 1.0
+
+
+def test_user_selected_voice_is_authoritative_and_persona_does_not_swap_it():
+    backend = OpenAITTSBackend(api_key="test", default_voice="marin")
+    try:
+        assert backend.voice_for({"voice": "COACH"}) == "marin"
+        assert backend.voice_for({"voice": "TEAMMATE"}) == "marin"
+        assert backend.voice_for({"voice": "COACH", "tts_voice": "shimmer"}) == "shimmer"
+        assert backend.voice_for({"voice": "TEAMMATE", "tts_voice": "coral"}) == "coral"
+        assert backend.voice_for({"tts_voice": "cedar"}) == "cedar"
+    finally:
+        asyncio.run(backend.close())
 
 
 def test_openai_backend_requests_wav_with_selected_voice_and_instructions(tmp_path: Path):
@@ -70,7 +85,7 @@ def test_openai_backend_requests_wav_with_selected_voice_and_instructions(tmp_pa
         backend = OpenAITTSBackend(
             api_key="test-secret",
             model="gpt-4o-mini-tts",
-            default_voice="cedar",
+            default_voice="marin",
             client=client,
         )
         output = tmp_path / "speech.wav"
@@ -78,7 +93,7 @@ def test_openai_backend_requests_wav_with_selected_voice_and_instructions(tmp_pa
             await backend.synthesize_wav(
                 "Держи высоту и не отдавай центр.",
                 output,
-                {"voice": "COACH", "difficulty": "PRO", "tts_voice": "marin"},
+                {"voice": "COACH", "difficulty": "PRO", "tts_voice": "coral"},
             )
             return output
         finally:
@@ -95,11 +110,11 @@ def test_openai_backend_requests_wav_with_selected_voice_and_instructions(tmp_pa
     assert request["authorization"] == "Bearer test-secret"
     payload = request["payload"]
     assert payload["model"] == "gpt-4o-mini-tts"
-    assert payload["voice"] == "marin"
+    assert payload["voice"] == "coral"
     assert payload["response_format"] == "wav"
-    assert payload["speed"] == 0.98
+    assert payload["speed"] == 0.975
     assert "natural Russian" in payload["instructions"]
-    assert "esports coach" in payload["instructions"]
+    assert "warm, friendly" in payload["instructions"]
     assert payload["input"] == "Держи высоту и не отдавай центр."
 
 
