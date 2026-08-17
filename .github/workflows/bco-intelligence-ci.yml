@@ -20,6 +20,7 @@ on:
       - feature/bco-voice-intelligence-v19
       - feature/bco-duplex-voice-v20
       - feature/bco-operator-twin-missions-v25
+      - feature/bco-causal-operator-context-v26
   pull_request:
     branches:
       - main
@@ -155,9 +156,14 @@ jobs:
               and features.get('adaptive_mission_control') is True
               and features.get('operator_truth_calibration') is True
               and features.get('operator_session_lifecycle') is True
+              and features.get('operator_context_bridge') is True
+              and features.get('operator_causal_intelligence') is True
               and operator.get('enabled') is True
               and operator.get('adaptive_missions') is True
               and operator.get('unknown_remains_unknown') is True
+              and operator.get('context_bridge') is True
+              and operator.get('shared_brain_context') is True
+              and operator.get('context_schema') == 'bco_operator_context_v26'
               and voice.get('input_configured') is True
               and voice.get('transcription_model') == 'gpt-4o-transcribe'
               and voice.get('transcription_fallback_model') == 'gpt-4o-mini-transcribe'
@@ -184,7 +190,7 @@ jobs:
                    grep -q 'Cinematic Technical Design System' /tmp/bco-cinematic.css && \
                    grep -q 'Operator Twin / Adaptive Mission Intelligence' /tmp/bco-operator.js && \
                    grep -q 'Operator Twin technical dossier' /tmp/bco-operator.css; then
-                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, duplex voice=ON, live intelligence=ON, operator twin=ON, mission control=ON"
+                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, duplex voice=ON, live intelligence=ON, operator twin=ON, mission control=ON, causal context=ON"
                   cat /tmp/bco-health.json
                   cat /tmp/bco-runtime.json
                   exit 0

@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from app.services.brain.intents import Intent, IntentResult
 from app.services.brain.knowledge_context import KnowledgeContext
+from app.services.brain.operator_prompt import render_operator_context
 from app.services.brain.response_policy import ResponsePolicy
 
 
@@ -60,8 +61,13 @@ class PromptBuilder:
             "last_session_summary", "progress_notes", "memory_summary", "top_mistakes",
             "recent_training", "recent_progression", "derived_intelligence",
         )
+        has_operator_context = isinstance(profile.get("operator_context"), Mapping)
         parts: list[str] = []
         for key in keys:
+            # v26: once a calibrated Operator Twin is available, raw derived
+            # analytics must not bypass its truth/confidence boundary.
+            if key == "derived_intelligence" and has_operator_context:
+                continue
             value = profile.get(key)
             if value not in (None, "", [], {}):
                 parts.append(f"- {key}: {value}")
@@ -133,6 +139,9 @@ class PromptBuilder:
         else:
             current_rule = "Do not claim currentness unless the selected evidence explicitly supports it."
 
+        resolved_player_context = player_context or profile
+        operator_context = render_operator_context(resolved_player_context)
+
         return f"""SYSTEM
 You are {self.product_name}, Artificial Competitive Intelligence for FPS.
 
@@ -171,7 +180,21 @@ Trusted knowledge context:
 {self._knowledge_block(knowledge)}
 
 Server/player context (persistent memory is evidence, not permission to invent missing history):
-{self._profile_block(player_context or profile)}
+{self._profile_block(resolved_player_context)}
+
+Operator Twin context (server-derived, bounded, truth-calibrated):
+{operator_context}
+
+Operator reasoning contract:
+- A verified fact is scoped to its evidence; do not generalize it into a permanent personality trait.
+- A high-confidence player pattern is strong evidence, not certainty. Phrase it as a recurring pattern.
+- A weak pattern must be tentative. A hypothesis is for measurement/questioning, not diagnosis.
+- Unknown dimensions remain unknown. Never backfill them from generic FPS stereotypes or model intuition.
+- Do not expose internal claim labels, evidence weights, hidden scoring mechanics or raw system metadata to the user.
+- If a mission is ACTIVE, treat its objective as the player's current training priority. Align tactical coaching with it when relevant instead of silently replacing it.
+- A calibration mission exists specifically because evidence is sparse; do not invent a weakness to make the advice feel more personalized.
+- A post-session result can update the next recommendation, but one result alone does not prove causation.
+- Emotion detection changes delivery only. It is not evidence that the player has a persistent tilt-susceptibility trait.
 
 Rules:
 - Write in Russian unless the user explicitly requests another language.

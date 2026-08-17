@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from app.observability.quality import quality_telemetry
+
+
+def _env_on(name: str, default: str = "1") -> bool:
+    return os.getenv(name, default).strip().casefold() not in {"0", "false", "off", "no", ""}
 
 
 def readiness_snapshot(
@@ -131,6 +136,9 @@ def readiness_snapshot(
     webapp_cinematic = bool(getattr(settings, "webapp_cinematic_ui_enabled", True))
     operator_intelligence = bool(getattr(settings, "operator_intelligence_enabled", True))
     adaptive_missions = bool(getattr(settings, "adaptive_mission_control_enabled", True))
+    operator_context_bridge = bool(
+        getattr(settings, "operator_context_bridge_enabled", _env_on("OPERATOR_CONTEXT_BRIDGE_ENABLED"))
+    )
 
     live_intelligence_snapshot = {
         "telegram_drafts": telegram_live_drafts,
@@ -143,6 +151,9 @@ def readiness_snapshot(
     operator_snapshot = {
         "enabled": operator_intelligence,
         "adaptive_missions": operator_intelligence and adaptive_missions,
+        "context_bridge": operator_intelligence and operator_context_bridge,
+        "shared_brain_context": operator_intelligence and operator_context_bridge,
+        "context_schema": "bco_operator_context_v26",
         "truth_model": "verified_fact|high_confidence_player_pattern|weak_pattern|hypothesis|unknown",
         "unknown_remains_unknown": True,
         "session_lifecycle": ["PRE_SESSION", "LIVE_OBJECTIVE", "POST_SESSION_REVIEW", "MEMORY_UPDATE", "NEXT_MISSION"],
@@ -174,6 +185,8 @@ def readiness_snapshot(
         "adaptive_mission_control": operator_intelligence and adaptive_missions,
         "operator_truth_calibration": operator_intelligence,
         "operator_session_lifecycle": operator_intelligence and adaptive_missions,
+        "operator_context_bridge": operator_intelligence and operator_context_bridge,
+        "operator_causal_intelligence": operator_intelligence and operator_context_bridge,
         "persistence_recovery": bool(recovery_fn),
         "storage_startup_probe": callable(getattr(store, "probe_primary", None)),
         "abuse_guard": bool(getattr(settings, "usage_guard_enabled", True)),

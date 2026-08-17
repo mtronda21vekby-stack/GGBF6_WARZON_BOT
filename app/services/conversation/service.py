@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from app.services.operator_intelligence.context import OperatorContextService
 from app.services.player_memory.service import PlayerMemoryService
 
 
@@ -31,6 +33,10 @@ def _rate_limit_text(seconds: int) -> str:
     )
 
 
+def _env_on(name: str, default: str = "1") -> bool:
+    return os.getenv(name, default).strip().casefold() not in {"0", "false", "off", "no", ""}
+
+
 @dataclass
 class ConversationService:
     """Single intelligence entrypoint for Telegram and Mini App.
@@ -38,6 +44,11 @@ class ConversationService:
     Telegram Router already writes the user/assistant pair around this call.
     Verified Mini App calls do not, so this service fills that gap without
     duplicating Telegram history.
+
+    v26 also projects the server-authoritative Operator Twin into one bounded
+    truth-calibrated context. Because Telegram text, accepted voice transcripts
+    and the Mini App converge here, all of them receive the same operator state
+    without creating a second conversational brain.
     """
 
     brain: Any
@@ -49,6 +60,32 @@ class ConversationService:
         self.player_memory = (
             PlayerMemoryService(store=self.store, profiles=self.profiles)
             if self.store is not None and self.profiles is not None
+            else None
+        )
+        settings = getattr(self.brain, "settings", None)
+        if settings is None:
+            # Preserve the exact legacy/test adapter contract. The v26 context
+            # bridge belongs to the production BrainEngine, which owns Settings.
+            bridge_enabled = False
+            operator_enabled = False
+            missions_enabled = False
+        else:
+            bridge_setting = getattr(settings, "operator_context_bridge_enabled", None)
+            bridge_enabled = (
+                bool(bridge_setting)
+                if bridge_setting is not None
+                else _env_on("OPERATOR_CONTEXT_BRIDGE_ENABLED")
+            )
+            operator_enabled = bool(getattr(settings, "operator_intelligence_enabled", True))
+            missions_enabled = bool(getattr(settings, "adaptive_mission_control_enabled", True))
+        self.operator_context = (
+            OperatorContextService(
+                store=self.store,
+                profiles=self.profiles,
+                operator_enabled=operator_enabled,
+                missions_enabled=missions_enabled,
+            )
+            if self.store is not None and self.profiles is not None and bridge_enabled and operator_enabled
             else None
         )
 
@@ -100,6 +137,15 @@ class ConversationService:
                 player_context = self.player_memory.context(chat_id, profile)
             except Exception:
                 player_context = dict(profile or {})
+
+        # v26 trust boundary: only a server-resolved Telegram identity can
+        # receive persistent Operator Twin context. Fail open to the established
+        # Player Intelligence path if the derived operator layer is unavailable.
+        if trusted and chat_id is not None and self.operator_context is not None:
+            try:
+                player_context["operator_context"] = self.operator_context.context(chat_id)
+            except Exception:
+                pass
 
         brain_kwargs: dict[str, Any] = {
             "text": text,

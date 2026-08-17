@@ -60,12 +60,13 @@ def _settings():
         webapp_cinematic_ui_enabled=True,
         operator_intelligence_enabled=True,
         adaptive_mission_control_enabled=True,
+        operator_context_bridge_enabled=True,
     )
 
 
 def test_release_contract_is_explicit_and_readiness_exposes_natural_voice():
-    assert APP_VERSION == "25.0.0"
-    assert RELEASE_CONTRACT == "bco-operator-twin-missions-v25"
+    assert APP_VERSION == "26.0.0"
+    assert RELEASE_CONTRACT == "bco-causal-operator-context-v26"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -73,7 +74,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "25.0.0", "contract": "bco-operator-twin-missions-v25"}
+    assert snap["release"] == {"version": "26.0.0", "contract": "bco-causal-operator-context-v26"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_live_intelligence_drafts"] is True
@@ -89,8 +90,13 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice():
     assert snap["features"]["adaptive_mission_control"] is True
     assert snap["features"]["operator_truth_calibration"] is True
     assert snap["features"]["operator_session_lifecycle"] is True
+    assert snap["features"]["operator_context_bridge"] is True
+    assert snap["features"]["operator_causal_intelligence"] is True
     assert snap["operator_intelligence"]["unknown_remains_unknown"] is True
     assert snap["operator_intelligence"]["adaptive_missions"] is True
+    assert snap["operator_intelligence"]["context_bridge"] is True
+    assert snap["operator_intelligence"]["shared_brain_context"] is True
+    assert snap["operator_intelligence"]["context_schema"] == "bco_operator_context_v26"
     assert snap["live_intelligence"]["final_message_authoritative"] is True
     assert snap["voice_runtime"]["input_configured"] is True
     assert snap["voice_runtime"]["transcription_model"] == "gpt-4o-transcribe"
