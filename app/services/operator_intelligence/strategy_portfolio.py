@@ -58,16 +58,25 @@ class StrategyPortfolioCalibration:
                 "minimum_evaluated_windows": MIN_EVALUATED_WINDOWS,
             }
 
+        evaluations = source.get("evaluations") if isinstance(source.get("evaluations"), list) else []
+        recent_strategy_classes = [
+            str(row.get("strategy_class") or "").strip()[:40]
+            for row in evaluations
+            if isinstance(row, Mapping) and str(row.get("strategy_class") or "").strip()
+        ][-6:]
+
         return {
-            "schema": "bco_strategy_portfolio_v32",
+            "schema": "bco_strategy_portfolio_v33",
             "minimum_evaluated_windows": MIN_EVALUATED_WINDOWS,
             "classes": classes,
+            "recent_strategy_classes": recent_strategy_classes,
             "truth_contract": {
                 "association_not_causation": True,
                 "causal_claims": False,
                 "insufficient_data_preserves_exploration": True,
                 "no_strategy_class_is_permanently_blocked": True,
                 "explicit_outcome_authoritative": True,
+                "recent_sequence_is_descriptive_not_causal": True,
             },
         }
 
