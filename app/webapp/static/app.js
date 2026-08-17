@@ -1,4 +1,4 @@
-/* BLACK CROWN OPS — v31 boot coordinator (v18 live + Operator + Premium layers preserved) */
+/* BLACK CROWN OPS — v33 boot coordinator (v18 live + Operator + Premium layers preserved) */
 (() => {
   "use strict";
 
@@ -42,13 +42,7 @@
       window.__BCO_RUNTIME_FLAGS__ = flags;
       return flags;
     } catch (error) {
-      const fallback = {
-        live_stream: true,
-        cinematic_ui: true,
-        v18_overlay: true,
-        transport: "ndjson",
-        runtime_unavailable: true,
-      };
+      const fallback = { live_stream: true, cinematic_ui: true, v18_overlay: true, transport: "ndjson", runtime_unavailable: true };
       window.__BCO_RUNTIME_FLAGS__ = fallback;
       console.warn("[BCO] runtime capability check unavailable", error);
       return fallback;
@@ -75,25 +69,22 @@
         window.__BCO_LIVE_LAYER_LOADED__ = true;
         window.__BCO_V18_READY__ = true;
       }
-      return loadScript("/webapp/bco.operator.js", "__BCO_OPERATOR_V25_LOADED__")
-        .catch((error) => {
-          window.__BCO_OPERATOR_V25_LOADED__ = false;
-          console.warn("[BCO] Operator Twin surface unavailable; base UI remains active", error);
-          return false;
-        });
+      return loadScript("/webapp/bco.operator.js", "__BCO_OPERATOR_V25_LOADED__").catch((error) => {
+        window.__BCO_OPERATOR_V25_LOADED__ = false;
+        console.warn("[BCO] Operator Twin surface unavailable; base UI remains active", error);
+        return false;
+      });
     })
-    .then(() => loadScript("/webapp/bco.deep-history.js", "__BCO_DEEP_HISTORY_V29_LOADED__")
-      .catch((error) => {
-        window.__BCO_DEEP_HISTORY_V29_LOADED__ = false;
-        console.warn("[BCO v29] Premium Deep History unavailable; Operator Twin remains active", error);
-        return false;
-      }))
-    .then(() => loadScript("/webapp/bco.strategy.js", "__BCO_STRATEGY_V31_LOADED__")
-      .catch((error) => {
-        window.__BCO_STRATEGY_V31_LOADED__ = false;
-        console.warn("[BCO v31] Premium Strategy Outcome Loop unavailable; existing intelligence surfaces remain active", error);
-        return false;
-      }))
+    .then(() => loadScript("/webapp/bco.deep-history.js", "__BCO_DEEP_HISTORY_V29_LOADED__").catch((error) => {
+      window.__BCO_DEEP_HISTORY_V29_LOADED__ = false;
+      console.warn("[BCO v29] Premium Deep History unavailable; Operator Twin remains active", error);
+      return false;
+    }))
+    .then(() => loadScript("/webapp/bco.strategy.js", "__BCO_STRATEGY_V33_LOADED__").catch((error) => {
+      window.__BCO_STRATEGY_V33_LOADED__ = false;
+      console.warn("[BCO v33] Adaptive Exploration Budget unavailable; existing intelligence surfaces remain active", error);
+      return false;
+    }))
     .then(() => true)
     .catch((error) => {
       window.__BCO_V18_READY__ = false;
