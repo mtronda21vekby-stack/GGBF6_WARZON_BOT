@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from app.services.operator_intelligence.evidence_freshness import EvidenceFreshnessPolicy
 from app.services.operator_intelligence.exploration_budget import AdaptiveExplorationBudget
+from app.services.operator_intelligence.regime_change import PlayerRegimeChangeDetector
 from app.services.operator_intelligence.strategy_portfolio import StrategyPortfolioCalibration
 
 
@@ -14,9 +15,10 @@ class PremiumAdaptiveStrategyService:
     """Build a bounded next-objective strategy from Premium Deep History.
 
     Entitlement is resolved by the server route before this service is called.
-    v32 portfolio priors remain associative, v33 exploration remains
-    deterministic, and v34 freshness changes current relevance only. Historical
-    evidence is never rewritten simply because it became old.
+    v32 portfolio priors remain associative, v33 exploration deterministic,
+    v34 freshness changes current relevance only, and v35 regime detection can
+    guard against reacting to unsustained behavioral change without assigning
+    a cause to that change.
     """
 
     def build(
@@ -25,11 +27,14 @@ class PremiumAdaptiveStrategyService:
         operator: Mapping[str, Any],
         portfolio: Mapping[str, Any] | None = None,
         freshness: Mapping[str, Any] | None = None,
+        regime: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         history = dict(deep_history or {})
         op = dict(operator or {})
         portfolio_data = dict(portfolio or {})
         freshness_data = dict(freshness or {})
+        regime_enabled = regime is not None
+        regime_data = dict(regime or {})
         comparisons = [dict(x) for x in list(history.get("focus_comparisons") or []) if isinstance(x, Mapping)]
         evidence = history.get("evidence") if isinstance(history.get("evidence"), Mapping) else {}
         signals = history.get("signals") if isinstance(history.get("signals"), Mapping) else {}
@@ -41,6 +46,20 @@ class PremiumAdaptiveStrategyService:
         contradiction_count = max(0, int(evidence.get("contradictions") or 0))
         observed_cycles = max(0, int((history.get("horizon") or {}).get("observed_cycles") or 0)) if isinstance(history.get("horizon"), Mapping) else 0
         candidates: list[dict[str, Any]] = []
+
+        def regime_guard(strategy_class: str, focus_name: str) -> dict[str, Any]:
+            if not regime_enabled:
+                return {
+                    "state": "disabled_v34_behavior",
+                    "direction": "unknown",
+                    "confidence": "unknown",
+                    "cause": "unknown",
+                    "cause_claim": False,
+                    "priority_adjustment": 0,
+                    "reason": "regime_detection_disabled",
+                    "one_session_can_change_regime": False,
+                }
+            return PlayerRegimeChangeDetector.strategy_guard(regime_data, strategy_class, focus_name)
 
         def add_candidate(
             strategy_class: str,
@@ -60,6 +79,8 @@ class PremiumAdaptiveStrategyService:
             signal_adjustment = EvidenceFreshnessPolicy.signal_priority_adjustment(
                 str(signal_freshness.get("state") or "unknown")
             )
+            guard = regime_guard(strategy_class, focus_name)
+            regime_adjustment = int(guard.get("priority_adjustment") or 0)
             candidates.append({
                 "strategy_class": strategy_class,
                 "selected": selected_data,
@@ -68,9 +89,11 @@ class PremiumAdaptiveStrategyService:
                 "portfolio_adjustment": effective_adjustment,
                 "historical_portfolio_adjustment": historical_adjustment,
                 "freshness_adjustment": signal_adjustment,
+                "regime_adjustment": regime_adjustment,
+                "regime_guard": guard,
                 "signal_freshness": signal_freshness,
                 "portfolio_freshness": class_freshness,
-                "score": base_priority + signal_adjustment + effective_adjustment * 3,
+                "score": base_priority + signal_adjustment + effective_adjustment * 3 + regime_adjustment,
             })
 
         if regression:
@@ -124,6 +147,7 @@ class PremiumAdaptiveStrategyService:
             signal_freshness = dict(chosen.get("signal_freshness") or {})
             portfolio_freshness = dict(chosen.get("portfolio_freshness") or {})
             freshness_adjustment = int(chosen.get("freshness_adjustment") or 0)
+            selected_regime = dict(chosen.get("regime_guard") or {})
             if exploration.get("rotated") is True:
                 rationale += " Deterministic exploration rotated to a close evidence-backed alternative after repeated use of the top class."
             freshness_state = str(signal_freshness.get("state") or "unknown")
@@ -131,6 +155,11 @@ class PremiumAdaptiveStrategyService:
                 rationale += " The evidence is aging, so current relevance and recommendation confidence are reduced without rewriting history."
             elif freshness_state == "stale":
                 rationale += " The evidence is stale: it remains valid history, but it no longer carries full current-strategy weight."
+            regime_state = str(selected_regime.get("state") or "insufficient_evidence")
+            if regime_state == "confirmed_shift":
+                rationale += " A sustained behavioral regime shift is confirmed across consecutive windows; its cause remains unknown."
+            elif regime_state in {"candidate_shift", "volatile_noise", "stable_baseline", "contradictory", "insufficient_evidence"} and int(selected_regime.get("priority_adjustment") or 0) < 0:
+                rationale += " Regime guard reduced reaction strength because the behavioral change is not yet sustained and confirmed."
         else:
             selected = {}
             strategy_class = "calibration"
@@ -145,6 +174,7 @@ class PremiumAdaptiveStrategyService:
             signal_freshness = {"state": "unknown", "age_days": None, "evidence_at": None}
             portfolio_freshness = class_freshness
             freshness_adjustment = 0
+            selected_regime = regime_guard(strategy_class, "calibration")
 
         focus = str(selected.get("focus") or current_mission.get("focus") or "calibration").strip().casefold()[:40]
         selected_cycles = max(0, int(selected.get("cycles") or 0))
@@ -191,7 +221,7 @@ class PremiumAdaptiveStrategyService:
         class_row = ((portfolio_data.get("classes") or {}).get(strategy_class) or {}) if isinstance(portfolio_data.get("classes"), Mapping) else {}
 
         return {
-            "schema": "bco_premium_adaptive_strategy_v34",
+            "schema": "bco_premium_adaptive_strategy_v35",
             "strategy_class": strategy_class,
             "focus": focus,
             "confidence": confidence,
@@ -223,6 +253,16 @@ class PremiumAdaptiveStrategyService:
                 "stale_is_not_false": True,
                 "old_support_is_not_current_proof": True,
             },
+            "player_regime": {
+                "schema": str(regime_data.get("schema") or ("bco_player_regime_change_v35" if regime_enabled else "disabled_v34_behavior")),
+                "state": str(selected_regime.get("state") or "insufficient_evidence"),
+                "direction": str(selected_regime.get("direction") or "unknown"),
+                "confidence": str(selected_regime.get("confidence") or "unknown"),
+                "cause": "unknown",
+                "cause_claim": False,
+                "selection_guard_reason": str(selected_regime.get("reason") or "neutral"),
+                "one_session_can_change_regime": False,
+            },
             "evidence": {
                 "observed_cycles": observed_cycles,
                 "focus_cycles": selected_cycles,
@@ -250,5 +290,10 @@ class PremiumAdaptiveStrategyService:
                 "freshness_changes_current_relevance_only": True,
                 "missing_timestamp_remains_unknown": True,
                 "old_support_is_not_current_proof": True,
+                "one_session_can_change_regime": False,
+                "regime_shift_does_not_identify_cause": True,
+                "external_meta_change_not_inferred": True,
+                "stale_evidence_cannot_confirm_current_shift": True,
+                "vod_contradiction_cannot_confirm_shift": True,
             },
         }

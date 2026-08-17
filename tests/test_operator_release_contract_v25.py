@@ -10,9 +10,10 @@ def test_operator_rollbacks_remain_independent_from_current_release(monkeypatch)
     monkeypatch.setenv("PREMIUM_DEEP_HISTORY_ENABLED", "0")
     monkeypatch.setenv("PREMIUM_ADAPTIVE_STRATEGY_ENABLED", "0")
     monkeypatch.setenv("EVIDENCE_FRESHNESS_ENABLED", "0")
+    monkeypatch.setenv("REGIME_CHANGE_DETECTION_ENABLED", "0")
     settings = Settings()
-    assert APP_VERSION == "34.0.0"
-    assert RELEASE_CONTRACT == "bco-evidence-freshness-v34"
+    assert APP_VERSION == "35.0.0"
+    assert RELEASE_CONTRACT == "bco-regime-change-detection-v35"
     assert settings.operator_intelligence_enabled is False
     assert settings.adaptive_mission_control_enabled is False
     assert settings.mission_vod_evidence_fusion_enabled is False
