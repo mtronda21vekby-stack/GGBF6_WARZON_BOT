@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -15,6 +16,9 @@ from app.services.brain.intents import IntentResult, classify_intent
 from app.services.brain.knowledge_context import KnowledgeContext
 from app.services.brain.prompt_builder import PromptBuilder
 from app.services.brain.response_policy import ResponsePolicy, get_response_policy
+
+
+PartialCallback = Callable[[str, dict[str, Any]], None]
 
 
 def _s(value: Any, default: str = "") -> str:
@@ -73,6 +77,32 @@ def _clean_similarity(text: str) -> str:
     return " ".join(_s(text).lower().replace("\n", " ").split())
 
 
+def _emit_partial(
+    callback: PartialCallback | None,
+    text: str,
+    *,
+    phase: str,
+    reset: bool = False,
+    attempt: int = 1,
+    chunks: int = 0,
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(
+            str(text or ""),
+            {
+                "phase": str(phase or "generating")[:32],
+                "reset": bool(reset),
+                "attempt": max(1, int(attempt or 1)),
+                "chunks": max(0, int(chunks or 0)),
+            },
+        )
+    except Exception:
+        # Presentation callbacks are optional. They must never break generation.
+        pass
+
+
 @dataclass
 class AIHook:
     api_key: str
@@ -89,7 +119,7 @@ class AIHook:
             timeout=timeout,
             limits=limits,
             verify=certifi.where(),
-            headers={"User-Agent": "BLACK-CROWN-OPS/2.0"},
+            headers={"User-Agent": "BLACK-CROWN-OPS/18.0"},
         )
         base_url = _s(os.getenv("OPENAI_BASE_URL"), "") or None
         return OpenAI(api_key=self.api_key, base_url=base_url, http_client=http_client)
@@ -116,6 +146,67 @@ class AIHook:
             ),
         }
 
+    @staticmethod
+    def _stream_completion(
+        client: OpenAI,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        temperature: float,
+        callback: PartialCallback,
+        attempt: int,
+    ) -> tuple[str, int]:
+        output = ""
+        chunks = 0
+        emitted_chars = 0
+        last_emit = 0.0
+        stream = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            stream=True,
+        )
+        try:
+            for event in stream:
+                choices = getattr(event, "choices", None) or []
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                content = getattr(delta, "content", None) if delta is not None else None
+                if not content:
+                    continue
+                output += str(content)
+                chunks += 1
+                now = time.monotonic()
+                if len(output) - emitted_chars >= 48 or now - last_emit >= 0.22:
+                    _emit_partial(
+                        callback,
+                        output,
+                        phase="generating",
+                        attempt=attempt,
+                        chunks=chunks,
+                    )
+                    emitted_chars = len(output)
+                    last_emit = now
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+
+        output = output.strip()
+        if output:
+            _emit_partial(
+                callback,
+                output,
+                phase="candidate",
+                attempt=attempt,
+                chunks=chunks,
+            )
+        return output, chunks
+
     def generate(
         self,
         *,
@@ -126,12 +217,15 @@ class AIHook:
         policy: ResponsePolicy | None = None,
         knowledge: KnowledgeContext | None = None,
         player_context: Mapping[str, Any] | None = None,
+        on_partial: PartialCallback | None = None,
     ) -> str:
         self.last_generation_meta = {
             "attempts": 0,
             "anti_repeat_retry": False,
             "outcome": "unknown",
             "error_class": "",
+            "streamed": bool(on_partial),
+            "stream_chunks": 0,
         }
         intent_result = intent_result or classify_intent(user_text, profile)
         policy = policy or get_response_policy(intent_result, profile)
@@ -154,40 +248,99 @@ class AIHook:
         temp = _temperature(profile, user_text)
         last_error: Exception | None = None
 
-        for attempt in range(1, self.max_attempts + 1):
-            self.last_generation_meta["attempts"] = attempt
-            try:
-                response = client.chat.completions.create(model=self.model, messages=messages, temperature=temp)
-                output = (response.choices[0].message.content or "").strip()
+        try:
+            for attempt in range(1, self.max_attempts + 1):
+                self.last_generation_meta["attempts"] = attempt
+                try:
+                    if on_partial is not None:
+                        output, chunks = self._stream_completion(
+                            client,
+                            model=self.model,
+                            messages=messages,
+                            temperature=temp,
+                            callback=on_partial,
+                            attempt=attempt,
+                        )
+                        self.last_generation_meta["stream_chunks"] = (
+                            int(self.last_generation_meta.get("stream_chunks") or 0) + chunks
+                        )
+                    else:
+                        response = client.chat.completions.create(
+                            model=self.model,
+                            messages=messages,
+                            temperature=temp,
+                        )
+                        output = (response.choices[0].message.content or "").strip()
 
-                if output and self._looks_like_repeat(history or [], output):
-                    self.last_generation_meta["anti_repeat_retry"] = True
-                    retry_messages = [*messages, self._anti_repeat_hint()]
-                    retry = client.chat.completions.create(
-                        model=self.model,
-                        messages=retry_messages,
-                        temperature=min(0.86, temp + 0.05),
+                    if output and self._looks_like_repeat(history or [], output):
+                        self.last_generation_meta["anti_repeat_retry"] = True
+                        _emit_partial(
+                            on_partial,
+                            output,
+                            phase="reframing",
+                            reset=False,
+                            attempt=attempt,
+                            chunks=int(self.last_generation_meta.get("stream_chunks") or 0),
+                        )
+                        retry_messages = [*messages, self._anti_repeat_hint()]
+                        retry = client.chat.completions.create(
+                            model=self.model,
+                            messages=retry_messages,
+                            temperature=min(0.86, temp + 0.05),
+                        )
+                        output = (retry.choices[0].message.content or "").strip()
+                        _emit_partial(
+                            on_partial,
+                            output,
+                            phase="final",
+                            reset=True,
+                            attempt=attempt,
+                            chunks=int(self.last_generation_meta.get("stream_chunks") or 0),
+                        )
+
+                    if output:
+                        self.last_generation_meta["outcome"] = "ok"
+                        _emit_partial(
+                            on_partial,
+                            output,
+                            phase="final",
+                            reset=False,
+                            attempt=attempt,
+                            chunks=int(self.last_generation_meta.get("stream_chunks") or 0),
+                        )
+                        return output
+
+                    self.last_generation_meta["outcome"] = "empty"
+                    fallback = (
+                        "🧠 Пустой ответ от модели.\n"
+                        "Напиши ситуацию ещё раз одной строкой — без потери текущего профиля."
                     )
-                    output = (retry.choices[0].message.content or "").strip()
+                    _emit_partial(on_partial, fallback, phase="final", reset=True, attempt=attempt)
+                    return fallback
+                except Exception as exc:
+                    last_error = exc
+                    self.last_generation_meta["error_class"] = type(exc).__name__
+                    if attempt < self.max_attempts:
+                        _emit_partial(
+                            on_partial,
+                            "",
+                            phase="retry",
+                            reset=True,
+                            attempt=attempt + 1,
+                            chunks=int(self.last_generation_meta.get("stream_chunks") or 0),
+                        )
+                        time.sleep(self.base_sleep * attempt)
 
-                if output:
-                    self.last_generation_meta["outcome"] = "ok"
-                    return output
-
-                self.last_generation_meta["outcome"] = "empty"
-                return (
-                    "🧠 Пустой ответ от модели.\n"
-                    "Напиши ситуацию ещё раз одной строкой — без потери текущего профиля."
-                )
-            except Exception as exc:
-                last_error = exc
-                self.last_generation_meta["error_class"] = type(exc).__name__
-                if attempt < self.max_attempts:
-                    time.sleep(self.base_sleep * attempt)
-
-        self.last_generation_meta["outcome"] = "error"
-        return (
-            "🧠 ИИ временно недоступен после повторных попыток.\n"
-            f"Ошибка: {type(last_error).__name__ if last_error else 'unknown'}.\n"
-            "Проверь OPENAI_API_KEY / OPENAI_MODEL и повтори запрос."
-        )
+            self.last_generation_meta["outcome"] = "error"
+            fallback = (
+                "🧠 ИИ временно недоступен после повторных попыток.\n"
+                f"Ошибка: {type(last_error).__name__ if last_error else 'unknown'}.\n"
+                "Проверь OPENAI_API_KEY / OPENAI_MODEL и повтори запрос."
+            )
+            _emit_partial(on_partial, fallback, phase="final", reset=True)
+            return fallback
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass

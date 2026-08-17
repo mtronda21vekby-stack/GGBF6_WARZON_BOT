@@ -10,6 +10,14 @@ services:
         value: .
       - key: AI_ENABLED
         value: "1"
+      - key: TELEGRAM_AAA_CONSOLE_ENABLED
+        value: "1"
+      - key: TELEGRAM_LIVE_DRAFTS_ENABLED
+        value: "1"
+      - key: WEBAPP_LIVE_STREAM_ENABLED
+        value: "1"
+      - key: WEBAPP_CINEMATIC_UI_ENABLED
+        value: "1"
       - key: STORAGE_BACKEND
         value: auto
       - key: SUPABASE_URL
