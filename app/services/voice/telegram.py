@@ -107,7 +107,6 @@ class VoiceTelegramController:
             "provider": "SYNTHETIC VOICE",
             "voice": str(profile.get("tts_voice") or "CEDAR").upper(),
             "local_fallback": False,
-            "follow_input": False,
         }
 
     async def _send_panel(self, chat_id: int, prefix: str = "") -> None:
@@ -115,7 +114,8 @@ class VoiceTelegramController:
         mode = normalize_tts_mode(profile.get("tts_mode"))
         details = self._voice_details(profile)
         explicit_mode = bool(str(profile.get("tts_mode") or "").strip())
-        if not explicit_mode and details.get("follow_input"):
+        follow_input = bool(getattr(self.voice, "follow_input_active", False))
+        if not explicit_mode and follow_input:
             state = "SMART DUPLEX — voice→voice, text→text"
         else:
             state = {
@@ -240,7 +240,16 @@ class VoiceTelegramController:
         if chat_id is None:
             return False
         profile = self._profile(chat_id)
-        if not self.voice.should_auto(profile, input_mode=input_mode):
+        should_auto = getattr(self.voice, "should_auto", None)
+        if not callable(should_auto):
+            return False
+        try:
+            enabled = bool(should_auto(profile, input_mode=input_mode))
+        except TypeError:
+            # Backward-compatible with older adapters/tests that implement the
+            # pre-v20 `should_auto(profile)` signature.
+            enabled = bool(should_auto(profile))
+        if not enabled:
             return False
         history = self._history(chat_id)
         after = _signature(history)
