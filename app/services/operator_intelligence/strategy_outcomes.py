@@ -18,7 +18,7 @@ def _at(row: Mapping[str, Any]) -> str:
     return str(row.get("at") or row.get("created_at") or "")[:64]
 
 
-def strategy_id(payload: Mapping[str, Any]) -> str:
+def _base_strategy_key(payload: Mapping[str, Any]) -> str:
     stable = {
         "strategy_class": str(payload.get("strategy_class") or ""),
         "focus": str(payload.get("focus") or ""),
@@ -26,7 +26,12 @@ def strategy_id(payload: Mapping[str, Any]) -> str:
         "success_condition": str(payload.get("success_condition") or ""),
     }
     raw = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return "stg_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def strategy_id(payload: Mapping[str, Any], generation: int = 0) -> str:
+    seed = f"{_base_strategy_key(payload)}:{max(0, int(generation))}"
+    return "stg_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
 
 class PremiumStrategyOutcomeService:
@@ -34,6 +39,8 @@ class PremiumStrategyOutcomeService:
 
     Matching is temporal + focus-based only. It is deliberately associative:
     no strategy is allowed to claim it caused a later clean/failed mission.
+    Repeated reads are idempotent until a new explicit mission cycle advances
+    the strategy generation.
     """
 
     def __init__(self, store: Any):
@@ -51,9 +58,19 @@ class PremiumStrategyOutcomeService:
             return []
         return [dict(row) for row in list(rows or []) if isinstance(row, Mapping)]
 
+    @staticmethod
+    def _completed_generation(rows: list[dict[str, Any]]) -> int:
+        return sum(
+            1 for row in rows
+            if str(row.get("type") or "") == MISSION_EVENT_TYPE
+            and str(row.get("status") or "").casefold() == "completed"
+            and str(row.get("outcome") or "").casefold() in {"clean", "mixed", "failed"}
+        )
+
     def record_issue(self, chat_id: int, strategy: Mapping[str, Any]) -> str:
-        sid = strategy_id(strategy)
         rows = self._rows(int(chat_id))
+        generation = self._completed_generation(rows)
+        sid = strategy_id(strategy, generation)
         if any(str(row.get("type") or "") == STRATEGY_EVENT_TYPE and str(row.get("strategy_id") or "") == sid for row in rows):
             return sid
         fn = getattr(self.store, "add_progression_event", None)
@@ -63,6 +80,7 @@ class PremiumStrategyOutcomeService:
                     "type": STRATEGY_EVENT_TYPE,
                     "status": "issued",
                     "strategy_id": sid,
+                    "generation": generation,
                     "strategy_class": str(strategy.get("strategy_class") or "")[:40],
                     "focus": str(strategy.get("focus") or "")[:40],
                     "confidence": str(strategy.get("confidence") or "unknown")[:16],
@@ -108,6 +126,7 @@ class PremiumStrategyOutcomeService:
             by_class[strategy_class].append(verdict)
             evaluations.append({
                 "strategy_id": str(strategy.get("strategy_id") or ""),
+                "generation": max(0, int(strategy.get("generation") or 0)),
                 "strategy_class": strategy_class,
                 "focus": focus,
                 "issued_at": issued_at,
