@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -44,20 +45,20 @@ def _content_direction(text: str) -> str:
     clauses = clean.count(".") + clean.count("!") + clean.count("?") + clean.count(";")
     if len(clean) <= 220 and clauses <= 3:
         return (
-            "Treat this as a short tactical callout: use one compact breath pattern, immediate intent, "
-            "minimal setup, and a decisive final phrase."
+            "Treat this as a short tactical callout. Enter immediately, keep one compact breath arc, "
+            "and land the final action with a clean low ending."
         )
-    if len(clean) >= 900:
+    if len(clean) >= 1200:
         return (
-            "Treat this as a longer coaching debrief: group ideas into audible paragraphs, use a small pause between cause, "
-            "correction and next action, and avoid rushing the final third."
+            "Treat this as a long coaching debrief. Group meaning into audible paragraphs, slightly reset the breath between "
+            "cause, correction and next action, and keep the final third as controlled as the opening."
         )
     if any(marker in clean for marker in ("Перв", "Втор", "1.", "2.", "•")):
         return (
-            "The answer contains ordered priorities. Make each priority audibly distinct with a short pause, "
-            "but do not sound like you are reading a numbered document."
+            "The answer contains priorities. Separate each priority with a short natural pause and a small change in emphasis, "
+            "but never sound like a list-reading accessibility voice."
         )
-    return "Use a natural conversational arc: context, key point, then a clean actionable ending."
+    return "Use one natural conversational arc: context, decisive insight, then the actionable ending."
 
 
 def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str:
@@ -68,54 +69,54 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
     duplex_reply = bool(data.get("_bco_voice_reply"))
 
     instructions = [
-        "Speak in fluent, natural Russian with a neutral native Russian accent.",
-        "Sound like a premium competitive-FPS operator, not a generic assistant.",
-        "Use natural breath groups, micro-pauses, clean consonants and human conversational prosody.",
-        "Pronounce English gaming terms confidently inside Russian speech without exaggerated foreign accent.",
-        "Preserve weapon names, map names, negations, numbers and tactical abbreviations exactly in meaning.",
-        "Never sound robotic, theatrical, like an advertisement, a movie trailer, or like a real named person.",
-        "Do not read decorative symbols, markdown, URLs or UI labels aloud.",
-        "Avoid sing-song intonation and avoid the stereotypical assistant cadence where every sentence rises similarly.",
-        "Use emphasis sparingly: normally one strongest tactical phrase per paragraph.",
-        "End tactical instructions decisively but naturally, without adding filler or a sign-off.",
+        "Speak fluent natural Russian in a close-mic premium studio style with a neutral native Russian accent.",
+        "The voice is synthetic: do not imitate, reference, or resemble any real named person.",
+        "Sound like a highly experienced competitive-FPS operator speaking to one player, not like a generic assistant.",
+        "Keep the signal dry and intimate: no announcer voice, trailer voice, radio distortion, reverb, whisper effect, or theatrical growl.",
+        "Use human breath groups, micro-pauses, variable sentence length, clean consonants and relaxed connected speech.",
+        "Avoid the synthetic assistant cadence where every phrase receives equal stress or every sentence rises at the end.",
+        "Give at most one strong emphasis per thought. Let secondary information stay quieter and faster.",
+        "Pronounce Russian naturally and English gaming terms confidently inside Russian speech without caricaturing an English accent.",
+        "Preserve weapon names, map names, negations, quantities and tactical abbreviations exactly in meaning.",
+        "Do not read markdown, emoji, separators, URLs, UI chrome, bullet symbols, or the BLACK CROWN brand header aloud.",
+        "Never add filler, greetings, laughter, sighs, sound effects or a sign-off that is not present in the text.",
+        "Finish instructions with a calm decisive downward cadence rather than exaggerated emphasis.",
     ]
 
     if duplex_reply:
         instructions.extend([
-            "This is a direct reply to a voice message. Sound as if you are continuing the same live conversation immediately.",
-            "Do not sound like you are reading the written answer back to the player.",
-            "Use contractions and connected conversational phrasing where natural in Russian, with a quick first sentence and fewer formal pauses.",
-            "Keep the spoken version dense and easy to follow while the full written answer remains visible in chat.",
+            "This is a direct reply to a voice message. Continue the conversation immediately as if the player is still in comms.",
+            "The first sentence should arrive quickly and naturally; do not introduce or summarize the fact that you are answering.",
+            "Use fewer formal pauses, smoother connected phrasing and a compact spoken form while the complete written answer remains visible.",
         ])
 
     if persona == "COACH":
         instructions.extend([
-            "Use the manner of an elite esports coach reviewing a player one-on-one.",
-            "Use a measured pace, warm authority and deliberate pauses before causes, corrections and metrics.",
-            "Keep criticism precise and unemotional; encouragement should feel earned, not generic.",
+            "Use a measured one-on-one elite esports coaching manner: calm authority, slightly warmer tone, controlled pacing.",
+            "Pause briefly before the root cause, the correction and the measurable next action.",
+            "Criticism is precise and emotionally neutral; encouragement is brief and earned.",
         ])
     else:
         instructions.extend([
-            "Sound like a trusted high-level squad teammate speaking over clean voice chat.",
-            "Keep the pace brisk, direct and concise, with short pauses around tactical priorities.",
-            "Never imitate radio distortion or military roleplay.",
+            "Use the manner of a trusted high-level squad teammate on clean comms: brisk, direct, composed and easy to process under pressure.",
+            "Short tactical sentences may connect tightly; strategic explanations may breathe slightly more.",
         ])
 
     if brain == "DEMON":
         instructions.append(
-            "Add restrained intensity: firmer endings and stronger emphasis on the single highest-value action, without shouting."
+            "Add restrained competitive intensity through firmer consonants and endings, never by shouting or lowering the voice theatrically."
         )
     elif brain == "PRO":
-        instructions.append("Use precise professional emphasis and a focused tactical cadence.")
+        instructions.append("Use precise professional emphasis and a focused tournament-review cadence.")
     else:
-        instructions.append("Keep the delivery relaxed and easy to process on first listen.")
+        instructions.append("Keep the delivery relaxed, transparent and immediately understandable on first listen.")
 
     if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
         instructions.append(
-            "The player may be overloaded or tilted. Lower emotional intensity, slow slightly, and prioritize clarity over energy."
+            "The player may be overloaded. Lower vocal energy, widen the most important pause slightly, and make the correction exceptionally clear."
         )
     elif emotion in {"HYPE", "EXCITED"}:
-        instructions.append("Allow a little more energy while keeping diction controlled and useful.")
+        instructions.append("Allow modest extra energy and faster transitions while preserving diction and control.")
 
     content = _content_direction(text)
     if content:
@@ -129,14 +130,16 @@ def voice_speed(profile: Mapping[str, Any] | None) -> float:
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
     emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
 
-    speed = 0.98 if persona == "COACH" else 1.04
+    speed = 0.985 if persona == "COACH" else 1.035
     if bool(data.get("_bco_voice_reply")):
         speed += 0.015
     if brain == "DEMON":
-        speed += 0.01
+        speed += 0.005
     if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
         speed -= 0.025
-    return max(0.88, min(speed, 1.10))
+    elif emotion in {"HYPE", "EXCITED"}:
+        speed += 0.01
+    return max(0.90, min(speed, 1.08))
 
 
 class OpenAITTSBackend:
@@ -185,13 +188,15 @@ class OpenAITTSBackend:
             "input": str(text or "")[:4096],
             "instructions": voice_instructions(profile, text)[:4096],
             "response_format": "wav",
+            "stream_format": "audio",
             "speed": voice_speed(profile),
         }
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/voice-studio-v21",
+            "User-Agent": "BLACK-CROWN-OPS/voice-studio-v19",
+            "X-Client-Request-Id": str(uuid.uuid4()),
         }
         output.parent.mkdir(parents=True, exist_ok=True)
         part = output.with_suffix(output.suffix + ".part")
