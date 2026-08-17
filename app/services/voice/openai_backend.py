@@ -65,6 +65,7 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
     emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
+    duplex_reply = bool(data.get("_bco_voice_reply"))
 
     instructions = [
         "Speak in fluent, natural Russian with a neutral native Russian accent.",
@@ -78,6 +79,14 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
         "Use emphasis sparingly: normally one strongest tactical phrase per paragraph.",
         "End tactical instructions decisively but naturally, without adding filler or a sign-off.",
     ]
+
+    if duplex_reply:
+        instructions.extend([
+            "This is a direct reply to a voice message. Sound as if you are continuing the same live conversation immediately.",
+            "Do not sound like you are reading the written answer back to the player.",
+            "Use contractions and connected conversational phrasing where natural in Russian, with a quick first sentence and fewer formal pauses.",
+            "Keep the spoken version dense and easy to follow while the full written answer remains visible in chat.",
+        ])
 
     if persona == "COACH":
         instructions.extend([
@@ -121,6 +130,8 @@ def voice_speed(profile: Mapping[str, Any] | None) -> float:
     emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
 
     speed = 0.98 if persona == "COACH" else 1.04
+    if bool(data.get("_bco_voice_reply")):
+        speed += 0.015
     if brain == "DEMON":
         speed += 0.01
     if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
@@ -180,7 +191,7 @@ class OpenAITTSBackend:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/duplex-voice-v20",
+            "User-Agent": "BLACK-CROWN-OPS/voice-studio-v21",
         }
         output.parent.mkdir(parents=True, exist_ok=True)
         part = output.with_suffix(output.suffix + ".part")
