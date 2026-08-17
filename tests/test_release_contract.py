@@ -62,8 +62,8 @@ def _settings():
 
 
 def test_release_contract_is_explicit_and_readiness_exposes_natural_voice():
-    assert APP_VERSION == "24.0.0"
-    assert RELEASE_CONTRACT == "bco-voice-intelligence-v24"
+    assert APP_VERSION == "24.1.0"
+    assert RELEASE_CONTRACT == "bco-duplex-voice-v24.1"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -71,7 +71,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "24.0.0", "contract": "bco-voice-intelligence-v24"}
+    assert snap["release"] == {"version": "24.1.0", "contract": "bco-duplex-voice-v24.1"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_live_intelligence_drafts"] is True
