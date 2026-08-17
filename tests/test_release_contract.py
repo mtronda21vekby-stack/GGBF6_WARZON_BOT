@@ -46,12 +46,15 @@ def _settings():
         telegram_max_update_bytes=256 * 1024,
         premium_link_enabled=True,
         telegram_aaa_console_enabled=True,
+        telegram_live_drafts_enabled=True,
+        webapp_live_stream_enabled=True,
+        webapp_cinematic_ui_enabled=True,
     )
 
 
 def test_release_contract_is_explicit_and_readiness_exposes_version_only():
-    assert APP_VERSION == "17.0.0"
-    assert RELEASE_CONTRACT == "bco-voice-hifi-v17"
+    assert APP_VERSION == "18.0.0"
+    assert RELEASE_CONTRACT == "bco-live-intelligence-v18"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -59,13 +62,24 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "17.0.0", "contract": "bco-voice-hifi-v17"}
+    assert snap["release"] == {"version": "18.0.0", "contract": "bco-live-intelligence-v18"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_inline_navigation"] is True
     assert snap["features"]["telegram_rich_messages"] is True
+    assert snap["features"]["telegram_live_intelligence_drafts"] is True
+    assert snap["features"]["webapp_live_intelligence_stream"] is True
+    assert snap["features"]["webapp_cinematic_ui"] is True
     assert snap["features"]["voice_high_fidelity"] is True
     assert snap["features"]["voice_local_fallback"] is True
+    assert snap["live_intelligence"] == {
+        "telegram_drafts": True,
+        "telegram_transport": "rich_message_draft_with_text_fallback",
+        "webapp_stream": True,
+        "webapp_transport": "ndjson",
+        "cinematic_ui": True,
+        "final_message_authoritative": True,
+    }
     assert snap["voice_runtime"] == {
         "enabled": True,
         "requested_provider": "auto",
