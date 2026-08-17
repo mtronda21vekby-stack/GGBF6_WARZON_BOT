@@ -59,7 +59,7 @@ def test_supabase_ping_is_read_only_head():
     assert seen["method"] == "HEAD"
     assert seen["path"].endswith("/rest/v1/bco_players")
     assert "select=chat_id" in seen["query"]
-    assert seen["probe"] == "startup-v9"
+    assert seen["probe"] == "startup-v39"
     assert seen["body"] in (b"", None)
 
 
