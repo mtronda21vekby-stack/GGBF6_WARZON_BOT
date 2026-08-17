@@ -8,14 +8,10 @@ class AdminUsageAnalytics:
     store: Any
     def _primary(self): return getattr(self.store,"primary",self.store)
     def record(self,*,user_id:int,chat_id:int,language:str,surface:str,is_message:bool=False,is_voice:bool=False,is_miniapp:bool=False)->None:
-        primary=self._primary(); fn=getattr(primary,"record_user_activity",None)
-        if callable(fn): fn(user_id,chat_id,language=language,surface=surface,is_message=is_message,is_voice=is_voice,is_miniapp=is_miniapp); return
-        request=getattr(primary,"_request",None)
+        primary=self._primary(); request=getattr(primary,"_request",None)
         if callable(request): request("POST","rpc/bco_record_user_activity",json={"p_user_id":int(user_id),"p_chat_id":int(chat_id),"p_language":str(language or "")[:16],"p_surface":str(surface or "telegram")[:32],"p_is_message":bool(is_message),"p_is_voice":bool(is_voice),"p_is_miniapp":bool(is_miniapp)},extra_headers={"Prefer":"return=minimal"})
     def summary(self)->dict[str,int]:
-        primary=self._primary(); fn=getattr(primary,"admin_usage_summary",None)
-        if callable(fn): raw=fn(); return {str(k):int(v or 0) for k,v in dict(raw or {}).items()}
-        request=getattr(primary,"_request",None); rows_fn=getattr(primary,"_rows",None)
+        primary=self._primary(); request=getattr(primary,"_request",None); rows_fn=getattr(primary,"_rows",None)
         if callable(request) and callable(rows_fn):
             rows=rows_fn(request("POST","rpc/bco_admin_usage_summary",json={})); raw=dict(rows[0]) if rows else {}; return {str(k):int(v or 0) for k,v in raw.items()}
         return {}
