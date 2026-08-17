@@ -65,9 +65,10 @@ def _settings():
     )
 
 
-def test_release_contract_is_explicit_and_readiness_exposes_natural_voice():
-    assert APP_VERSION == "27.0.0"
-    assert RELEASE_CONTRACT == "bco-mission-evidence-fusion-v27"
+def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkeypatch):
+    monkeypatch.setenv("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED", "1")
+    assert APP_VERSION == "28.0.0"
+    assert RELEASE_CONTRACT == "bco-longitudinal-operator-intelligence-v28"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -75,7 +76,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "27.0.0", "contract": "bco-mission-evidence-fusion-v27"}
+    assert snap["release"] == {"version": "28.0.0", "contract": "bco-longitudinal-operator-intelligence-v28"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_live_intelligence_drafts"] is True
@@ -95,14 +96,23 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice():
     assert snap["features"]["operator_causal_intelligence"] is True
     assert snap["features"]["mission_vod_evidence_fusion"] is True
     assert snap["features"]["mission_vod_evidence_no_autocomplete"] is True
+    assert snap["features"]["operator_longitudinal_intelligence"] is True
+    assert snap["features"]["operator_longitudinal_contradiction_detection"] is True
+    assert snap["features"]["operator_longitudinal_no_causal_claims"] is True
     assert snap["operator_intelligence"]["unknown_remains_unknown"] is True
     assert snap["operator_intelligence"]["adaptive_missions"] is True
     assert snap["operator_intelligence"]["context_bridge"] is True
     assert snap["operator_intelligence"]["shared_brain_context"] is True
-    assert snap["operator_intelligence"]["context_schema"] == "bco_operator_context_v27"
+    assert snap["operator_intelligence"]["context_schema"] == "bco_operator_context_v28"
     assert snap["operator_intelligence"]["mission_evidence_fusion"] is True
     assert snap["operator_intelligence"]["mission_evidence_source"] == "vision_sampled_frames"
     assert snap["operator_intelligence"]["mission_evidence_autocomplete"] is False
+    assert snap["operator_intelligence"]["longitudinal_intelligence"] is True
+    assert snap["operator_intelligence"]["longitudinal_schema"] == "bco_longitudinal_operator_v28"
+    assert snap["operator_intelligence"]["longitudinal_minimum_cycles"] == 3
+    assert snap["operator_intelligence"]["longitudinal_contradiction_detection"] is True
+    assert snap["operator_intelligence"]["longitudinal_association_rule"] == "association_not_causation"
+    assert snap["operator_intelligence"]["longitudinal_causal_claims"] is False
     assert snap["live_intelligence"]["final_message_authoritative"] is True
     assert snap["voice_runtime"]["input_configured"] is True
     assert snap["voice_runtime"]["transcription_model"] == "gpt-4o-transcribe"
