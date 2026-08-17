@@ -1,4 +1,4 @@
-/* BLACK CROWN OPS — v29 boot coordinator (v18 live + v25/v28 Operator preserved) */
+/* BLACK CROWN OPS — v30 boot coordinator (v18 live + Operator + Premium layers preserved) */
 (() => {
   "use strict";
 
@@ -86,6 +86,12 @@
       .catch((error) => {
         window.__BCO_DEEP_HISTORY_V29_LOADED__ = false;
         console.warn("[BCO v29] Premium Deep History unavailable; Operator Twin remains active", error);
+        return false;
+      }))
+    .then(() => loadScript("/webapp/bco.strategy.js", "__BCO_STRATEGY_V30_LOADED__")
+      .catch((error) => {
+        window.__BCO_STRATEGY_V30_LOADED__ = false;
+        console.warn("[BCO v30] Premium Adaptive Strategy unavailable; existing intelligence surfaces remain active", error);
         return false;
       }))
     .then(() => true)

@@ -73,8 +73,8 @@ def _settings():
 def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkeypatch):
     monkeypatch.setenv("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED", "1")
     monkeypatch.setenv("PREMIUM_DEEP_HISTORY_ENABLED", "1")
-    assert APP_VERSION == "29.0.0"
-    assert RELEASE_CONTRACT == "bco-premium-deep-history-v29"
+    assert APP_VERSION == "30.0.0"
+    assert RELEASE_CONTRACT == "bco-premium-adaptive-strategy-v30"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -83,7 +83,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkey
         entitlement_service=ReadyEntitlements(),
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "29.0.0", "contract": "bco-premium-deep-history-v29"}
+    assert snap["release"] == {"version": "30.0.0", "contract": "bco-premium-adaptive-strategy-v30"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_live_intelligence_drafts"] is True
