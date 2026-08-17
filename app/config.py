@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     voice_transcript_confirmation_ttl_s: int = int(os.getenv("VOICE_TRANSCRIPT_CONFIRMATION_TTL_S", "120"))
 
     # Hybrid voice output: steerable cloud TTS first, local Piper fallback always ready.
+    # Lossless cloud WAV is mastered server-side and encoded once to Telegram-native Ogg Opus.
     voice_enabled: bool = _env_on("VOICE_ENABLED")
     voice_follow_input_enabled: bool = _env_on("VOICE_FOLLOW_INPUT_ENABLED")
     voice_provider: str = os.getenv("VOICE_PROVIDER", "auto")
@@ -104,11 +105,11 @@ class Settings(BaseSettings):
     voice_model_name: str = os.getenv("VOICE_MODEL_NAME", "ru_RU-denis-medium")
     voice_model_dir: str = os.getenv("VOICE_MODEL_DIR", ".bco_voice")
     voice_model_timeout_s: float = float(os.getenv("VOICE_MODEL_TIMEOUT_S", "120"))
-    voice_max_chars: int = int(os.getenv("VOICE_MAX_CHARS", "2200"))
-    # Voice-to-voice replies should feel like conversation, not like an article
-    # being read aloud. Full authoritative text remains visible in Telegram.
-    voice_duplex_max_chars: int = int(os.getenv("VOICE_DUPLEX_MAX_CHARS", "1400"))
-    voice_opus_bitrate_kbps: int = int(os.getenv("VOICE_OPUS_BITRATE_KBPS", "64"))
+    voice_max_chars: int = int(os.getenv("VOICE_MAX_CHARS", "3200"))
+    # Voice-to-voice replies remain shorter than the authoritative written answer
+    # but now retain enough context for natural reasoning and spoken transitions.
+    voice_duplex_max_chars: int = int(os.getenv("VOICE_DUPLEX_MAX_CHARS", "1800"))
+    voice_opus_bitrate_kbps: int = int(os.getenv("VOICE_OPUS_BITRATE_KBPS", "72"))
     voice_openai_model: str = os.getenv("VOICE_OPENAI_MODEL", "gpt-4o-mini-tts")
     voice_openai_voice: str = os.getenv("VOICE_OPENAI_VOICE", "cedar")
     voice_openai_timeout_s: float = float(os.getenv("VOICE_OPENAI_TIMEOUT_S", "45"))

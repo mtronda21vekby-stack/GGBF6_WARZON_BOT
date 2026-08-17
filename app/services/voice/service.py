@@ -46,6 +46,8 @@ class VoiceArtifact:
     temp_dir: Path
     provider: str = "unknown"
     voice_name: str = ""
+    mastering: str = "studio-v2"
+    opus_bitrate_kbps: int = 72
 
     def cleanup(self) -> None:
         shutil.rmtree(self.temp_dir, ignore_errors=True)
@@ -63,8 +65,8 @@ class VoiceService:
         self._local_fallback_enabled = _bool_setting(self.settings, "voice_local_fallback_enabled", True)
         self._follow_input_enabled = _bool_setting(self.settings, "voice_follow_input_enabled", True)
         self._opus_bitrate_kbps = max(
-            32,
-            min(int(getattr(self.settings, "voice_opus_bitrate_kbps", 64) or 64), 96),
+            48,
+            min(int(getattr(self.settings, "voice_opus_bitrate_kbps", 72) or 72), 96),
         )
 
         if self.backend is None:
@@ -152,6 +154,9 @@ class VoiceService:
             "provider": provider,
             "voice": self.voice_name_for(profile).upper(),
             "local_fallback": fallback,
+            "mastering": "STUDIO MASTER V2",
+            "opus_bitrate_kbps": self._opus_bitrate_kbps,
+            "target_loudness_lufs": -16,
         }
 
     async def close(self) -> None:
@@ -194,10 +199,10 @@ class VoiceService:
         await asyncio.to_thread(self.backend.synthesize_wav, text, wav_path, dict(profile))
 
     def _speech_limit(self, profile: Mapping[str, Any]) -> int:
-        full_limit = max(120, min(int(getattr(self.settings, "voice_max_chars", 2200) or 2200), 4096))
+        full_limit = max(160, min(int(getattr(self.settings, "voice_max_chars", 3200) or 3200), 4096))
         if not bool(profile.get("_bco_voice_reply")):
             return full_limit
-        duplex_limit = max(360, min(int(getattr(self.settings, "voice_duplex_max_chars", 1400) or 1400), 2600))
+        duplex_limit = max(500, min(int(getattr(self.settings, "voice_duplex_max_chars", 1800) or 1800), 3000))
         return min(full_limit, duplex_limit)
 
     async def synthesize(self, text: str, profile: Mapping[str, Any] | None = None) -> VoiceArtifact:
@@ -238,6 +243,8 @@ class VoiceService:
                 temp_dir=temp_dir,
                 provider=provider,
                 voice_name=voice_name,
+                mastering="studio-v2",
+                opus_bitrate_kbps=self._opus_bitrate_kbps,
             )
         except Exception:
             shutil.rmtree(temp_dir, ignore_errors=True)
