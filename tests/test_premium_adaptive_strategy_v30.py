@@ -46,15 +46,17 @@ def test_regression_watch_becomes_next_strategy_without_causal_claim():
     }
     operator = {"mission": {"focus": "rotations"}, "longitudinal": {"trend": "declining"}}
     data = PremiumAdaptiveStrategyService().build(history, operator)
-    assert data["schema"] == "bco_premium_adaptive_strategy_v33"
+    assert data["schema"] == "bco_premium_adaptive_strategy_v34"
     assert data["strategy_class"] == "regression_intercept"
     assert data["focus"] == "rotations"
     assert data["mission_alignment"] == "aligned"
     assert data["confidence"] == "high"
+    assert data["historical_confidence"] == "high"
     assert data["truth_contract"]["causal_claims"] is False
     assert data["truth_contract"]["strategy_is_recommendation_not_fact"] is True
     assert data["truth_contract"]["portfolio_priority_is_associative"] is True
     assert data["truth_contract"]["exploration_is_deterministic"] is True
+    assert data["truth_contract"]["stale_is_not_false"] is True
     assert data["exploration_budget"]["random_selection"] is False
     assert data["authority"]["client_authority"] is False
 
@@ -104,6 +106,7 @@ def test_strategy_api_is_server_premium_gated(monkeypatch):
     assert payload["strategy_authority"] == "evidence_driven_recommendation"
     assert payload["portfolio_authority"] == "associative_outcome_calibration_only"
     assert payload["exploration_authority"] == "deterministic_evidence_backed_rotation_only"
+    assert payload["freshness_authority"] == "server_persisted_evidence_timestamps_only"
     assert payload["data"]["authority"]["client_authority"] is False
     assert entitled.calls == [991]
 
