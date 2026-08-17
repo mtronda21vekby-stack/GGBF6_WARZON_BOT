@@ -46,7 +46,7 @@ def _settings():
         voice_high_fidelity_enabled=True,
         voice_local_fallback_enabled=True,
         voice_openai_model="gpt-4o-mini-tts",
-        voice_openai_voice="cedar",
+        voice_openai_voice="marin",
         voice_model_name="ru_RU-denis-medium",
         voice_opus_bitrate_kbps=72,
         voice_max_chars=3200,
@@ -61,9 +61,9 @@ def _settings():
     )
 
 
-def test_release_contract_is_explicit_and_readiness_exposes_version_only():
-    assert APP_VERSION == "22.0.0"
-    assert RELEASE_CONTRACT == "bco-voice-studio-master-v22"
+def test_release_contract_is_explicit_and_readiness_exposes_natural_voice():
+    assert APP_VERSION == "23.0.0"
+    assert RELEASE_CONTRACT == "bco-natural-voice-v23"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -71,29 +71,19 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         release_contract=RELEASE_CONTRACT,
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "22.0.0", "contract": "bco-voice-studio-master-v22"}
+    assert snap["release"] == {"version": "23.0.0", "contract": "bco-natural-voice-v23"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
-    assert snap["features"]["telegram_inline_navigation"] is True
-    assert snap["features"]["telegram_rich_messages"] is True
     assert snap["features"]["telegram_live_intelligence_drafts"] is True
     assert snap["features"]["webapp_live_intelligence_stream"] is True
-    assert snap["features"]["webapp_cinematic_ui"] is True
     assert snap["features"]["voice_input"] is True
     assert snap["features"]["voice_input_confidence_gate"] is True
     assert snap["features"]["voice_duplex_follow_input"] is True
     assert snap["features"]["voice_high_fidelity"] is True
     assert snap["features"]["voice_local_fallback"] is True
-    assert snap["features"]["voice_studio_mastering"] is True
-    assert snap["features"]["voice_two_pass_loudness"] is True
-    assert snap["live_intelligence"] == {
-        "telegram_drafts": True,
-        "telegram_transport": "rich_message_draft_with_text_fallback",
-        "webapp_stream": True,
-        "webapp_transport": "ndjson",
-        "cinematic_ui": True,
-        "final_message_authoritative": True,
-    }
+    assert snap["features"]["voice_natural_mastering"] is True
+    assert snap["features"]["voice_selectable_profiles"] is True
+    assert snap["live_intelligence"]["final_message_authoritative"] is True
     assert snap["voice_runtime"] == {
         "enabled": True,
         "input_enabled": True,
@@ -110,12 +100,14 @@ def test_release_contract_is_explicit_and_readiness_exposes_version_only():
         "cloud_tts_configured": True,
         "local_fallback_enabled": True,
         "cloud_model": "gpt-4o-mini-tts",
-        "default_voice": "cedar",
+        "default_voice": "marin",
+        "available_ui_voices": ["marin", "coral", "shimmer", "cedar"],
         "local_model": "ru_RU-denis-medium",
         "opus_bitrate_kbps": 72,
-        "mastering": "studio_master_v2_two_pass_loudnorm",
-        "target_loudness_lufs": -16,
-        "target_true_peak_dbtp": -1.0,
+        "cloud_mastering": "natural_v3_transparent",
+        "local_mastering": "piper_rescue_v2",
+        "cloud_compression": False,
+        "cloud_presence_boost": False,
         "output_sample_rate_hz": 48000,
         "speech_max_chars": 3200,
         "duplex_max_chars": 1800,
