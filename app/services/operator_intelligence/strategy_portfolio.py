@@ -56,6 +56,7 @@ class StrategyPortfolioCalibration:
                 "state": state,
                 "priority_adjustment": adjustment,
                 "minimum_evaluated_windows": MIN_EVALUATED_WINDOWS,
+                "latest_evaluated_at": str(stats.get("latest_evaluated_at") or "")[:64] or None,
             }
 
         evaluations = source.get("evaluations") if isinstance(source.get("evaluations"), list) else []
