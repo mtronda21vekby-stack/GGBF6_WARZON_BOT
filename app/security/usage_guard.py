@@ -35,10 +35,9 @@ class GuardRule:
 class UsageGuard:
     """Process-local abuse/cost guard for expensive server capabilities.
 
-    The guard intentionally does not identify users in telemetry. Buckets are
-    held only in memory and are bounded so an attacker cannot create an
-    unbounded number of forged chat IDs. Persistent/billing entitlements are a
-    separate concern and must not be inferred from these counters.
+    STT and TTS have independent budgets so a normal duplex exchange does not
+    count twice against one opaque voice bucket. The guard intentionally does
+    not identify users in telemetry and remains bounded against forged IDs.
     """
 
     def __init__(
@@ -100,6 +99,16 @@ class UsageGuard:
                     _limit("vod_global_rate_limit_1h", 120, 3600),
                 )),
             ),
+            "stt": GuardRule(
+                subject_limits=_limits((
+                    _limit("stt_rate_limit_1m", 12, 60),
+                    _limit("stt_rate_limit_1h", 90, 3600),
+                )),
+                global_limits=_limits((
+                    _limit("stt_global_rate_limit_1m", 150, 60),
+                    _limit("stt_global_rate_limit_1h", 1200, 3600),
+                )),
+            ),
             "voice": GuardRule(
                 subject_limits=_limits((
                     _limit("voice_rate_limit_1m", 10, 60),
@@ -144,8 +153,6 @@ class UsageGuard:
     def _bucket(self, key: tuple[str, str]) -> Deque[float]:
         bucket = self._buckets.get(key)
         if bucket is None:
-            # Never evict a global bucket: otherwise an attacker could churn
-            # forged chat IDs until the system-wide cost budget is forgotten.
             while len(self._buckets) >= self._max_buckets:
                 victim = next(
                     (
@@ -199,12 +206,7 @@ class UsageGuard:
             if waits:
                 scope, wait = max(waits, key=lambda item: item[1])
                 self._blocked[category] += 1
-                return UsageDecision(
-                    False,
-                    category,
-                    retry_after_s=max(1, int(math.ceil(wait))),
-                    scope=scope,
-                )
+                return UsageDecision(False, category, retry_after_s=max(1, int(math.ceil(wait))), scope=scope)
 
             subject_events.append(now)
             global_events.append(now)
@@ -220,14 +222,8 @@ class UsageGuard:
                 "blocked": dict(self._blocked),
                 "categories": {
                     category: {
-                        "subject": [
-                            {"max": x.max_events, "window_s": int(x.window_s)}
-                            for x in rule.subject_limits
-                        ],
-                        "global": [
-                            {"max": x.max_events, "window_s": int(x.window_s)}
-                            for x in rule.global_limits
-                        ],
+                        "subject": [{"max": x.max_events, "window_s": int(x.window_s)} for x in rule.subject_limits],
+                        "global": [{"max": x.max_events, "window_s": int(x.window_s)} for x in rule.global_limits],
                     }
                     for category, rule in self._rules.items()
                 },
