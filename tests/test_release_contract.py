@@ -74,8 +74,9 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkey
     monkeypatch.setenv("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED", "1")
     monkeypatch.setenv("PREMIUM_DEEP_HISTORY_ENABLED", "1")
     monkeypatch.setenv("EVIDENCE_FRESHNESS_ENABLED", "1")
-    assert APP_VERSION == "34.0.0"
-    assert RELEASE_CONTRACT == "bco-evidence-freshness-v34"
+    monkeypatch.setenv("REGIME_CHANGE_DETECTION_ENABLED", "1")
+    assert APP_VERSION == "35.0.0"
+    assert RELEASE_CONTRACT == "bco-regime-change-detection-v35"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -84,7 +85,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkey
         entitlement_service=ReadyEntitlements(),
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "34.0.0", "contract": "bco-evidence-freshness-v34"}
+    assert snap["release"] == {"version": "35.0.0", "contract": "bco-regime-change-detection-v35"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_live_intelligence_drafts"] is True
@@ -114,33 +115,51 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkey
     assert snap["features"]["operator_evidence_freshness"] is True
     assert snap["features"]["operator_stale_evidence_not_false"] is True
     assert snap["features"]["operator_freshness_no_causal_claims"] is True
-    assert snap["operator_intelligence"]["unknown_remains_unknown"] is True
-    assert snap["operator_intelligence"]["adaptive_missions"] is True
-    assert snap["operator_intelligence"]["context_bridge"] is True
-    assert snap["operator_intelligence"]["shared_brain_context"] is True
-    assert snap["operator_intelligence"]["context_schema"] == "bco_operator_context_v28"
-    assert snap["operator_intelligence"]["mission_evidence_fusion"] is True
-    assert snap["operator_intelligence"]["mission_evidence_source"] == "vision_sampled_frames"
-    assert snap["operator_intelligence"]["mission_evidence_autocomplete"] is False
-    assert snap["operator_intelligence"]["longitudinal_intelligence"] is True
-    assert snap["operator_intelligence"]["longitudinal_schema"] == "bco_longitudinal_operator_v28"
-    assert snap["operator_intelligence"]["longitudinal_minimum_cycles"] == 3
-    assert snap["operator_intelligence"]["longitudinal_contradiction_detection"] is True
-    assert snap["operator_intelligence"]["longitudinal_association_rule"] == "association_not_causation"
-    assert snap["operator_intelligence"]["longitudinal_causal_claims"] is False
-    assert snap["operator_intelligence"]["premium_deep_history"] is True
-    assert snap["operator_intelligence"]["premium_deep_history_schema"] == "bco_premium_deep_history_v29"
-    assert snap["operator_intelligence"]["premium_deep_history_max_cycles"] == 36
-    assert snap["operator_intelligence"]["premium_deep_history_authority"] == "server_bco_premium"
-    assert snap["operator_intelligence"]["premium_link_grants_entitlement"] is False
-    assert snap["operator_intelligence"]["premium_client_authority"] is False
-    assert snap["operator_intelligence"]["evidence_freshness"] is True
-    assert snap["operator_intelligence"]["evidence_freshness_schema"] == "bco_evidence_freshness_v34"
-    assert snap["operator_intelligence"]["evidence_freshness_authority"] == "server_persisted_evidence_timestamps_only"
-    assert snap["operator_intelligence"]["evidence_freshness_fresh_max_days"] == 7
-    assert snap["operator_intelligence"]["evidence_freshness_aging_max_days"] == 21
-    assert snap["operator_intelligence"]["stale_evidence_is_false"] is False
-    assert snap["operator_intelligence"]["freshness_causal_claims"] is False
+    assert snap["features"]["operator_regime_change_detection"] is True
+    assert snap["features"]["operator_regime_requires_sustained_windows"] is True
+    assert snap["features"]["operator_regime_one_session_not_enough"] is True
+    assert snap["features"]["operator_regime_no_causal_claims"] is True
+    assert snap["features"]["operator_regime_external_meta_not_inferred"] is True
+
+    op = snap["operator_intelligence"]
+    assert op["unknown_remains_unknown"] is True
+    assert op["adaptive_missions"] is True
+    assert op["context_bridge"] is True
+    assert op["shared_brain_context"] is True
+    assert op["context_schema"] == "bco_operator_context_v28"
+    assert op["mission_evidence_fusion"] is True
+    assert op["mission_evidence_source"] == "vision_sampled_frames"
+    assert op["mission_evidence_autocomplete"] is False
+    assert op["longitudinal_intelligence"] is True
+    assert op["longitudinal_schema"] == "bco_longitudinal_operator_v28"
+    assert op["longitudinal_minimum_cycles"] == 3
+    assert op["longitudinal_contradiction_detection"] is True
+    assert op["longitudinal_association_rule"] == "association_not_causation"
+    assert op["longitudinal_causal_claims"] is False
+    assert op["premium_deep_history"] is True
+    assert op["premium_deep_history_schema"] == "bco_premium_deep_history_v29"
+    assert op["premium_deep_history_max_cycles"] == 36
+    assert op["premium_deep_history_authority"] == "server_bco_premium"
+    assert op["premium_link_grants_entitlement"] is False
+    assert op["premium_client_authority"] is False
+    assert op["evidence_freshness"] is True
+    assert op["evidence_freshness_schema"] == "bco_evidence_freshness_v34"
+    assert op["evidence_freshness_authority"] == "server_persisted_evidence_timestamps_only"
+    assert op["evidence_freshness_fresh_max_days"] == 7
+    assert op["evidence_freshness_aging_max_days"] == 21
+    assert op["stale_evidence_is_false"] is False
+    assert op["freshness_causal_claims"] is False
+    assert op["regime_change_detection"] is True
+    assert op["regime_change_schema"] == "bco_player_regime_change_v35"
+    assert op["regime_change_authority"] == "server_explicit_outcome_windows_only"
+    assert op["regime_minimum_candidate_cycles"] == 6
+    assert op["regime_minimum_confirmed_cycles"] == 9
+    assert op["regime_window_size"] == 3
+    assert op["regime_one_session_can_change"] is False
+    assert op["regime_shift_identifies_cause"] is False
+    assert op["regime_external_meta_inferred"] is False
+    assert op["regime_causal_claims"] is False
+
     assert snap["live_intelligence"]["final_message_authoritative"] is True
     assert snap["voice_runtime"]["input_configured"] is True
     assert snap["voice_runtime"]["transcription_model"] == "gpt-4o-transcribe"
