@@ -1,7 +1,8 @@
-/* BLACK CROWN OPS v34 — Evidence Freshness; Adaptive Exploration Budget; Strategy Portfolio Calibration; Premium Strategy Outcome Loop; Premium Adaptive Strategy; recommendation, not player fact */
+/* BLACK CROWN OPS v35 — Player Regime Change Detection; Evidence Freshness; Adaptive Exploration Budget; Strategy Portfolio Calibration; Premium Strategy Outcome Loop; Premium Adaptive Strategy; recommendation, not player fact */
 (() => {
   "use strict";
-  if (window.__BCO_STRATEGY_V34_LOADED__) return;
+  if (window.__BCO_STRATEGY_V35_LOADED__) return;
+  window.__BCO_STRATEGY_V35_LOADED__ = true;
   window.__BCO_STRATEGY_V34_LOADED__ = true;
   window.__BCO_STRATEGY_V33_LOADED__ = true;
   window.__BCO_STRATEGY_V32_LOADED__ = true;
@@ -14,11 +15,11 @@
 
   function mount() {
     const pane = $("#tab-operator-v25 .bco-op-shell");
-    if (!pane || $("#bcoStrategyV34")) return;
+    if (!pane || $("#bcoStrategyV35")) return;
     const card = document.createElement("section");
-    card.id = "bcoStrategyV34";
+    card.id = "bcoStrategyV35";
     card.className = "bco-op-card";
-    card.innerHTML = `<div class="bco-op-title"><span>ADAPTIVE STRATEGY</span><small>PREMIUM / EVIDENCE FRESHNESS</small></div><div id="bcoStrategyStatus" class="bco-op-review">Resolve strategy on demand.</div><div id="bcoStrategyBody"></div><button id="bcoStrategyRefresh" class="bco-op-btn" type="button">BUILD NEXT OBJECTIVE</button>`;
+    card.innerHTML = `<div class="bco-op-title"><span>ADAPTIVE STRATEGY</span><small>PREMIUM / PLAYER REGIME SIGNAL</small></div><div id="bcoStrategyStatus" class="bco-op-review">Resolve strategy on demand.</div><div id="bcoStrategyBody"></div><button id="bcoStrategyRefresh" class="bco-op-btn" type="button">BUILD NEXT OBJECTIVE</button>`;
     const status = $("#bcoOpStatus", pane);
     if (status) pane.insertBefore(card, status); else pane.appendChild(card);
     $("#bcoStrategyRefresh")?.addEventListener("click", refresh);
@@ -62,6 +63,15 @@
     return `SIGNAL ${String(f.signal_state || "unknown").toUpperCase()} / ${signalAge} • PRIOR ${String(f.portfolio_state || "unknown").toUpperCase()} / ${portfolioAge} • STALE ≠ FALSE • OLD SUPPORT ≠ CURRENT PROOF`;
   }
 
+  function regimeText(regime) {
+    const r = regime || {};
+    const state = String(r.state || "insufficient_evidence").replaceAll("_", " ").toUpperCase();
+    const direction = String(r.direction || "unknown").replaceAll("_", " ").toUpperCase();
+    const confidence = String(r.confidence || "unknown").toUpperCase();
+    const guard = String(r.selection_guard_reason || "neutral").replaceAll("_", " ").toUpperCase();
+    return `${state} • ${direction} • CONF ${confidence} • GUARD ${guard} • CAUSE UNKNOWN • SHIFT ≠ CAUSE • ONE SESSION ≠ REGIME`;
+  }
+
   function render(data) {
     const body = $("#bcoStrategyBody"); if (!body) return; body.innerHTML = "";
     body.append(
@@ -70,20 +80,21 @@
       block("SUCCESS CONDITION", data?.success_condition),
       block("NEXT ADAPTATION", data?.next_adaptation),
       block("RATIONALE", data?.rationale),
+      block("PLAYER REGIME", regimeText(data?.player_regime)),
       block("EVIDENCE FRESHNESS", freshnessText(data?.evidence_freshness)),
       block("PORTFOLIO PRIOR", portfolioText(data?.portfolio_calibration)),
       block("EXPLORATION BUDGET", explorationText(data?.exploration_budget)),
       block("OUTCOME LOOP", effectivenessText(data?.effectiveness))
     );
     const meta = document.createElement("div"); meta.className = "bco-op-flow";
-    meta.textContent = `${String(data?.strategy_class || "calibration").toUpperCase()} • CONF ${String(data?.confidence || "unknown").toUpperCase()} / HIST ${String(data?.historical_confidence || data?.confidence || "unknown").toUpperCase()} • STRATEGY ${String(data?.strategy_id || "untracked").toUpperCase()} • ASSOCIATION ≠ CAUSATION • RECOMMENDATION ≠ FACT • EFFECTIVENESS ≠ CAUSAL PROOF • PORTFOLIO PRIOR ≠ CAUSAL PROOF • EXPLORATION ≠ RANDOMNESS • ROTATION REQUIRES CLOSE EVIDENCE • STALE ≠ FALSE • OLD SUPPORT ≠ CURRENT PROOF`;
+    meta.textContent = `${String(data?.strategy_class || "calibration").toUpperCase()} • CONF ${String(data?.confidence || "unknown").toUpperCase()} / HIST ${String(data?.historical_confidence || data?.confidence || "unknown").toUpperCase()} • STRATEGY ${String(data?.strategy_id || "untracked").toUpperCase()} • ASSOCIATION ≠ CAUSATION • RECOMMENDATION ≠ FACT • EFFECTIVENESS ≠ CAUSAL PROOF • PORTFOLIO PRIOR ≠ CAUSAL PROOF • EXPLORATION ≠ RANDOMNESS • ROTATION REQUIRES CLOSE EVIDENCE • STALE ≠ FALSE • OLD SUPPORT ≠ CURRENT PROOF • SHIFT ≠ CAUSE • ONE SESSION ≠ REGIME • META CHANGE NOT INFERRED`;
     body.prepend(meta);
   }
 
   async function refresh() {
     const status = $("#bcoStrategyStatus"); const init = initData();
     if (!init) { if (status) status.textContent = "Open from Telegram to resolve server-authoritative Premium."; return; }
-    if (status) status.textContent = "Building strategy from bounded evidence + freshness + associative portfolio + deterministic exploration…";
+    if (status) status.textContent = "Building strategy from bounded evidence + regime guard + freshness + portfolio + deterministic exploration…";
     try {
       const response = await fetch(API, { method: "GET", headers: { "X-Telegram-Init-Data": init }, cache: "no-store", credentials: "same-origin" });
       const payload = await response.json().catch(() => ({}));
@@ -93,7 +104,8 @@
       if (payload?.portfolio_authority !== "associative_outcome_calibration_only") throw new Error("Strategy portfolio authority mismatch");
       if (payload?.exploration_authority !== "deterministic_evidence_backed_rotation_only") throw new Error("Exploration authority mismatch");
       if (payload?.freshness_authority !== "server_persisted_evidence_timestamps_only") throw new Error("Evidence freshness authority mismatch");
-      if (status) status.textContent = "SERVER PREMIUM VERIFIED // FRESHNESS CHANGES RELEVANCE, NOT HISTORY";
+      if (payload?.regime_authority !== "server_explicit_outcome_windows_only") throw new Error("Player regime authority mismatch");
+      if (status) status.textContent = "SERVER PREMIUM VERIFIED // REGIME SHIFT DESCRIBES CHANGE, NOT CAUSE";
       render(payload.data || {});
     } catch (error) { if (status) status.textContent = error?.message || "Adaptive strategy unavailable."; }
   }
