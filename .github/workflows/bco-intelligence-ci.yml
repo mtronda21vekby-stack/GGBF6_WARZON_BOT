@@ -19,6 +19,7 @@ on:
       - feature/bco-live-intelligence-command-center-v18
       - feature/bco-voice-intelligence-v19
       - feature/bco-duplex-voice-v20
+      - feature/bco-operator-twin-missions-v25
   pull_request:
     branches:
       - main
@@ -114,7 +115,7 @@ jobs:
           EXPECTED_VERSION="$(python -c 'from app.release import APP_VERSION; print(APP_VERSION)')"
           echo "Render deploy trigger mode=${DEPLOY_TRIGGER_MODE:-unknown}"
           echo "Waiting for BLACK CROWN OPS ${EXPECTED_VERSION} at ${PRODUCTION_URL}"
-          rm -f /tmp/bco-health.json /tmp/bco-runtime.json /tmp/bco-live.js /tmp/bco-cinematic.css
+          rm -f /tmp/bco-health.json /tmp/bco-runtime.json /tmp/bco-live.js /tmp/bco-cinematic.css /tmp/bco-operator.js /tmp/bco-operator.css
 
           for attempt in $(seq 1 60); do
             http_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-health.json -w '%{http_code}' "${PRODUCTION_URL}/health/details" || true)"
@@ -133,6 +134,7 @@ jobs:
           features = payload.get('features') or {}
           live = payload.get('live_intelligence') or {}
           voice = payload.get('voice_runtime') or {}
+          operator = payload.get('operator_intelligence') or {}
           release = payload.get('release') or {}
           ok = (
               release.get('version') == os.environ['EXPECTED_VERSION']
@@ -149,6 +151,13 @@ jobs:
               and features.get('voice_input_confidence_gate') is True
               and features.get('voice_duplex_follow_input') is True
               and features.get('voice_high_fidelity') is True
+              and features.get('operator_twin') is True
+              and features.get('adaptive_mission_control') is True
+              and features.get('operator_truth_calibration') is True
+              and features.get('operator_session_lifecycle') is True
+              and operator.get('enabled') is True
+              and operator.get('adaptive_missions') is True
+              and operator.get('unknown_remains_unknown') is True
               and voice.get('input_configured') is True
               and voice.get('transcription_model') == 'gpt-4o-transcribe'
               and voice.get('transcription_fallback_model') == 'gpt-4o-mini-transcribe'
@@ -164,12 +173,18 @@ jobs:
                 runtime_code="$(curl -sS -X POST --connect-timeout 10 --max-time 20 -o /tmp/bco-runtime.json -w '%{http_code}' "${PRODUCTION_URL}/webapp/api/runtime" || true)"
                 live_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-live.js -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.live.js" || true)"
                 css_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-cinematic.css -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.cinematic.css" || true)"
+                operator_js_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-operator.js -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.operator.js" || true)"
+                operator_css_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-operator.css -w '%{http_code}' "${PRODUCTION_URL}/webapp/bco.operator.css" || true)"
+                operator_api_code="$(curl -sS --connect-timeout 10 --max-time 20 -o /tmp/bco-operator-api.json -w '%{http_code}' "${PRODUCTION_URL}/webapp/api/operator-intelligence" || true)"
 
                 if [ "${runtime_code}" = "200" ] && [ "${live_code}" = "200" ] && [ "${css_code}" = "200" ] && \
+                   [ "${operator_js_code}" = "200" ] && [ "${operator_css_code}" = "200" ] && [ "${operator_api_code}" = "401" ] && \
                    grep -q '"v18_overlay":true' /tmp/bco-runtime.json && \
                    grep -q 'Live Intelligence + Cinematic Runtime' /tmp/bco-live.js && \
-                   grep -q 'Cinematic Technical Design System' /tmp/bco-cinematic.css; then
-                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, duplex voice=ON, live intelligence=ON"
+                   grep -q 'Cinematic Technical Design System' /tmp/bco-cinematic.css && \
+                   grep -q 'Operator Twin / Adaptive Mission Intelligence' /tmp/bco-operator.js && \
+                   grep -q 'Operator Twin technical dossier' /tmp/bco-operator.css; then
+                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, duplex voice=ON, live intelligence=ON, operator twin=ON, mission control=ON"
                   cat /tmp/bco-health.json
                   cat /tmp/bco-runtime.json
                   exit 0

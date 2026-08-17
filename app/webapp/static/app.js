@@ -1,4 +1,4 @@
-/* BLACK CROWN OPS — v18 boot coordinator */
+/* BLACK CROWN OPS — v25 boot coordinator (v18 live layer preserved) */
 (() => {
   "use strict";
 
@@ -42,8 +42,6 @@
       window.__BCO_RUNTIME_FLAGS__ = flags;
       return flags;
     } catch (error) {
-      // Fail open to the new layer. The stable base UI has already been loaded,
-      // and bco.live.js contains its own transport fallback.
       const fallback = {
         live_stream: true,
         cinematic_ui: true,
@@ -52,7 +50,7 @@
         runtime_unavailable: true,
       };
       window.__BCO_RUNTIME_FLAGS__ = fallback;
-      console.warn("[BCO v18] runtime capability check unavailable", error);
+      console.warn("[BCO] runtime capability check unavailable", error);
       return fallback;
     } finally {
       window.clearTimeout(timeout);
@@ -77,11 +75,17 @@
         window.__BCO_LIVE_LAYER_LOADED__ = true;
         window.__BCO_V18_READY__ = true;
       }
-      return loaded !== false;
+      return loadScript("/webapp/bco.operator.js", "__BCO_OPERATOR_V25_LOADED__")
+        .catch((error) => {
+          window.__BCO_OPERATOR_V25_LOADED__ = false;
+          console.warn("[BCO v25] Operator Twin surface unavailable; base UI remains active", error);
+          return false;
+        });
     })
+    .then(() => true)
     .catch((error) => {
       window.__BCO_V18_READY__ = false;
-      console.error("[BCO v18] boot coordinator failed", error);
+      console.error("[BCO] boot coordinator failed", error);
       throw error;
     });
 })();

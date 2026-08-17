@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     webapp_live_stream_enabled: bool = _env_on("WEBAPP_LIVE_STREAM_ENABLED")
     webapp_cinematic_ui_enabled: bool = _env_on("WEBAPP_CINEMATIC_UI_ENABLED")
 
+    # Operator Twin / adaptive mission intelligence.
+    operator_intelligence_enabled: bool = _env_on("OPERATOR_INTELLIGENCE_ENABLED")
+    adaptive_mission_control_enabled: bool = _env_on("ADAPTIVE_MISSION_CONTROL_ENABLED")
+
     # Abuse / cost guard.
     usage_guard_enabled: bool = _env_on("USAGE_GUARD_ENABLED")
     usage_guard_max_buckets: int = int(os.getenv("USAGE_GUARD_MAX_BUCKETS", "10000"))
