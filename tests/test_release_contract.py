@@ -73,8 +73,9 @@ def _settings():
 def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkeypatch):
     monkeypatch.setenv("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED", "1")
     monkeypatch.setenv("PREMIUM_DEEP_HISTORY_ENABLED", "1")
-    assert APP_VERSION == "33.0.0"
-    assert RELEASE_CONTRACT == "bco-adaptive-exploration-budget-v33"
+    monkeypatch.setenv("EVIDENCE_FRESHNESS_ENABLED", "1")
+    assert APP_VERSION == "34.0.0"
+    assert RELEASE_CONTRACT == "bco-evidence-freshness-v34"
     snap = readiness_snapshot(
         _settings(),
         ReadyStore(),
@@ -83,7 +84,7 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkey
         entitlement_service=ReadyEntitlements(),
     )
     assert snap["status"] == "ready"
-    assert snap["release"] == {"version": "33.0.0", "contract": "bco-adaptive-exploration-budget-v33"}
+    assert snap["release"] == {"version": "34.0.0", "contract": "bco-evidence-freshness-v34"}
     assert snap["features"]["persistent_memory_configured"] is True
     assert snap["features"]["telegram_aaa_command_console"] is True
     assert snap["features"]["telegram_live_intelligence_drafts"] is True
@@ -110,6 +111,9 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkey
     assert snap["features"]["premium_deep_history_server_authoritative"] is True
     assert snap["features"]["premium_client_authority"] is False
     assert snap["features"]["premium_link_does_not_grant_entitlement"] is True
+    assert snap["features"]["operator_evidence_freshness"] is True
+    assert snap["features"]["operator_stale_evidence_not_false"] is True
+    assert snap["features"]["operator_freshness_no_causal_claims"] is True
     assert snap["operator_intelligence"]["unknown_remains_unknown"] is True
     assert snap["operator_intelligence"]["adaptive_missions"] is True
     assert snap["operator_intelligence"]["context_bridge"] is True
@@ -130,6 +134,13 @@ def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkey
     assert snap["operator_intelligence"]["premium_deep_history_authority"] == "server_bco_premium"
     assert snap["operator_intelligence"]["premium_link_grants_entitlement"] is False
     assert snap["operator_intelligence"]["premium_client_authority"] is False
+    assert snap["operator_intelligence"]["evidence_freshness"] is True
+    assert snap["operator_intelligence"]["evidence_freshness_schema"] == "bco_evidence_freshness_v34"
+    assert snap["operator_intelligence"]["evidence_freshness_authority"] == "server_persisted_evidence_timestamps_only"
+    assert snap["operator_intelligence"]["evidence_freshness_fresh_max_days"] == 7
+    assert snap["operator_intelligence"]["evidence_freshness_aging_max_days"] == 21
+    assert snap["operator_intelligence"]["stale_evidence_is_false"] is False
+    assert snap["operator_intelligence"]["freshness_causal_claims"] is False
     assert snap["live_intelligence"]["final_message_authoritative"] is True
     assert snap["voice_runtime"]["input_configured"] is True
     assert snap["voice_runtime"]["transcription_model"] == "gpt-4o-transcribe"
