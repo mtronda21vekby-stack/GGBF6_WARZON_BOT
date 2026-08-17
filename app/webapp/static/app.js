@@ -31,7 +31,7 @@
     const timeout = window.setTimeout(() => controller.abort(), 3500);
     try {
       const response = await fetch(`/webapp/api/runtime?build=${encodeURIComponent(build)}`, {
-        method: "GET",
+        method: "POST",
         cache: "no-store",
         credentials: "same-origin",
         signal: controller.signal,
