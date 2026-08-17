@@ -17,6 +17,7 @@ on:
       - feature/bco-render-deploy-recovery-v11
       - feature/bco-aaa-abuse-guard-v12
       - feature/bco-live-intelligence-command-center-v18
+      - feature/bco-voice-intelligence-v19
   pull_request:
     branches:
       - main
@@ -130,6 +131,7 @@ jobs:
           recovery = ((payload.get('storage') or {}).get('recovery') or {})
           features = payload.get('features') or {}
           live = payload.get('live_intelligence') or {}
+          voice = payload.get('voice_runtime') or {}
           release = payload.get('release') or {}
           ok = (
               release.get('version') == os.environ['EXPECTED_VERSION']
@@ -142,6 +144,11 @@ jobs:
               and features.get('telegram_live_intelligence_drafts') is True
               and features.get('webapp_live_intelligence_stream') is True
               and features.get('webapp_cinematic_ui') is True
+              and features.get('voice_input') is True
+              and features.get('voice_high_fidelity') is True
+              and voice.get('input_configured') is True
+              and voice.get('transcription_model') == 'gpt-4o-mini-transcribe'
+              and voice.get('opus_bitrate_kbps') >= 64
               and live.get('final_message_authoritative') is True
               and live.get('webapp_transport') == 'ndjson'
           )
@@ -156,7 +163,7 @@ jobs:
                    grep -q '"v18_overlay":true' /tmp/bco-runtime.json && \
                    grep -q 'Live Intelligence + Cinematic Runtime' /tmp/bco-live.js && \
                    grep -q 'Cinematic Technical Design System' /tmp/bco-cinematic.css; then
-                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, live intelligence=ON, cinematic assets=OK"
+                  echo "Production verified: version=${EXPECTED_VERSION}, Supabase=OK, voice intelligence=ON, live intelligence=ON"
                   cat /tmp/bco-health.json
                   cat /tmp/bco-runtime.json
                   exit 0

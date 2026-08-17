@@ -82,6 +82,7 @@ def readiness_snapshot(
             }
 
     voice_enabled = bool(getattr(settings, "voice_enabled", True))
+    voice_input_enabled = bool(getattr(settings, "voice_input_enabled", True))
     voice_provider = str(getattr(settings, "voice_provider", "auto") or "auto").strip().casefold()
     voice_high_fidelity_enabled = bool(getattr(settings, "voice_high_fidelity_enabled", True))
     voice_local_fallback_enabled = bool(getattr(settings, "voice_local_fallback_enabled", True))
@@ -92,14 +93,14 @@ def readiness_snapshot(
         "piper-only",
         "local_only",
     }
-    cloud_tts_configured = (
-        voice_enabled
-        and voice_high_fidelity_enabled
-        and ai_configured
-        and not local_only
-    )
+    cloud_tts_configured = voice_enabled and voice_high_fidelity_enabled and ai_configured and not local_only
+    voice_input_configured = voice_input_enabled and ai_configured
     voice_snapshot = {
         "enabled": voice_enabled,
+        "input_enabled": voice_input_enabled,
+        "input_configured": voice_input_configured,
+        "transcription_model": str(getattr(settings, "voice_transcription_model", "gpt-4o-mini-transcribe") or "")[:64],
+        "input_max_duration_s": int(getattr(settings, "voice_input_max_duration_s", 300) or 300),
         "requested_provider": voice_provider[:32],
         "active_strategy": "cloud_first_local_fallback" if cloud_tts_configured else "local_only",
         "high_fidelity_enabled": voice_high_fidelity_enabled,
@@ -108,7 +109,7 @@ def readiness_snapshot(
         "cloud_model": str(getattr(settings, "voice_openai_model", "gpt-4o-mini-tts") or "")[:64],
         "default_voice": str(getattr(settings, "voice_openai_voice", "cedar") or "")[:32],
         "local_model": str(getattr(settings, "voice_model_name", "ru_RU-denis-medium") or "")[:64],
-        "opus_bitrate_kbps": int(getattr(settings, "voice_opus_bitrate_kbps", 48) or 48),
+        "opus_bitrate_kbps": int(getattr(settings, "voice_opus_bitrate_kbps", 64) or 64),
     }
 
     command_console_enabled = bool(getattr(settings, "telegram_aaa_console_enabled", True))
@@ -130,6 +131,7 @@ def readiness_snapshot(
         "live_knowledge": bool(getattr(settings, "live_knowledge_enabled", True)),
         "vod": bool(getattr(settings, "vod_enabled", True)),
         "voice": voice_enabled,
+        "voice_input": voice_input_configured,
         "voice_high_fidelity": cloud_tts_configured,
         "voice_local_fallback": voice_enabled and voice_local_fallback_enabled,
         "mini_app": True,
