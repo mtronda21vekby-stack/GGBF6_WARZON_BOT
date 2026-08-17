@@ -3,18 +3,25 @@ from __future__ import annotations
 
 import copy
 import logging
+import secrets
 import tempfile
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from app.services.voice.transcription import OpenAITranscriptionBackend, TranscriptionError
+from app.services.voice.transcription import OpenAITranscriptionBackend, TranscriptionError, TranscriptionResult
 
 log = logging.getLogger("bco.voice.ingress")
 
 
 def _message(update: Mapping[str, Any]) -> dict[str, Any] | None:
     raw = update.get("message") or update.get("edited_message")
+    return raw if isinstance(raw, dict) else None
+
+
+def _callback(update: Mapping[str, Any]) -> dict[str, Any] | None:
+    raw = update.get("callback_query")
     return raw if isinstance(raw, dict) else None
 
 
@@ -29,14 +36,21 @@ def _voice_payload(message: Mapping[str, Any]) -> dict[str, Any] | None:
     voice = message.get("voice")
     if isinstance(voice, dict) and voice.get("file_id"):
         return voice
-    # Also accept audio clips recorded/sent as files when Telegram provides a
-    # supported audio mime type. Ordinary documents are intentionally ignored.
     audio = message.get("audio")
     if isinstance(audio, dict) and audio.get("file_id"):
         mime = str(audio.get("mime_type") or "").casefold()
         if not mime or mime.startswith("audio/"):
             return audio
     return None
+
+
+@dataclass(frozen=True)
+class PendingTranscript:
+    text: str
+    confidence: float | None
+    model: str
+    duration_s: int
+    expires_at: float
 
 
 @dataclass
@@ -47,11 +61,122 @@ class TelegramVoiceIngress:
     enabled: bool = True
     max_bytes: int = 12 * 1024 * 1024
     max_duration_s: int = 300
+    confidence_threshold: float = 0.58
+    confirmation_ttl_s: int = 120
+    pending: dict[tuple[int, str], PendingTranscript] = field(default_factory=dict)
+
+    def _purge_pending(self) -> None:
+        now = time.monotonic()
+        if len(self.pending) < 128 and all(item.expires_at > now for item in self.pending.values()):
+            return
+        self.pending = {key: item for key, item in self.pending.items() if item.expires_at > now}
+        if len(self.pending) > 512:
+            ordered = sorted(self.pending.items(), key=lambda pair: pair[1].expires_at, reverse=True)[:512]
+            self.pending = dict(ordered)
+
+    async def _ack(self, callback_id: str, text: str | None = None) -> None:
+        if not callback_id:
+            return
+        answer = getattr(self.tg, "answer_callback_query", None)
+        if not callable(answer):
+            return
+        try:
+            await answer(callback_id, text)
+        except Exception:
+            pass
+
+    def _synthetic_update(
+        self,
+        source: Mapping[str, Any],
+        *,
+        text: str,
+        duration_s: int,
+        confidence: float | None,
+        model: str,
+        confirmed: bool,
+    ) -> dict[str, Any]:
+        transformed = copy.deepcopy(dict(source))
+        callback = _callback(transformed)
+        if callback:
+            callback_message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
+            sender = callback.get("from") if isinstance(callback.get("from"), dict) else {}
+            synthetic: dict[str, Any] = {
+                "message_id": int(callback_message.get("message_id") or 0),
+                "chat": dict(callback_message.get("chat") or {}),
+                "from": dict(sender),
+            }
+            transformed.pop("callback_query", None)
+            transformed["message"] = synthetic
+            key = "message"
+        else:
+            key = "message" if isinstance(transformed.get("message"), dict) else "edited_message"
+            synthetic = dict(transformed.get(key) or {})
+            synthetic.pop("voice", None)
+            synthetic.pop("audio", None)
+            transformed[key] = synthetic
+
+        synthetic["text"] = str(text or "")[:12000]
+        synthetic["_bco_input_mode"] = "voice_confirmed" if confirmed else "voice"
+        synthetic["_bco_voice_duration_s"] = int(duration_s or 0)
+        synthetic["_bco_voice_confidence"] = confidence
+        synthetic["_bco_voice_model"] = str(model or "")[:80]
+        return transformed
+
+    async def _handle_confirmation_callback(self, update: Mapping[str, Any]) -> tuple[dict[str, Any], bool] | None:
+        callback = _callback(update)
+        if not callback:
+            return None
+        data = str(callback.get("data") or "").strip()
+        if not data.startswith("bco:voice:"):
+            return None
+
+        message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
+        chat_id = _chat_id(message)
+        callback_id = str(callback.get("id") or "")
+        if chat_id is None:
+            await self._ack(callback_id)
+            return dict(update), True
+
+        parts = data.split(":", 3)
+        if len(parts) != 4:
+            await self._ack(callback_id)
+            return dict(update), True
+        action, nonce = parts[2], parts[3]
+        self._purge_pending()
+        pending = self.pending.pop((chat_id, nonce), None)
+        if pending is None or pending.expires_at <= time.monotonic():
+            await self._ack(callback_id, "Транскрипция уже истекла")
+            await self.tg.send_message(chat_id, "🎙 Транскрипция истекла. Пришли голосовое ещё раз.")
+            return dict(update), True
+
+        if action == "discard":
+            await self._ack(callback_id, "Повтори голосовое")
+            await self.tg.send_message(chat_id, "🎙 Окей. Повтори голосовое — лучше ближе к микрофону и без сильного фонового шума.")
+            return dict(update), True
+        if action != "accept":
+            await self._ack(callback_id)
+            return dict(update), True
+
+        await self._ack(callback_id, "Использую транскрипцию")
+        transformed = self._synthetic_update(
+            update,
+            text=pending.text,
+            duration_s=pending.duration_s,
+            confidence=pending.confidence,
+            model=pending.model,
+            confirmed=True,
+        )
+        return transformed, True
 
     async def transform(self, update: Mapping[str, Any] | None) -> tuple[dict[str, Any], bool]:
-        """Return `(update, transformed)`; voice becomes a normal text update."""
+        """Normalize Telegram voice/audio into the same text Intelligence Core."""
         if not self.enabled or not isinstance(update, Mapping):
             return dict(update or {}), False
+
+        confirmation = await self._handle_confirmation_callback(update)
+        if confirmation is not None:
+            return confirmation
+
         message = _message(update)
         if not message:
             return dict(update), False
@@ -106,7 +231,17 @@ class TelegramVoiceIngress:
                     max_bytes=byte_limit,
                     timeout_s=60.0,
                 )
-                transcript = await self.transcription.transcribe(source)
+                rich = getattr(self.transcription, "transcribe_result", None)
+                if callable(rich):
+                    result = await rich(source)
+                else:
+                    text = await self.transcription.transcribe(source)
+                    result = TranscriptionResult(
+                        text=str(text or ""),
+                        confidence=None,
+                        model=str(getattr(self.transcription, "model", "unknown")),
+                        language="auto",
+                    )
         except (ValueError, TranscriptionError) as exc:
             log.warning("voice transcription rejected chat_id=%s error=%s", chat_id, type(exc).__name__)
             await self.tg.send_message(
@@ -122,26 +257,62 @@ class TelegramVoiceIngress:
             )
             return dict(update), True
 
-        transcript = " ".join(str(transcript or "").split()).strip()
+        transcript = " ".join(str(result.text or "").split()).strip()
         if len(transcript) < 2:
             await self.tg.send_message(chat_id, "🎙 В голосовом почти не было распознаваемой речи.")
             return dict(update), True
 
-        transformed = copy.deepcopy(dict(update))
-        key = "message" if isinstance(transformed.get("message"), dict) else "edited_message"
-        synthetic = dict(transformed.get(key) or {})
-        synthetic.pop("voice", None)
-        synthetic.pop("audio", None)
-        synthetic["text"] = transcript[:12000]
-        synthetic["_bco_input_mode"] = "voice"
-        synthetic["_bco_voice_duration_s"] = duration
-        transformed[key] = synthetic
+        threshold = max(0.0, min(1.0, float(self.confidence_threshold or 0.0)))
+        confidence = result.confidence
+        if confidence is not None and confidence < threshold:
+            self._purge_pending()
+            nonce = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:10]
+            self.pending[(chat_id, nonce)] = PendingTranscript(
+                text=transcript[:12000],
+                confidence=confidence,
+                model=result.model,
+                duration_s=duration,
+                expires_at=time.monotonic() + max(30, int(self.confirmation_ttl_s or 120)),
+            )
+            percent = result.confidence_percent or 0
+            preview = transcript[:500] + ("…" if len(transcript) > 500 else "")
+            markup = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✓ USE TRANSCRIPT", "callback_data": f"bco:voice:accept:{nonce}", "style": "success"},
+                        {"text": "↻ RETRY", "callback_data": f"bco:voice:discard:{nonce}", "style": "danger"},
+                    ]
+                ]
+            }
+            await self.tg.send_message(
+                chat_id,
+                f"🎙 Не уверен в распознавании ({percent}%).\n\nЯ услышал:\n«{preview}»\n\nПодтверди, прежде чем я использую это в анализе и памяти.",
+                markup,
+            )
+            log.info(
+                "voice transcript needs confirmation chat_id=%s confidence=%.3f chars=%s model=%s",
+                chat_id,
+                confidence,
+                len(transcript),
+                result.model,
+            )
+            return dict(update), True
 
+        transformed = self._synthetic_update(
+            update,
+            text=transcript,
+            duration_s=duration,
+            confidence=confidence,
+            model=result.model,
+            confirmed=False,
+        )
         log.info(
-            "voice transcribed chat_id=%s duration_s=%s chars=%s model=%s",
+            "voice transcribed chat_id=%s duration_s=%s chars=%s confidence=%s model=%s fallback=%s",
             chat_id,
             duration,
             len(transcript),
-            getattr(self.transcription, "model", "unknown"),
+            "unknown" if confidence is None else f"{confidence:.3f}",
+            result.model,
+            bool(result.fallback_used),
         )
         return transformed, True

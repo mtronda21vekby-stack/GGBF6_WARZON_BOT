@@ -36,8 +36,7 @@ class Settings(BaseSettings):
     webapp_live_stream_enabled: bool = _env_on("WEBAPP_LIVE_STREAM_ENABLED")
     webapp_cinematic_ui_enabled: bool = _env_on("WEBAPP_CINEMATIC_UI_ENABLED")
 
-    # Abuse / cost guard. Limits are intentionally generous for legitimate use
-    # but cap burst/flood cost at the actual expensive capability boundaries.
+    # Abuse / cost guard.
     usage_guard_enabled: bool = _env_on("USAGE_GUARD_ENABLED")
     usage_guard_max_buckets: int = int(os.getenv("USAGE_GUARD_MAX_BUCKETS", "10000"))
     ai_rate_limit_1m: int = int(os.getenv("AI_RATE_LIMIT_1M", "12"))
@@ -85,22 +84,27 @@ class Settings(BaseSettings):
     vod_download_timeout_s: float = float(os.getenv("VOD_DOWNLOAD_TIMEOUT_S", "60"))
     vod_vision_model: str = os.getenv("VOD_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini"))
 
-    # Voice input: Telegram voice/audio -> transcription -> the same Intelligence Core.
+    # Duplex voice input: Telegram voice/audio -> confidence-aware STT -> same Intelligence Core.
     voice_input_enabled: bool = _env_on("VOICE_INPUT_ENABLED")
-    voice_transcription_model: str = os.getenv("VOICE_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
+    voice_transcription_model: str = os.getenv("VOICE_TRANSCRIPTION_MODEL", "gpt-4o-transcribe")
+    voice_transcription_fallback_model: str = os.getenv("VOICE_TRANSCRIPTION_FALLBACK_MODEL", "gpt-4o-mini-transcribe")
+    voice_transcription_language: str = os.getenv("VOICE_TRANSCRIPTION_LANGUAGE", "ru")
     voice_transcription_timeout_s: float = float(os.getenv("VOICE_TRANSCRIPTION_TIMEOUT_S", "45"))
+    voice_transcription_confidence_threshold: float = float(os.getenv("VOICE_TRANSCRIPTION_CONFIDENCE_THRESHOLD", "0.58"))
     voice_input_max_bytes: int = int(os.getenv("VOICE_INPUT_MAX_BYTES", str(12 * 1024 * 1024)))
     voice_input_max_duration_s: int = int(os.getenv("VOICE_INPUT_MAX_DURATION_S", "300"))
+    voice_transcript_confirmation_ttl_s: int = int(os.getenv("VOICE_TRANSCRIPT_CONFIRMATION_TTL_S", "120"))
 
     # Hybrid voice output: steerable cloud TTS first, local Piper fallback always ready.
     voice_enabled: bool = _env_on("VOICE_ENABLED")
+    voice_follow_input_enabled: bool = _env_on("VOICE_FOLLOW_INPUT_ENABLED")
     voice_provider: str = os.getenv("VOICE_PROVIDER", "auto")
     voice_high_fidelity_enabled: bool = _env_on("VOICE_HIGH_FIDELITY_ENABLED")
     voice_local_fallback_enabled: bool = _env_on("VOICE_LOCAL_FALLBACK_ENABLED")
     voice_model_name: str = os.getenv("VOICE_MODEL_NAME", "ru_RU-denis-medium")
     voice_model_dir: str = os.getenv("VOICE_MODEL_DIR", ".bco_voice")
     voice_model_timeout_s: float = float(os.getenv("VOICE_MODEL_TIMEOUT_S", "120"))
-    voice_max_chars: int = int(os.getenv("VOICE_MAX_CHARS", "2000"))
+    voice_max_chars: int = int(os.getenv("VOICE_MAX_CHARS", "2200"))
     voice_opus_bitrate_kbps: int = int(os.getenv("VOICE_OPUS_BITRATE_KBPS", "64"))
     voice_openai_model: str = os.getenv("VOICE_OPENAI_MODEL", "gpt-4o-mini-tts")
     voice_openai_voice: str = os.getenv("VOICE_OPENAI_VOICE", "cedar")

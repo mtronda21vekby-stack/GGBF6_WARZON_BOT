@@ -24,7 +24,7 @@ _OPEN_BUTTONS = {"🎙 Голос: Тиммейт/Коуч", "🔊 Озвучк�
 _SPEAK_BUTTONS = {"🔊 Озвучить ответ", "/speak"}
 _TEST_BUTTONS = {"🧪 Тест голоса", "/voice_test"}
 _TEST_LINE = (
-    "Связь установлена. Я вижу твой профиль, помню ошибки и готов дать короткий тактический разбор."
+    "Связь установлена. Голосовой канал работает. Я понимаю твою речь, сохраняю тактический смысл и готов отвечать как тиммейт или коуч."
 )
 
 
@@ -112,20 +112,26 @@ class VoiceTelegramController:
     async def _send_panel(self, chat_id: int, prefix: str = "") -> None:
         profile = self._profile(chat_id)
         mode = normalize_tts_mode(profile.get("tts_mode"))
-        state = {
-            TTSMode.OFF: "OFF — только текст",
-            TTSMode.AUTO: "AUTO — voice после каждого нового AI-ответа",
-            TTSMode.ON_DEMAND: "ON-DEMAND — voice только по команде",
-        }[mode]
         details = self._voice_details(profile)
+        explicit_mode = bool(str(profile.get("tts_mode") or "").strip())
+        follow_input = bool(getattr(self.voice, "follow_input_active", False))
+        if not explicit_mode and follow_input:
+            state = "SMART DUPLEX — voice→voice, text→text"
+        else:
+            state = {
+                TTSMode.OFF: "OFF — только текст",
+                TTSMode.AUTO: "AUTO — voice после каждого нового AI-ответа",
+                TTSMode.ON_DEMAND: "ON-DEMAND — voice только по команде",
+            }[mode]
         fallback = " · LOCAL FALLBACK READY" if details.get("local_fallback") else ""
         body = (prefix + "\n\n" if prefix else "") + (
             "🔊 BLACK CROWN VOICE\n"
             f"Режим: {state}\n"
             f"Движок: {str(details.get('provider') or 'VOICE').upper()}{fallback}\n"
             f"Голос: {str(details.get('voice') or 'CEDAR').upper()}\n\n"
+            "SMART DUPLEX: если ты говоришь голосом, я отвечаю текстом и голосом. Явный Voice OFF всегда отключает это поведение.\n"
             "CEDAR — собранный тактический тембр. MARIN — более мягкая и живая подача.\n"
-            "Текст всегда остаётся основным ответом. Голос синтетический и сгенерирован ИИ."
+            "Голос синтетический и сгенерирован ИИ."
         )
         await self.tg.send_message(chat_id, body, kb_voice_panel())
 
@@ -166,10 +172,11 @@ class VoiceTelegramController:
                     caption=caption,
                 )
                 log.info(
-                    "voice delivered chat_id=%s provider=%s voice=%s",
+                    "voice delivered chat_id=%s provider=%s voice=%s chars=%s",
                     chat_id,
                     str(getattr(artifact, "provider", "unknown"))[:24],
                     str(getattr(artifact, "voice_name", ""))[:32],
+                    len(str(getattr(artifact, "spoken_text", "") or "")),
                 )
             finally:
                 artifact.cleanup()
@@ -217,7 +224,7 @@ class VoiceTelegramController:
         if text in _SPEAK_BUTTONS:
             profile = self._profile(chat_id)
             mode = normalize_tts_mode(profile.get("tts_mode"))
-            if mode == TTSMode.OFF:
+            if mode == TTSMode.OFF and str(profile.get("tts_mode") or "").strip():
                 await self._send_panel(chat_id, "Сначала выбери AUTO или ON-DEMAND.")
                 return True
             last = _last_assistant(self._history(chat_id))
@@ -229,11 +236,20 @@ class VoiceTelegramController:
 
         return False
 
-    async def maybe_auto(self, chat_id: int | None, before_signature: str) -> bool:
+    async def maybe_auto(self, chat_id: int | None, before_signature: str, *, input_mode: str = "text") -> bool:
         if chat_id is None:
             return False
         profile = self._profile(chat_id)
-        if not self.voice.should_auto(profile):
+        should_auto = getattr(self.voice, "should_auto", None)
+        if not callable(should_auto):
+            return False
+        try:
+            enabled = bool(should_auto(profile, input_mode=input_mode))
+        except TypeError:
+            # Backward-compatible with older adapters/tests that implement the
+            # pre-v20 `should_auto(profile)` signature.
+            enabled = bool(should_auto(profile))
+        if not enabled:
             return False
         history = self._history(chat_id)
         after = _signature(history)

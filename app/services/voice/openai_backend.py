@@ -37,7 +37,30 @@ def _profile_value(profile: Mapping[str, Any], *keys: str, fallback: str = "") -
     return fallback
 
 
-def voice_instructions(profile: Mapping[str, Any] | None) -> str:
+def _content_direction(text: str) -> str:
+    clean = " ".join(str(text or "").split()).strip()
+    if not clean:
+        return ""
+    clauses = clean.count(".") + clean.count("!") + clean.count("?") + clean.count(";")
+    if len(clean) <= 220 and clauses <= 3:
+        return (
+            "Treat this as a short tactical callout: use one compact breath pattern, immediate intent, "
+            "minimal setup, and a decisive final phrase."
+        )
+    if len(clean) >= 900:
+        return (
+            "Treat this as a longer coaching debrief: group ideas into audible paragraphs, use a small pause between cause, "
+            "correction and next action, and avoid rushing the final third."
+        )
+    if any(marker in clean for marker in ("Перв", "Втор", "1.", "2.", "•")):
+        return (
+            "The answer contains ordered priorities. Make each priority audibly distinct with a short pause, "
+            "but do not sound like you are reading a numbered document."
+        )
+    return "Use a natural conversational arc: context, key point, then a clean actionable ending."
+
+
+def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str:
     data = dict(profile or {})
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
@@ -48,10 +71,12 @@ def voice_instructions(profile: Mapping[str, Any] | None) -> str:
         "Sound like a premium competitive-FPS operator, not a generic assistant.",
         "Use natural breath groups, micro-pauses, clean consonants and human conversational prosody.",
         "Pronounce English gaming terms confidently inside Russian speech without exaggerated foreign accent.",
-        "Preserve weapon names, map names, numbers and tactical abbreviations exactly in meaning.",
+        "Preserve weapon names, map names, negations, numbers and tactical abbreviations exactly in meaning.",
         "Never sound robotic, theatrical, like an advertisement, a movie trailer, or like a real named person.",
         "Do not read decorative symbols, markdown, URLs or UI labels aloud.",
-        "Avoid sing-song intonation. End tactical instructions decisively but naturally.",
+        "Avoid sing-song intonation and avoid the stereotypical assistant cadence where every sentence rises similarly.",
+        "Use emphasis sparingly: normally one strongest tactical phrase per paragraph.",
+        "End tactical instructions decisively but naturally, without adding filler or a sign-off.",
     ]
 
     if persona == "COACH":
@@ -83,6 +108,9 @@ def voice_instructions(profile: Mapping[str, Any] | None) -> str:
     elif emotion in {"HYPE", "EXCITED"}:
         instructions.append("Allow a little more energy while keeping diction controlled and useful.")
 
+    content = _content_direction(text)
+    if content:
+        instructions.append(content)
     return " ".join(instructions)
 
 
@@ -92,8 +120,6 @@ def voice_speed(profile: Mapping[str, Any] | None) -> float:
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
     emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
 
-    # Keep v17's proven baseline so existing users do not get a surprising
-    # cadence shift; v19 layers emotion/brain adaptation on top of it.
     speed = 0.98 if persona == "COACH" else 1.04
     if brain == "DEMON":
         speed += 0.01
@@ -146,7 +172,7 @@ class OpenAITTSBackend:
             "model": self.model,
             "voice": self.voice_for(profile),
             "input": str(text or "")[:4096],
-            "instructions": voice_instructions(profile)[:4096],
+            "instructions": voice_instructions(profile, text)[:4096],
             "response_format": "wav",
             "speed": voice_speed(profile),
         }
@@ -154,7 +180,7 @@ class OpenAITTSBackend:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/voice-v19",
+            "User-Agent": "BLACK-CROWN-OPS/duplex-voice-v20",
         }
         output.parent.mkdir(parents=True, exist_ok=True)
         part = output.with_suffix(output.suffix + ".part")
