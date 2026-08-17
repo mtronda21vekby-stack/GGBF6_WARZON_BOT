@@ -115,6 +115,8 @@ def readiness_snapshot(
     telegram_live_drafts = bool(getattr(settings, "telegram_live_drafts_enabled", True))
     webapp_live_stream = bool(getattr(settings, "webapp_live_stream_enabled", True))
     webapp_cinematic = bool(getattr(settings, "webapp_cinematic_ui_enabled", True))
+    mission_enabled = bool(getattr(settings, "adaptive_mission_control_enabled", True))
+
     live_intelligence_snapshot = {
         "telegram_drafts": telegram_live_drafts,
         "telegram_transport": "rich_message_draft_with_text_fallback",
@@ -122,6 +124,14 @@ def readiness_snapshot(
         "webapp_transport": "ndjson",
         "cinematic_ui": webapp_cinematic,
         "final_message_authoritative": True,
+    }
+    mission_snapshot = {
+        "enabled": mission_enabled,
+        "engine": "deterministic_evidence_loop",
+        "identity_boundary": "verified_telegram_only",
+        "trusted_mutations_only": True,
+        "stale_state_protection": True,
+        "outcomes": ["clean", "mixed", "failed", "reported"],
     }
 
     features = {
@@ -134,6 +144,7 @@ def readiness_snapshot(
         "voice_local_fallback": voice_enabled and voice_local_fallback_enabled,
         "mini_app": True,
         "command_center": True,
+        "adaptive_mission_control": mission_enabled,
         "telegram_aaa_command_console": command_console_enabled,
         "telegram_inline_navigation": command_console_enabled,
         "telegram_rich_messages": command_console_enabled,
@@ -167,6 +178,7 @@ def readiness_snapshot(
         },
         "voice_runtime": voice_snapshot,
         "live_intelligence": live_intelligence_snapshot,
+        "mission_control": mission_snapshot,
         "premium_link": entitlement_snapshot,
         "features": features,
         "abuse_guard": {
