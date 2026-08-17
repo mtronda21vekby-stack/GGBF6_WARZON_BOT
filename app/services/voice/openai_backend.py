@@ -53,36 +53,51 @@ def voice_instructions(profile: Mapping[str, Any] | None) -> str:
     data = dict(profile or {})
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
+    emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
 
     instructions = [
         "Speak in fluent, natural Russian with a neutral native Russian accent.",
-        "Use calm confidence, clean diction, natural breathing and human conversational prosody.",
-        "Pronounce English gaming terms clearly inside Russian speech.",
-        "Never sound robotic, theatrical, like an advertisement, or like a real named person.",
-        "Use short purposeful pauses between tactical points and do not read decorative symbols aloud.",
+        "Sound like a premium competitive-FPS operator, not a generic assistant.",
+        "Use natural breath groups, micro-pauses, clean consonants and human conversational prosody.",
+        "Pronounce English gaming terms confidently inside Russian speech without exaggerated foreign accent.",
+        "Preserve weapon names, map names, numbers and tactical abbreviations exactly in meaning.",
+        "Never sound robotic, theatrical, like an advertisement, a movie trailer, or a real named person.",
+        "Do not read decorative symbols, markdown, URLs or UI labels aloud.",
+        "Avoid sing-song intonation. End tactical instructions decisively but naturally.",
     ]
 
     if persona == "COACH":
         instructions.extend(
             [
-                "Sound like an experienced analytical esports coach.",
-                "Use a measured pace, warm authority and slightly stronger emphasis on causes and next actions.",
+                "Use the manner of an elite esports coach reviewing a player one-on-one.",
+                "Pace slightly slower, with calm authority and deliberate pauses before causes, corrections and metrics.",
+                "Use warmer delivery for encouragement, but keep criticism precise and unemotional.",
             ]
         )
     else:
         instructions.extend(
             [
-                "Sound like a trusted squad teammate speaking over clear voice chat.",
-                "Keep the pace slightly brisk, direct and concise without shouting or fake radio distortion.",
+                "Use the manner of a trusted high-level squad teammate on clean comms.",
+                "Keep the pace brisk and low-friction, with short pauses and fast tactical emphasis.",
+                "Sound close and direct, but never imitate radio distortion or military roleplay.",
             ]
         )
 
     if brain == "DEMON":
         instructions.append(
-            "Add restrained intensity and decisiveness, while staying controlled and easy to understand."
+            "Add restrained intensity: tighter timing, firmer sentence endings and stronger emphasis on the single highest-value action."
         )
     elif brain == "PRO":
-        instructions.append("Use precise emphasis and a focused professional tone.")
+        instructions.append("Use precise professional emphasis and slightly denser tactical cadence.")
+    else:
+        instructions.append("Keep the delivery relaxed and easy to process on first listen.")
+
+    if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
+        instructions.append(
+            "The player may be overloaded or tilted. Lower emotional intensity, slow slightly, and prioritize clarity over energy."
+        )
+    elif emotion in {"HYPE", "EXCITED"}:
+        instructions.append("Allow a little more energy while keeping diction controlled and useful.")
 
     return " ".join(instructions)
 
@@ -91,18 +106,19 @@ def voice_speed(profile: Mapping[str, Any] | None) -> float:
     data = dict(profile or {})
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
-    speed = 0.98 if persona == "COACH" else 1.04
+    emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
+    speed = 0.96 if persona == "COACH" else 1.03
     if brain == "DEMON":
-        speed += 0.01
-    return max(0.85, min(speed, 1.15))
+        speed += 0.015
+    elif brain == "NORMAL":
+        speed -= 0.01
+    if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
+        speed -= 0.025
+    return max(0.88, min(speed, 1.10))
 
 
 class OpenAITTSBackend:
-    """Steerable high-fidelity speech backend using OpenAI's Audio API.
-
-    The backend requests WAV so the same mastering/Opus pipeline is applied to
-    cloud and local voices before Telegram delivery.
-    """
+    """Steerable high-fidelity speech backend using OpenAI's Audio API."""
 
     def __init__(
         self,
@@ -129,7 +145,14 @@ class OpenAITTSBackend:
         return bool(self._api_key and self.model)
 
     def voice_for(self, profile: Mapping[str, Any] | None) -> str:
-        return normalize_tts_voice((profile or {}).get("tts_voice"), self.default_voice)
+        data = dict(profile or {})
+        explicit = str(data.get("tts_voice") or "").strip()
+        if explicit:
+            return normalize_tts_voice(explicit, self.default_voice)
+        persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
+        # Automatic timbre pairing gives each persona a coherent identity while
+        # still allowing a user-selected voice to override it.
+        return "marin" if persona == "COACH" else self.default_voice
 
     async def close(self) -> None:
         if self._owns_client:
@@ -157,7 +180,7 @@ class OpenAITTSBackend:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/voice-v17",
+            "User-Agent": "BLACK-CROWN-OPS/voice-v19",
         }
 
         output.parent.mkdir(parents=True, exist_ok=True)
