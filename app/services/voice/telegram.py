@@ -17,6 +17,11 @@ _MODE_BUTTONS = {
     "🎧 Voice ON-DEMAND": TTSMode.ON_DEMAND,
 }
 _VOICE_BUTTONS = {
+    "🎙 MARIN · SOFT": "marin",
+    "🎙 CORAL · WARM": "coral",
+    "🎙 SHIMMER · LIGHT": "shimmer",
+    "🎙 CEDAR · TACTICAL": "cedar",
+    # Backward compatibility for cached v22 keyboards.
     "🎙 CEDAR": "cedar",
     "🎙 MARIN": "marin",
 }
@@ -24,7 +29,7 @@ _OPEN_BUTTONS = {"🎙 Голос: Тиммейт/Коуч", "🔊 Озвучк�
 _SPEAK_BUTTONS = {"🔊 Озвучить ответ", "/speak"}
 _TEST_BUTTONS = {"🧪 Тест голоса", "/voice_test"}
 _TEST_LINE = (
-    "Связь установлена. Голосовой канал работает. Я понимаю твою речь, сохраняю тактический смысл и готов отвечать как тиммейт или коуч."
+    "Слышу тебя нормально. Давай без лишнего пафоса: скажи, где именно развалился файт, и я разберу решение по шагам."
 )
 
 
@@ -105,8 +110,9 @@ class VoiceTelegramController:
                 pass
         return {
             "provider": "SYNTHETIC VOICE",
-            "voice": str(profile.get("tts_voice") or "CEDAR").upper(),
+            "voice": str(profile.get("tts_voice") or "MARIN").upper(),
             "local_fallback": False,
+            "mastering": "NATURAL",
         }
 
     async def _send_panel(self, chat_id: int, prefix: str = "") -> None:
@@ -123,16 +129,20 @@ class VoiceTelegramController:
                 TTSMode.AUTO: "AUTO — voice после каждого нового AI-ответа",
                 TTSMode.ON_DEMAND: "ON-DEMAND — voice только по команде",
             }[mode]
-        fallback = " · LOCAL FALLBACK READY" if details.get("local_fallback") else ""
+        fallback = " · PIPER FALLBACK" if details.get("local_fallback") else ""
         body = (prefix + "\n\n" if prefix else "") + (
-            "🔊 BLACK CROWN VOICE\n"
+            "🔊 BLACK CROWN VOICE // NATURAL v23\n"
             f"Режим: {state}\n"
             f"Движок: {str(details.get('provider') or 'VOICE').upper()}{fallback}\n"
-            f"Голос: {str(details.get('voice') or 'CEDAR').upper()}\n\n"
-            "SMART DUPLEX: отправляешь voice — я распознаю речь, прогоняю её через тот же Intelligence Core и отвечаю текстом + живым voice.\n"
-            "Для voice→voice используется более разговорная подача; полный ответ остаётся в тексте.\n"
-            "CEDAR — собранный тактический тембр. MARIN — более мягкая и живая подача.\n"
-            "Голос синтетический и сгенерирован ИИ."
+            f"Голос: {str(details.get('voice') or 'MARIN').upper()}\n"
+            f"Обработка: {str(details.get('mastering') or 'NATURAL').upper()}\n\n"
+            "🎤 Входящие голосовые: ПОНИМАЮ. Voice note распознаётся через STT и идёт в тот же Intelligence Core, что и текст.\n"
+            "🔁 Если ты говоришь голосом и не зафиксировал другой режим, SMART DUPLEX отвечает голосом + текстом.\n\n"
+            "MARIN · SOFT — основной мягкий профиль, по восприятию более женственная подача.\n"
+            "CORAL · WARM — тёплый и спокойный альтернативный профиль.\n"
+            "SHIMMER · LIGHT — более лёгкая и светлая подача.\n"
+            "CEDAR · TACTICAL — более низкий и собранный профиль.\n\n"
+            "Все варианты — синтетические AI-голоса; это не имитация реального человека."
         )
         await self.tg.send_message(chat_id, body, kb_voice_panel())
 
@@ -174,10 +184,11 @@ class VoiceTelegramController:
                     caption=caption,
                 )
                 log.info(
-                    "voice delivered chat_id=%s provider=%s voice=%s chars=%s duplex=%s",
+                    "voice delivered chat_id=%s provider=%s voice=%s mastering=%s chars=%s duplex=%s",
                     chat_id,
                     str(getattr(artifact, "provider", "unknown"))[:24],
                     str(getattr(artifact, "voice_name", ""))[:32],
+                    str(getattr(artifact, "mastering", ""))[:32],
                     len(str(getattr(artifact, "spoken_text", "") or "")),
                     profile["_bco_voice_reply"],
                 )
