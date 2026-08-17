@@ -141,7 +141,7 @@ def create_app() -> FastAPI:
         from app.webapp.command_center_router import bind_runtime as command_center_bind_runtime
         from app.webapp.command_center_router import router as command_center_router
         app.include_router(command_center_router)
-        command_center_bind_runtime(store=store, profiles=profiles)
+        command_center_bind_runtime(store=store, profiles=profiles, settings=settings)
         log.info("Command Center runtime bind: OK")
     except Exception as exc:
         log.exception("Command Center runtime bind FAILED: %s", type(exc).__name__)
@@ -229,9 +229,6 @@ def create_app() -> FastAPI:
 
         update_id = raw.get("update_id")
         if update_id is not None and not replay_guard.accept(update_id):
-            # Telegram retries must receive 200 or the platform will keep
-            # redelivering the same update. Duplicate work is intentionally
-            # skipped before any AI/VOD/TTS boundary.
             return JSONResponse({"ok": True, "duplicate": True})
 
         upd = Update.parse(raw)
@@ -242,9 +239,6 @@ def create_app() -> FastAPI:
         except Exception as exc:
             log.exception("AAA command console pre-handler crashed: %s", type(exc).__name__)
 
-        # Inline navigation converted from legacy reply keyboards still uses
-        # the existing deterministic handlers. Acknowledge it immediately so
-        # Telegram removes the client-side progress spinner before routing.
         try:
             callback = upd.get("callback_query") if isinstance(upd, dict) else None
             if isinstance(callback, dict):
