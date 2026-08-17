@@ -86,6 +86,7 @@ def readiness_snapshot(
     voice_provider = str(getattr(settings, "voice_provider", "auto") or "auto").strip().casefold()
     voice_high_fidelity_enabled = bool(getattr(settings, "voice_high_fidelity_enabled", True))
     voice_local_fallback_enabled = bool(getattr(settings, "voice_local_fallback_enabled", True))
+    voice_follow_input = bool(getattr(settings, "voice_follow_input_enabled", True))
     local_only = voice_provider in {
         "local",
         "offline",
@@ -99,8 +100,17 @@ def readiness_snapshot(
         "enabled": voice_enabled,
         "input_enabled": voice_input_enabled,
         "input_configured": voice_input_configured,
-        "transcription_model": str(getattr(settings, "voice_transcription_model", "gpt-4o-mini-transcribe") or "")[:64],
+        "transcription_model": str(getattr(settings, "voice_transcription_model", "gpt-4o-transcribe") or "")[:64],
+        "transcription_fallback_model": str(
+            getattr(settings, "voice_transcription_fallback_model", "gpt-4o-mini-transcribe") or ""
+        )[:64],
+        "transcription_language": str(getattr(settings, "voice_transcription_language", "ru") or "")[:8],
+        "transcription_confidence_threshold": max(
+            0.0,
+            min(1.0, float(getattr(settings, "voice_transcription_confidence_threshold", 0.58) or 0.58)),
+        ),
         "input_max_duration_s": int(getattr(settings, "voice_input_max_duration_s", 300) or 300),
+        "follow_input_enabled": voice_follow_input,
         "requested_provider": voice_provider[:32],
         "active_strategy": "cloud_first_local_fallback" if cloud_tts_configured else "local_only",
         "high_fidelity_enabled": voice_high_fidelity_enabled,
@@ -132,6 +142,8 @@ def readiness_snapshot(
         "vod": bool(getattr(settings, "vod_enabled", True)),
         "voice": voice_enabled,
         "voice_input": voice_input_configured,
+        "voice_input_confidence_gate": voice_input_configured,
+        "voice_duplex_follow_input": voice_enabled and voice_follow_input,
         "voice_high_fidelity": cloud_tts_configured,
         "voice_local_fallback": voice_enabled and voice_local_fallback_enabled,
         "mini_app": True,
