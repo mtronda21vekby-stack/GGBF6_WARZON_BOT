@@ -21,8 +21,9 @@ class OperatorContextProjector:
     """Project the full Operator Twin into a bounded prompt-safe context.
 
     Internal evidence weights and scoring mechanics never cross this boundary.
-    v28 exposes only bounded longitudinal interpretation with an explicit
-    association-not-causation contract and contradiction telemetry.
+    v36 additionally exposes only the public mission-stage contract. Stage
+    counters remain bounded, transitions stay explicit-outcome-only, and the
+    training stage is never promoted into a player trait or causal claim.
     """
 
     max_claims: int = 8
@@ -110,6 +111,23 @@ class OperatorContextProjector:
             "interpretation": self._text(raw.get("interpretation"), 500),
         }
 
+    def _orchestrator(self, raw: Mapping[str, Any] | None) -> dict[str, Any]:
+        if not isinstance(raw, Mapping):
+            return {}
+        return {
+            "schema": self._text(raw.get("schema"), 64) or "bco_mission_orchestrator_v36",
+            "stage": self._text(raw.get("stage"), 32) or "CALIBRATION",
+            "stage_label": self._text(raw.get("stage_label"), 80),
+            "stage_success_condition": self._text(raw.get("stage_success_condition"), 500),
+            "next_stage_if_passed": self._text(raw.get("next_stage_if_passed"), 32),
+            "recalibration_required": bool(raw.get("recalibration_required", False)),
+            "current_evaluated_cycles": max(0, min(99, int(raw.get("current_evaluated_cycles") or 0))),
+            "transition_authority": "explicit_operator_report_only",
+            "vod_transition_authority": False,
+            "reported_without_verdict_advances_stage": False,
+            "stage_is_training_state_not_player_fact": True,
+        }
+
     def project(self, snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         data = dict(snapshot or {})
         operator = data.get("operator") if isinstance(data.get("operator"), Mapping) else {}
@@ -140,17 +158,25 @@ class OperatorContextProjector:
         claims = claims[: max(1, min(12, int(self.max_claims or 8)))]
 
         mission_raw = data.get("mission") if isinstance(data.get("mission"), Mapping) else {}
+        orchestrator = self._orchestrator(
+            mission_raw.get("orchestrator") if isinstance(mission_raw.get("orchestrator"), Mapping) else None
+        )
         mission = {
             "id": self._text(mission_raw.get("id"), 64),
             "status": self._text(mission_raw.get("status"), 24),
             "focus": self._text(mission_raw.get("focus"), 40),
             "title": self._text(mission_raw.get("title"), 140),
-            "objective": self._text(mission_raw.get("objective"), 500),
-            "success_condition": self._text(mission_raw.get("success_condition"), 500),
+            "objective": self._text(mission_raw.get("objective"), 700),
+            "success_condition": self._text(mission_raw.get("success_condition"), 700),
             "confidence": self._text(mission_raw.get("confidence"), 20),
             "calibration": bool(mission_raw.get("calibration", False)),
+            "training_stage": self._text(mission_raw.get("training_stage"), 32),
+            "stage_label": self._text(mission_raw.get("stage_label"), 80),
+            "stage_success_condition": self._text(mission_raw.get("stage_success_condition"), 500),
         }
         mission = {key: value for key, value in mission.items() if value not in ("", None, False)}
+        if orchestrator:
+            mission["orchestrator"] = orchestrator
 
         session_raw = data.get("session") if isinstance(data.get("session"), Mapping) else {}
         review_raw = session_raw.get("last_review") if isinstance(session_raw.get("last_review"), Mapping) else {}
@@ -178,7 +204,7 @@ class OperatorContextProjector:
 
         return {
             "schema": "bco_operator_context_v28",
-            "truth_contract": "never_promote_inference; unknown_remains_unknown; mission_evidence_does_not_complete; association_not_causation",
+            "truth_contract": "never_promote_inference; unknown_remains_unknown; mission_evidence_does_not_complete; association_not_causation; mission_stage_explicit_only; vod_cannot_advance_stage",
             "state": {
                 "readiness": self._text(operator.get("readiness"), 32) or "UNKNOWN",
                 "risk": self._text(operator.get("risk"), 32) or "UNKNOWN",
@@ -194,6 +220,7 @@ class OperatorContextProjector:
                 "phase": self._text(session_raw.get("phase"), 40) or "PRE_SESSION",
                 "last_review": last_review,
                 "mission_evidence": mission_evidence,
+                "orchestrator_stage": self._text(session_raw.get("orchestrator_stage"), 32),
             },
         }
 
