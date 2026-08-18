@@ -30,16 +30,10 @@ def _interval_s() -> int:
 
 @dataclass
 class FreeCrownIntelRuntime:
-    """Autonomous official-source cache warmer with zero new paid services.
-
-    The same OfficialPatchKnowledgeProvider is used by user requests and by the
-    background refresh thread. Sources remain allowlisted in live_official.py;
-    failures are fail-open for the process and fail-closed for currentness.
-    """
-
     provider: OfficialPatchKnowledgeProvider
     interval_s: int = 6 * 60 * 60
     enabled: bool = True
+    ledger: Any = None
 
     def __post_init__(self) -> None:
         self.interval_s = max(900, min(int(self.interval_s), 24 * 60 * 60))
@@ -49,16 +43,17 @@ class FreeCrownIntelRuntime:
         self.last_refresh_epoch = 0.0
         self.last_success_count = 0
         self.last_error_count = 0
+        self.last_change_count = 0
+
+    def bind_ledger(self, ledger: Any) -> None:
+        if ledger is not None:
+            self.ledger = ledger
 
     def start(self) -> None:
         if not self.enabled or self._started:
             return
         self._started = True
-        self._thread = threading.Thread(
-            target=self._loop,
-            name="bco-crown-intel-refresh",
-            daemon=True,
-        )
+        self._thread = threading.Thread(target=self._loop, name="bco-crown-intel-refresh", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -67,6 +62,7 @@ class FreeCrownIntelRuntime:
     def refresh_once(self) -> dict[str, Any]:
         success = 0
         errors = 0
+        changed = 0
         games: dict[str, str] = {}
         loader = getattr(self.provider, "_load_document", None)
         if not callable(loader):
@@ -75,6 +71,12 @@ class FreeCrownIntelRuntime:
         for game in _GAMES:
             try:
                 document = loader(game)
+                if self.ledger is not None:
+                    try:
+                        result = self.ledger.record_document(document)
+                        changed += 1 if result.get("changed") else 0
+                    except Exception as exc:
+                        log.warning("CROWN INTEL ledger write failed game=%s error=%s", game, type(exc).__name__)
                 success += 1
                 games[game] = str(getattr(document, "published", "") or "verified")
             except Exception as exc:
@@ -85,23 +87,25 @@ class FreeCrownIntelRuntime:
         self.last_refresh_epoch = time.time()
         self.last_success_count = success
         self.last_error_count = errors
-        log.info("CROWN INTEL refresh complete success=%d errors=%d", success, errors)
-        return {"ok": success > 0, "success": success, "errors": errors, "games": games}
+        self.last_change_count = changed
+        log.info("CROWN INTEL refresh complete success=%d errors=%d changed=%d", success, errors, changed)
+        return {"ok": success > 0, "success": success, "errors": errors, "changed": changed, "games": games}
 
     def snapshot(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
             "zero_extra_paid_api": True,
+            "ledger_enabled": self.ledger is not None,
             "sources": ["callofduty.com", "ea.com"],
             "games": list(_GAMES),
             "refresh_interval_s": self.interval_s,
             "last_refresh_epoch": self.last_refresh_epoch,
             "last_success_count": self.last_success_count,
             "last_error_count": self.last_error_count,
+            "last_change_count": self.last_change_count,
         }
 
     def _loop(self) -> None:
-        # Let application startup finish before the first network warm-up.
         if self._stop.wait(2.0):
             return
         while not self._stop.is_set():
@@ -113,8 +117,7 @@ class FreeCrownIntelRuntime:
                 break
 
 
-def get_free_official_provider(*, ttl_s: int = 900, timeout_s: float = 6.0) -> OfficialPatchKnowledgeProvider:
-    """Return the process-wide provider used by both requests and autonomous refresh."""
+def get_free_official_provider(*, ttl_s: int = 900, timeout_s: float = 6.0, ledger: Any = None) -> OfficialPatchKnowledgeProvider:
     global _SINGLETON
     with _SINGLETON_LOCK:
         if _SINGLETON is None:
@@ -123,9 +126,16 @@ def get_free_official_provider(*, ttl_s: int = 900, timeout_s: float = 6.0) -> O
                 provider=provider,
                 interval_s=_interval_s(),
                 enabled=_env_on("CROWN_INTEL_AUTONOMOUS_ENABLED", "1"),
+                ledger=ledger,
             )
             _SINGLETON.start()
+        elif ledger is not None:
+            _SINGLETON.bind_ledger(ledger)
         return _SINGLETON.provider
+
+
+def get_crown_intel_runtime() -> FreeCrownIntelRuntime | None:
+    return _SINGLETON
 
 
 def crown_intel_runtime_snapshot() -> dict[str, Any]:

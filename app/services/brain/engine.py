@@ -10,10 +10,13 @@ from typing import Any, Mapping, Optional, Tuple
 
 from app.observability.quality import quality_telemetry
 from app.services.brain.ai_hook import AIHook
+from app.services.brain.crown_intel_ledger import build_crown_intel_ledger
 from app.services.brain.crown_intel_runtime import get_free_official_provider
 from app.services.brain.intents import classify_intent
 from app.services.brain.knowledge_context import (
     CompositeKnowledgeProvider,
+    KnowledgeConfidence,
+    KnowledgeFact,
     KnowledgeProvider,
     KnowledgeRequest,
     StaticKnowledgeProvider,
@@ -26,6 +29,14 @@ log = logging.getLogger("bco.intelligence")
 PartialCallback = Callable[[str, dict[str, Any]], None]
 
 
+def _game_key(profile: Mapping[str, Any]) -> str | None:
+    raw = str(profile.get("game") or "Warzone").lower().replace(" ", "")
+    if raw in {"warzone", "wz", "warzone2"}: return "warzone"
+    if raw in {"bo7", "blackops7"}: return "bo7"
+    if raw in {"bf6", "battlefield", "battlefield6"}: return "bf6"
+    return None
+
+
 @dataclass
 class BrainEngine:
     store: Any
@@ -34,6 +45,7 @@ class BrainEngine:
     knowledge_provider: KnowledgeProvider | None = None
 
     def __post_init__(self) -> None:
+        self.crown_intel_ledger = build_crown_intel_ledger(self.settings)
         if self.knowledge_provider is not None:
             return
         providers: list[KnowledgeProvider] = []
@@ -42,10 +54,47 @@ class BrainEngine:
                 get_free_official_provider(
                     ttl_s=getattr(self.settings, "live_knowledge_ttl_s", 900),
                     timeout_s=getattr(self.settings, "live_knowledge_timeout_s", 6.0),
+                    ledger=self.crown_intel_ledger,
                 )
             )
         providers.append(StaticKnowledgeProvider())
         self.knowledge_provider = CompositeKnowledgeProvider(providers)
+
+    def _inject_personal_meta(self, knowledge: Any, profile: Mapping[str, Any], text: str) -> None:
+        if knowledge is None or not knowledge.is_verified_current or self.crown_intel_ledger is None:
+            return
+        game = _game_key(profile)
+        if not game:
+            return
+        try:
+            change = self.crown_intel_ledger.latest_change(game)
+            if not change:
+                return
+            impact = self.crown_intel_ledger.personalize(change, profile, query_text=text)
+            cats = ", ".join(impact.categories) or "uncategorized"
+            reasons = "; ".join(impact.reasons) or "no direct player-context match"
+            knowledge.facts.append(KnowledgeFact(
+                text=f"CROWN INTEL CHANGE: categories={cats}; personal_relevance_score={impact.score}; relevant={str(impact.relevant).lower()}; reasons={reasons}",
+                source=str(change.get("source_url") or knowledge.source),
+                last_updated=str(change.get("published") or knowledge.last_updated),
+                confidence=KnowledgeConfidence.VERIFIED_CURRENT,
+            ))
+            if impact.relevant and impact.alert:
+                knowledge.facts.append(KnowledgeFact(
+                    text=f"CROWN ALERT: This verified change is relevant to the current player/context. Change evidence: {impact.alert}",
+                    source=str(change.get("source_url") or knowledge.source),
+                    last_updated=str(change.get("published") or knowledge.last_updated),
+                    confidence=KnowledgeConfidence.VERIFIED_CURRENT,
+                ))
+            else:
+                knowledge.facts.append(KnowledgeFact(
+                    text="CROWN ALERT SUPPRESSED: latest verified change is not relevant enough to this player/context; do not create alert noise.",
+                    source=str(change.get("source_url") or knowledge.source),
+                    last_updated=str(change.get("published") or knowledge.last_updated),
+                    confidence=KnowledgeConfidence.VERIFIED_CURRENT,
+                ))
+        except Exception as exc:
+            log.warning("personal meta unavailable error=%s", type(exc).__name__)
 
     def _ai(self) -> Tuple[Optional[AIHook], str]:
         if not getattr(self.settings, "ai_enabled", True):
@@ -72,6 +121,7 @@ class BrainEngine:
         knowledge = self.knowledge_provider.query(
             KnowledgeRequest(intent=intent, text=text, profile=profile)
         ) if self.knowledge_provider else None
+        self._inject_personal_meta(knowledge, dict(player_context or profile), text)
         knowledge_name = knowledge.confidence.value if knowledge else "UNKNOWN"
 
         if intent.needs_current_data and (knowledge is None or not knowledge.is_verified_current):
