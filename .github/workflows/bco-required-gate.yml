@@ -58,15 +58,15 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           from app.release import APP_VERSION, RELEASE_CONTRACT
-          assert APP_VERSION == '41.1.0'
-          assert RELEASE_CONTRACT == 'bco-lightweight-site-session-verify-v41.1'
+          assert APP_VERSION == '42.0.0'
+          assert RELEASE_CONTRACT == 'bco-crown-intel-free-v42'
           package=Path('app/services/operator_intelligence/__init__.py').read_text()
           wrapper=Path('app/services/operator_intelligence/orchestrated_service.py').read_text()
           orchestrator=Path('app/services/operator_intelligence/mission_orchestrator.py').read_text()
           strategy_ui=Path('app/webapp/static/bco.strategy.js').read_text()
           orch_ui=Path('app/webapp/static/bco.orchestrator.js').read_text()
           i18n=Path('app/i18n.py').read_text(); web_i18n=Path('app/webapp/static/bco.i18n.js').read_text(); router=Path('app/core/router.py').read_text(); analytics=Path('app/services/analytics/admin_usage.py').read_text(); brain_patch=Path('app/services/brain/locale_patch.py').read_text()
-          voice_ui=Path('app/ui/crown_voice_console.py').read_text(); console=Path('app/services/telegram/command_console.py').read_text(); voice_backend=Path('app/services/voice/openai_backend.py').read_text(); bridge=Path('app/services/entitlements/site_bridge.py').read_text()
+          voice_ui=Path('app/ui/crown_voice_console.py').read_text(); console=Path('app/services/telegram/command_console.py').read_text(); voice_backend=Path('app/services/voice/openai_backend.py').read_text(); bridge=Path('app/services/entitlements/site_bridge.py').read_text(); crown_intel=Path('app/services/brain/crown_intel_runtime.py').read_text(); engine=Path('app/services/brain/engine.py').read_text(); live=Path('app/services/brain/live_official.py').read_text()
           assert 'OrchestratedOperatorIntelligenceService as OperatorIntelligenceService' in package
           assert 'CurrentOperatorIntelligenceService' in wrapper
           assert 'bco_mission_orchestrator_v36' in orchestrator
@@ -84,5 +84,8 @@ jobs:
           for marker in ('field == "voiceid"','voice_identity','tts_voice','field == "ttsmode"'): assert marker in console
           assert 'IDENTITY_DEFAULT_VOICES' in voice_backend and '"female": "marin"' in voice_backend and '"male": "cedar"' in voice_backend
           for marker in ('SiteIdentityAssertionVerifier','BLACKCROWN_SITE_BRIDGE_SECRET','x_bc_site_assertion','hmac.compare_digest','site_assertion_not_configured','/api/auth/session/verify','_ALLOWED_VERIFY_PATHS','site-session-verifier-v14'): assert marker in bridge
-          print('v41.1 release/lightweight-session/site-identity/voice authority contract: clean')
+          for marker in ('zero_extra_paid_api','callofduty.com','ea.com','CROWN_INTEL_AUTONOMOUS_ENABLED','CROWN_INTEL_REFRESH_INTERVAL_S','warzone','bo7','bf6'): assert marker in crown_intel
+          assert 'get_free_official_provider' in engine
+          assert '_ALLOWED_HOSTS' in live and 'callofduty.com' in live and 'ea.com' in live
+          print('v42 release/free-autonomous-crown-intel/site-identity/voice authority contract: clean')
           PY
