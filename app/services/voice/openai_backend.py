@@ -60,7 +60,7 @@ def _voice_character(profile: Mapping[str, Any]) -> str:
     if identity == "female":
         return "Use an adult original female tactical-intelligence voice: mature, calm, natural and quietly confident; never childish, seductive or theatrical."
     if identity == "male":
-        return "Use an adult original male tactical-intelligence voice: grounded, calm, natural and quietly confident; no growl, trailer voice or artificial bass performance."
+        return "Use an adult original male tactical-intelligence voice: grounded, calm, natural and quietly confident; no trailer voice, growl or artificial bass performance."
     voice = normalize_tts_voice(profile.get("tts_voice"))
     if voice == "marin":
         return "Keep MARIN warm, modern and conversational."
@@ -92,7 +92,7 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
         _voice_character(data),
         "Use spontaneous close conversation: sound human and natural, not like a narrator, announcer, audiobook, call center, movie trailer, radio operator or generic AI assistant.",
         "Do not imitate or reference any real person.",
-        "Use relaxed connected speech, subtle uneven emphasis and short natural pauses only where the thought changes. Do not over-enunciate every word.",
+        "Use relaxed connected speech, subtle uneven emphasis and short natural pauses only where the thought changes. Do not over-enunciate every word or fall into a repetitive falling cadence.",
         "Do not read markdown, emoji, URLs, separators or interface labels aloud. Preserve numbers, negations and tactical meaning exactly.",
     ]
 
@@ -128,8 +128,11 @@ def voice_speed(profile: Mapping[str, Any] | None) -> float:
     """
     data = dict(profile or {})
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
+    brain = _profile_value(data, "difficulty", "brain_mode", fallback="").upper()
     emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
-    speed = 0.975 if persona == "COACH" else 1.0
+    speed = 1.0
+    if persona == "COACH" and brain:
+        speed = 0.975
     if bool(data.get("_bco_voice_reply")):
         speed += 0.005
     if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
@@ -182,7 +185,7 @@ class OpenAITTSBackend:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/voice-natural-v40.3",
+            "User-Agent": "BLACK-CROWN-OPS/voice-natural-v40.4",
             "X-Client-Request-Id": str(uuid.uuid4()),
         }
         output.parent.mkdir(parents=True, exist_ok=True)
