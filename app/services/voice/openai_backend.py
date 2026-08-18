@@ -92,6 +92,7 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
         _voice_character(data),
         "Use spontaneous close conversation: sound human and natural, not like a narrator, announcer, audiobook, call center, movie trailer, radio operator or generic AI assistant.",
         "Do not imitate or reference any real person.",
+        "Do not add filler sounds, fake breaths, artificial sighs or performed hesitation.",
         "Use relaxed connected speech, subtle uneven emphasis and short natural pauses only where the thought changes. Do not over-enunciate every word or fall into a repetitive falling cadence.",
         "Do not read markdown, emoji, URLs, separators or interface labels aloud. Preserve numbers, negations and tactical meaning exactly.",
     ]
@@ -185,7 +186,7 @@ class OpenAITTSBackend:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/voice-natural-v40.4",
+            "User-Agent": "BLACK-CROWN-OPS/voice-natural-v40.5",
             "X-Client-Request-Id": str(uuid.uuid4()),
         }
         output.parent.mkdir(parents=True, exist_ok=True)
