@@ -41,24 +41,33 @@ _EN_TEXT = {
     "Отправь видео прямо в чат — реальный VOD pipeline извлечёт ключевые кадры.":"Send video directly in chat — the real VOD pipeline will extract key frames.","Либо отправь таймкоды и описание решения текстом.":"Or send timestamps and describe the decision in text.","Система не будет утверждать, что видела кадры, если пришёл только текст.":"The system will never claim it analyzed video pixels when only text was provided.",
 }
 
+_VIEW_NAMES = ("home_view","world_view","brain_view","voice_view","profile_view","system_view","ai_view","training_view","vod_view","zombies_view")
+
+
 def _locale(profile: Mapping[str, Any] | None) -> str:
     p = dict(profile or {})
     return normalize_locale(p.get("language_override") or p.get("language") or "en")
 
+
 def _translate_text(text: str, locale: str) -> str:
     mapping = _RU_TEXT if locale == "ru" else _EN_TEXT
     out = text
-    for old, new in mapping.items(): out = out.replace(old, new)
+    for old, new in mapping.items():
+        out = out.replace(old, new)
     return out
+
 
 def _translate_markup(markup: dict[str, Any], locale: str) -> dict[str, Any]:
     mapping = _RU_BUTTONS if locale == "ru" else _EN_BUTTONS
     rows = markup.get("inline_keyboard") if isinstance(markup, dict) else None
-    if not isinstance(rows, list): return markup
+    if not isinstance(rows, list):
+        return markup
     for row in rows:
-        if not isinstance(row, list): continue
+        if not isinstance(row, list):
+            continue
         for button in row:
-            if not isinstance(button, dict): continue
+            if not isinstance(button, dict):
+                continue
             label = str(button.get("text") or "")
             active = label.startswith("✓ ")
             raw = label[2:] if active else label
@@ -66,25 +75,50 @@ def _translate_markup(markup: dict[str, Any], locale: str) -> dict[str, Any]:
             button["text"] = ("✓ " if active else "") + translated
     return markup
 
+
 def localize_view(view: Any, profile: Mapping[str, Any] | None) -> Any:
     locale = _locale(profile)
-    try:
-        view.text = _translate_text(str(view.text), locale)
-        view.reply_markup = _translate_markup(view.reply_markup, locale)
-    except Exception:
-        pass
+    view.text = _translate_text(str(view.text), locale)
+    view.reply_markup = _translate_markup(view.reply_markup, locale)
     return view
 
+
+def _wrap(original):
+    if getattr(original, "_bco_i18n_v41_wrapped", False):
+        return original
+
+    @wraps(original)
+    def wrapped(*args, __original=original, **kwargs):
+        profile = args[0] if args and isinstance(args[0], Mapping) else kwargs.get("profile")
+        return localize_view(__original(*args, **kwargs), profile)
+
+    wrapped._bco_i18n_v41_wrapped = True
+    return wrapped
+
+
 def install() -> None:
+    """Install localization on both the UI module and already-imported controller aliases.
+
+    Re-checks each function instead of trusting a one-shot module marker so reloads and
+    import ordering cannot leave production with stale English buttons.
+    """
     import app.ui.command_console as cc
-    if getattr(cc, "_bco_full_i18n_v41", False): return
-    names = ("home_view","world_view","brain_view","voice_view","profile_view","system_view","ai_view","training_view","vod_view","zombies_view")
-    for name in names:
+
+    wrapped_by_name = {}
+    for name in _VIEW_NAMES:
         original = getattr(cc, name, None)
-        if not callable(original): continue
-        @wraps(original)
-        def wrapped(*args, __original=original, **kwargs):
-            profile = args[0] if args and isinstance(args[0], Mapping) else kwargs.get("profile")
-            return localize_view(__original(*args, **kwargs), profile)
+        if not callable(original):
+            continue
+        wrapped = _wrap(original)
         setattr(cc, name, wrapped)
+        wrapped_by_name[name] = wrapped
+
+    try:
+        import app.services.telegram.command_console as controller
+        for name, wrapped in wrapped_by_name.items():
+            if hasattr(controller, name):
+                setattr(controller, name, wrapped)
+    except Exception:
+        pass
+
     cc._bco_full_i18n_v41 = True
