@@ -1,10 +1,49 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from copy import deepcopy
 from functools import wraps
 from typing import Mapping, Any
 
+from app.i18n import normalize_locale
 from app.ui.aaa_console import aaa_home_view, modules_view, war_room_view
+
+
+def _aaa_home_actions(view: Any, profile: Mapping[str, Any]) -> Any:
+    markup = deepcopy(view.reply_markup)
+    rows = markup.get("inline_keyboard") if isinstance(markup, dict) else None
+    if not isinstance(rows, list) or len(rows) < 2:
+        return view
+    locale = normalize_locale(profile.get("language_override") or profile.get("language") or "en")
+    labels = {
+        "ai": "🧠 AI СВОДКА" if locale == "ru" else "🧠 AI BRIEF",
+        "operator": "ОПЕРАТОР" if locale == "ru" else "OPERATOR",
+        "voice": "ГОЛОС" if locale == "ru" else "VOICE",
+        "modules": "ВСЕ МОДУЛИ" if locale == "ru" else "ALL MODULES",
+    }
+    by_data = {
+        str(button.get("callback_data") or ""): button
+        for row in rows
+        if isinstance(row, list)
+        for button in row
+        if isinstance(button, dict) and button.get("callback_data")
+    }
+    war = by_data.get("bco:warroom")
+    operator = by_data.get("bco:profile")
+    voice = by_data.get("bco:voice")
+    modules = by_data.get("bco:modules")
+    if not all((war, operator, voice, modules)):
+        return view
+    ai = {"text": labels["ai"], "callback_data": "bco:ai", "style": "primary"}
+    operator = dict(operator); operator["text"] = labels["operator"]
+    voice = dict(voice); voice["text"] = labels["voice"]
+    modules = dict(modules); modules["text"] = labels["modules"]
+    tail = [row for row in rows if not any(
+        isinstance(button, dict) and str(button.get("callback_data") or "") in {"bco:warroom", "bco:profile", "bco:voice", "bco:modules"}
+        for button in row
+    )]
+    markup["inline_keyboard"] = [[dict(war), ai], [operator, voice], [modules], *tail]
+    return type(view)(text=view.text, reply_markup=markup)
 
 
 def install() -> None:
@@ -20,6 +59,7 @@ def install() -> None:
         profile = self._profile(chat_id)
         if action == "home":
             view = aaa_home_view(profile, await self._operator_snapshot(chat_id))
+            view = _aaa_home_actions(view, profile)
             if "COMMAND CONSOLE" not in view.text:
                 view = type(view)(text=view.text.replace("// CROWN", "// COMMAND CONSOLE", 1), reply_markup=view.reply_markup)
             return view
