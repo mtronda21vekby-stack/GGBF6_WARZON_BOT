@@ -49,7 +49,7 @@ services:
       - key: VOICE_OPENAI_MODEL
         value: gpt-4o-mini-tts
       - key: VOICE_OPENAI_VOICE
-        value: cedar
+        value: marin
       - key: VOICE_OPENAI_TIMEOUT_S
         value: "45"
       - key: VOICE_MODEL_NAME
@@ -59,6 +59,6 @@ services:
       - key: VOICE_MAX_CHARS
         value: "1800"
       - key: VOICE_OPUS_BITRATE_KBPS
-        value: "48"
+        value: "72"
       # OPENAI_API_KEY и SUPABASE_SERVICE_ROLE_KEY не хранить в публичном репозитории.
       # Добавить их только как server-side secrets в Render Dashboard.
