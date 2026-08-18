@@ -19,7 +19,10 @@ def install() -> None:
     async def _view_for(self, action: str, chat_id: int, user_id: int):
         profile = self._profile(chat_id)
         if action == "home":
-            return aaa_home_view(profile, await self._operator_snapshot(chat_id))
+            view = aaa_home_view(profile, await self._operator_snapshot(chat_id))
+            if "COMMAND CONSOLE" not in view.text:
+                view = type(view)(text=view.text.replace("// CROWN", "// COMMAND CONSOLE", 1), reply_markup=view.reply_markup)
+            return view
         if action == "warroom":
             return war_room_view(profile, await self._operator_snapshot(chat_id))
         if action == "modules":
