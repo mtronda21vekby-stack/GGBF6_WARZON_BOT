@@ -81,8 +81,8 @@ jobs:
           assert 'server-side Supabase activity ledger' in analytics
           assert 'Respond in English' in brain_patch and 'Respond in Russian' in brain_patch
           # v40.2 production truth: the actual inline COMMAND CONSOLE must expose first-class Female/Male CROWN identities.
-          for marker in ('CROWN VOICE // LIVE CONTROL','♀ FEMALE','♂ MALE','ON-DEMAND'): assert marker in voice_ui
-          for marker in ('bco:set:voiceid:female','bco:set:voiceid:male','voice_identity','tts_voice'): assert marker in console
+          for marker in ('CROWN VOICE // LIVE CONTROL','♀ FEMALE','♂ MALE','ON-DEMAND','bco:set:voiceid:female','bco:set:voiceid:male'): assert marker in voice_ui
+          for marker in ('field == "voiceid"','voice_identity','tts_voice','field == "ttsmode"'): assert marker in console
           assert 'IDENTITY_DEFAULT_VOICES' in voice_backend and '"female": "marin"' in voice_backend and '"male": "cedar"' in voice_backend
           print('v40.2 release/voice/identity authority contract: clean')
           PY
