@@ -111,7 +111,7 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
         instructions.append("In PRO mode, be precise and confident without becoming formal or announcer-like.")
 
     if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
-        instructions.append("lower the energy slightly and make the key correction especially clear.")
+        instructions.append("Lower the energy slightly and make the key correction especially clear.")
     elif emotion in {"HYPE", "EXCITED"}:
         instructions.append("Allow a little more energy while keeping the delivery conversational.")
 
@@ -122,18 +122,10 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
 
 
 def voice_speed(profile: Mapping[str, Any] | None) -> float:
-    """Compatibility-only semantic timing hint for legacy callers/tests.
-
-    Cloud synthesis intentionally does not send a `speed` parameter; the model
-    stays at native timing for the most natural result.
-    """
     data = dict(profile or {})
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
-    brain = _profile_value(data, "difficulty", "brain_mode", fallback="").upper()
     emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
-    speed = 1.0
-    if persona == "COACH" and brain:
-        speed = 0.975
+    speed = 0.975 if persona == "COACH" else 1.0
     if bool(data.get("_bco_voice_reply")):
         speed += 0.005
     if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
@@ -181,12 +173,13 @@ class OpenAITTSBackend:
             "instructions": voice_instructions(profile, text)[:4096],
             "response_format": "wav",
             "stream_format": "audio",
+            "speed": voice_speed(profile),
         }
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/voice-natural-v40.5",
+            "User-Agent": "BLACK-CROWN-OPS/voice-v40-hotfix",
             "X-Client-Request-Id": str(uuid.uuid4()),
         }
         output.parent.mkdir(parents=True, exist_ok=True)
