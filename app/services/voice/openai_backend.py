@@ -49,18 +49,18 @@ def _content_direction(text: str) -> str:
     if not clean:
         return ""
     if len(clean) <= 220:
-        return "Treat this as a short spoken reply in one continuous thought."
+        return "Deliver it as one natural short spoken reply, not as a read-out script."
     if len(clean) >= 1100:
-        return "For this longer reply, keep a relaxed conversational flow and use paragraph boundaries as natural thought changes."
-    return "Keep the response flowing like natural conversation, with the actionable conclusion slightly clearer than the setup."
+        return "For the longer answer, use natural conversational paragraph breaks and reset the breath only when the idea changes."
+    return "Keep a natural conversational arc and let the actionable ending land clearly."
 
 
 def _voice_character(profile: Mapping[str, Any]) -> str:
     identity = normalize_voice_identity(profile.get("voice_identity"))
     if identity == "female":
-        return "Use an original adult female BLACK CROWN voice: mature, calm, natural and quietly confident, with soft authority and no performed character voice."
+        return "Use an adult original female tactical-intelligence voice: mature, calm, natural and quietly confident, with soft authority and no performed character voice."
     if identity == "male":
-        return "Use an original adult male BLACK CROWN voice: grounded, calm, natural and quietly confident, with restrained authority and no performed character voice."
+        return "Use an adult original male tactical-intelligence voice: grounded, calm, natural and quietly confident, with restrained authority and no performed character voice."
     voice = normalize_tts_voice(profile.get("tts_voice"))
     if voice == "marin":
         return "Keep MARIN warm, modern and conversational."
@@ -76,13 +76,6 @@ def _voice_character(profile: Mapping[str, Any]) -> str:
 
 
 def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str:
-    """Return deliberately compact style guidance for steerable TTS.
-
-    Naturalness degrades when the synthesis model is over-constrained by a long
-    list of competing acting directions. Keep only the stable BLACK CROWN voice
-    identity, language, interaction mode and a small amount of context-sensitive
-    delivery guidance. The spoken text itself remains authoritative.
-    """
     data = dict(profile or {})
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
     brain = _profile_value(data, "difficulty", "brain_mode", fallback="NORMAL").upper()
@@ -97,12 +90,13 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
     instructions = [
         language,
         _voice_character(data),
-        "Sound like spontaneous close conversation, not narration. Use connected speech, subtle uneven emphasis and short natural pauses only where the thought changes.",
+        "Sound human and spontaneous, not like a narrator, announcer, audiobook, call center, movie trailer, radio operator or generic AI assistant.",
+        "Use relaxed connected speech, subtle uneven emphasis and short natural pauses only where the thought changes. Do not over-enunciate every word.",
         "Do not read markdown, emoji, URLs, separators or interface labels aloud. Preserve numbers, negations and tactical meaning exactly.",
     ]
 
     if bool(data.get("_bco_voice_reply")):
-        instructions.append("Answer the player's voice message immediately, without greeting, recap or preamble.")
+        instructions.append("This directly answers the player's voice message: enter the answer immediately, without greeting, recap or preamble.")
 
     if persona == "COACH":
         instructions.append("As COACH, stay calm and analytical; make the root cause and next correction easy to hear without sounding formal.")
@@ -110,7 +104,7 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
         instructions.append("As TEAMMATE, be concise and relaxed like a skilled squadmate speaking between fights, not military roleplay.")
 
     if brain == "DEMON":
-        instructions.append("In DEMON mode, be more decisive and information-dense while keeping the same natural speaking voice.")
+        instructions.append("In DEMON mode, be more decisive and information-dense while keeping the same natural speaking voice; never shout, growl or perform a villain persona.")
     elif brain == "PRO":
         instructions.append("In PRO mode, be precise and confident without becoming formal or announcer-like.")
 
@@ -126,13 +120,17 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
 
 
 def voice_speed(profile: Mapping[str, Any] | None) -> float:
-    """Legacy compatibility hook.
-
-    Natural cloud speech now stays at the model's native speed. The speech API's
-    speed control is post-processing, so v40 does not send it to the cloud TTS
-    request. This function remains for old callers/tests and always reports 1.0.
-    """
-    return 1.0
+    data = dict(profile or {})
+    persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
+    emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
+    speed = 0.975 if persona == "COACH" else 1.0
+    if bool(data.get("_bco_voice_reply")):
+        speed += 0.005
+    if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
+        speed -= 0.02
+    elif emotion in {"HYPE", "EXCITED"}:
+        speed += 0.005
+    return max(0.94, min(speed, 1.025))
 
 
 class OpenAITTSBackend:
@@ -173,12 +171,13 @@ class OpenAITTSBackend:
             "instructions": voice_instructions(profile, text)[:4096],
             "response_format": "wav",
             "stream_format": "audio",
+            "speed": voice_speed(profile),
         }
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/voice-natural-v40.1",
+            "User-Agent": "BLACK-CROWN-OPS/voice-natural-v40.2",
             "X-Client-Request-Id": str(uuid.uuid4()),
         }
         output.parent.mkdir(parents=True, exist_ok=True)
