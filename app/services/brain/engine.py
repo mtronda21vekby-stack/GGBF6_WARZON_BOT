@@ -10,6 +10,7 @@ from typing import Any, Mapping, Optional, Tuple
 
 from app.observability.quality import quality_telemetry
 from app.services.brain.ai_hook import AIHook
+from app.services.brain.crown_intel_runtime import get_free_official_provider
 from app.services.brain.intents import classify_intent
 from app.services.brain.knowledge_context import (
     CompositeKnowledgeProvider,
@@ -17,7 +18,6 @@ from app.services.brain.knowledge_context import (
     KnowledgeRequest,
     StaticKnowledgeProvider,
 )
-from app.services.brain.live_official import OfficialPatchKnowledgeProvider
 from app.services.brain.quality import currentness_blocked_response, enforce_response_limit
 from app.services.brain.response_policy import get_response_policy
 
@@ -39,7 +39,7 @@ class BrainEngine:
         providers: list[KnowledgeProvider] = []
         if bool(getattr(self.settings, "live_knowledge_enabled", True)):
             providers.append(
-                OfficialPatchKnowledgeProvider(
+                get_free_official_provider(
                     ttl_s=getattr(self.settings, "live_knowledge_ttl_s", 900),
                     timeout_s=getattr(self.settings, "live_knowledge_timeout_s", 6.0),
                 )
