@@ -18,10 +18,10 @@ from app.ui.command_console import (
     system_view,
     training_view,
     vod_view,
-    voice_view,
     world_view,
     zombies_view,
 )
+from app.ui.crown_voice_console import crown_voice_view, inject_home_voice_button
 from app.ui.operator_console import operator_view
 from app.ui.quickbar import _webapp_url
 
@@ -165,13 +165,13 @@ class CommandConsoleController:
     async def _view_for(self, action: str, chat_id: int, user_id: int) -> ConsoleView:
         profile = self._profile(chat_id)
         if action == "home":
-            return home_view(profile)
+            return inject_home_voice_button(home_view(profile), profile)
         if action == "world":
             return world_view(profile)
         if action == "brain":
             return brain_view(profile)
         if action == "voice":
-            return voice_view(profile)
+            return crown_voice_view(profile)
         if action in {"profile", "operator", "mission"}:
             return operator_view(await self._operator_snapshot(chat_id))
         if action == "system":
@@ -187,7 +187,7 @@ class CommandConsoleController:
         if action == "premium":
             status, error = await self._premium_status(user_id)
             return premium_view(status, error=error)
-        return home_view(profile)
+        return inject_home_voice_button(home_view(profile), profile)
 
     async def _open_from_message(self, message: Mapping[str, Any]) -> bool:
         sender = _sender(message)
@@ -235,6 +235,18 @@ class CommandConsoleController:
             if not mapped:
                 return False
             patch, return_view = {"voice": mapped}, "voice"
+        elif field == "voiceid":
+            mapped = {
+                "female": {"voice_identity": "female", "tts_voice": "marin"},
+                "male": {"voice_identity": "male", "tts_voice": "cedar"},
+            }.get(value)
+            if not mapped:
+                return False
+            patch, return_view = mapped, "voice"
+        elif field == "ttsmode":
+            if value not in {"auto", "on_demand", "off"}:
+                return False
+            patch, return_view = {"tts_mode": value}, "voice"
         elif field == "focus":
             if value not in {"aim", "movement", "position"}:
                 return False
@@ -361,7 +373,7 @@ class CommandConsoleController:
         if data.startswith("bco:set:"):
             handled = await self._handle_set(data, chat_id, user_id, message_id)
             if not handled:
-                await self._show(chat_id, home_view(self._profile(chat_id)), message_id)
+                await self._show(chat_id, inject_home_voice_button(home_view(self._profile(chat_id)), self._profile(chat_id)), message_id)
             return True
         if data.startswith("bco:p:"):
             action = data.removeprefix("bco:p:")
