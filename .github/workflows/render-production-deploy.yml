@@ -1,0 +1,142 @@
+name: BCO Render Production Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bco-render-production
+  cancel-in-progress: true
+
+env:
+  PRODUCTION_URL: https://ggbf6-warzon-bot.onrender.com
+
+jobs:
+  deploy-production:
+    name: deploy-and-verify-render
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      RENDER_DEPLOY_HOOK_FALLBACK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+
+      - name: Resolve exact release contract
+        id: release
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          from app.release import APP_VERSION, RELEASE_CONTRACT
+          print(f"version={APP_VERSION}")
+          print(f"contract={RELEASE_CONTRACT}")
+          PY
+
+      - name: Require secure Render deploy hook
+        id: hook
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOOK="${RENDER_DEPLOY_HOOK_URL:-${RENDER_DEPLOY_HOOK_FALLBACK:-}}"
+          if [ -z "$HOOK" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_URL/RENDER_DEPLOY_HOOK is not configured. Production cannot be guaranteed to follow main."
+            exit 1
+          fi
+          echo "url=$HOOK" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger Render deploy
+        shell: bash
+        env:
+          DEPLOY_HOOK: ${{ steps.hook.outputs.url }}
+        run: |
+          set -euo pipefail
+          code="$(curl -sS -X POST --connect-timeout 10 --max-time 45 -o /tmp/render-response.txt -w '%{http_code}' "$DEPLOY_HOOK" || true)"
+          case "$code" in
+            200|201|202|204)
+              echo "Render deploy accepted: HTTP $code"
+              ;;
+            *)
+              echo "::error::Render deploy hook failed: HTTP ${code:-000}"
+              cat /tmp/render-response.txt || true
+              exit 1
+              ;;
+          esac
+
+      - name: Verify exact production release and bridge
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          EXPECTED_CONTRACT: ${{ steps.release.outputs.contract }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          base = os.environ['PRODUCTION_URL'].rstrip('/')
+          expected_version = os.environ['EXPECTED_VERSION']
+          expected_contract = os.environ['EXPECTED_CONTRACT']
+          headers = {
+              'Accept': 'application/json',
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache',
+              'User-Agent': 'BLACK-CROWN-OPS/render-production-gate-v43',
+          }
+
+          def get_json(path):
+              req = urllib.request.Request(base + path, headers=headers, method='GET')
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as response:
+                      status = response.status
+                      raw = response.read().decode('utf-8', errors='replace')
+              except urllib.error.HTTPError as exc:
+                  status = exc.code
+                  raw = exc.read().decode('utf-8', errors='replace')
+              try:
+                  payload = json.loads(raw)
+              except Exception:
+                  payload = None
+              return status, payload, raw[:600]
+
+          last = 'not started'
+          for attempt in range(1, 61):
+              try:
+                  status, payload, raw = get_json('/health/details')
+                  if status != 200 or not isinstance(payload, dict):
+                      raise AssertionError(f'health unavailable: {status} {raw}')
+                  release = payload.get('release')
+                  if not isinstance(release, dict):
+                      raise AssertionError(f'release metadata missing: {raw}')
+                  version = release.get('version')
+                  contract = release.get('contract')
+                  if version != expected_version or contract != expected_contract:
+                      raise AssertionError(
+                          f'stale release version={version!r} contract={contract!r}; '
+                          f'expected {expected_version!r} / {expected_contract!r}'
+                      )
+
+                  status, bridge, raw = get_json('/integrations/site/telegram/status')
+                  if status != 401 or not isinstance(bridge, dict) or bridge.get('reason') != 'auth_required':
+                      raise AssertionError(f'bridge contract unavailable: {status} {raw}')
+
+                  print(
+                      'Render production verified:',
+                      f'version={expected_version}',
+                      f'contract={expected_contract}',
+                      'bridge=online',
+                  )
+                  break
+              except Exception as exc:
+                  last = f'attempt {attempt}/60: {type(exc).__name__}: {exc}'
+                  print(last)
+                  if attempt == 60:
+                      raise SystemExit(f'Render production verification failed: {last}')
+                  time.sleep(10)
+          PY
