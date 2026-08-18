@@ -139,7 +139,7 @@ def controller(tg: FakeTelegram | None = None):
     return instance, telegram, profiles, entitlements
 
 
-def test_start_removes_old_keyboard_and_opens_rich_inline_console():
+def test_start_removes_old_keyboard_and_opens_contextual_aaa_console():
     console, tg, _, _ = controller()
 
     assert run(console.maybe_handle(message_update("/start"))) is True
@@ -147,12 +147,25 @@ def test_start_removes_old_keyboard_and_opens_rich_inline_console():
     assert len(tg.sent) == 1
     _, text, markup = tg.sent[0]
     assert "COMMAND CONSOLE" in text
+    assert "CROWN // READY" in text
+    assert "PLAYER BRAIN" in text
     assert "keyboard" not in markup
     labels = [button["text"] for row in markup["inline_keyboard"] for button in row]
+    assert "WAR ROOM" in labels
     assert "🧠 AI BRIEF" in labels
-    assert "🎯 TRAINING" in labels
-    assert "💎 PREMIUM" in labels
-    assert "⚙️ SYSTEM" in labels
+    assert "OPERATOR" in labels
+    assert "VOICE" in labels
+    assert "ALL MODULES" in labels
+    assert "🎯 TRAINING" not in labels
+    assert "💎 PREMIUM" not in labels
+    assert "⚙️ SYSTEM" not in labels
+
+    assert run(console.maybe_handle(callback_update("bco:modules"))) is True
+    _, _, modules_text, modules_markup = tg.edited[-1]
+    assert "ALL SYSTEMS" in modules_text
+    module_labels = [button["text"] for row in modules_markup["inline_keyboard"] for button in row]
+    for label in ("AI BRIEF", "TRAINING", "WORLD", "VOD LAB", "ZOMBIES", "OPERATOR", "PREMIUM", "SYSTEM", "VOICE"):
+        assert label in module_labels
 
 
 def test_callback_is_acknowledged_and_edits_the_same_console_message():

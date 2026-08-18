@@ -14,11 +14,11 @@ def _settings():
 
 def test_release_contract_is_explicit_and_readiness_exposes_natural_voice(monkeypatch):
     for name in ("OPERATOR_LONGITUDINAL_INTELLIGENCE_ENABLED","PREMIUM_DEEP_HISTORY_ENABLED","EVIDENCE_FRESHNESS_ENABLED","REGIME_CHANGE_DETECTION_ENABLED","MISSION_ORCHESTRATOR_ENABLED"): monkeypatch.setenv(name,"1")
-    assert APP_VERSION == "43.0.1"
-    assert RELEASE_CONTRACT == "bco-personal-meta-baseline-v43.0.1"
+    assert APP_VERSION == "44.0.0"
+    assert RELEASE_CONTRACT == "bco-aaa-war-room-alerts-v44"
     snap=readiness_snapshot(_settings(),ReadyStore(),app_version=APP_VERSION,release_contract=RELEASE_CONTRACT,entitlement_service=ReadyEntitlements())
     assert snap["status"]=="ready"
-    assert snap["release"]=={"version":"43.0.1","contract":"bco-personal-meta-baseline-v43.0.1"}
+    assert snap["release"]=={"version":"44.0.0","contract":"bco-aaa-war-room-alerts-v44"}
     features=snap["features"]
     for key in ("persistent_memory_configured","telegram_aaa_command_console","telegram_live_intelligence_drafts","webapp_live_intelligence_stream","voice_input","voice_input_confidence_gate","voice_duplex_follow_input","voice_high_fidelity","voice_local_fallback","voice_natural_mastering","voice_selectable_profiles","operator_twin","adaptive_mission_control","operator_truth_calibration","operator_session_lifecycle","operator_context_bridge","operator_causal_intelligence","mission_vod_evidence_fusion","mission_vod_evidence_no_autocomplete","operator_longitudinal_intelligence","operator_longitudinal_contradiction_detection","operator_longitudinal_no_causal_claims","premium_deep_history","premium_deep_history_server_authoritative","premium_link_does_not_grant_entitlement","operator_evidence_freshness","operator_stale_evidence_not_false","operator_freshness_no_causal_claims","operator_regime_change_detection","operator_regime_requires_sustained_windows","operator_regime_one_session_not_enough","operator_regime_no_causal_claims","operator_regime_external_meta_not_inferred","operator_mission_orchestrator","operator_mission_stage_explicit_only","operator_vod_cannot_advance_stage","operator_stale_history_cannot_skip_recalibration","operator_mission_stage_not_player_fact","operator_mission_stage_no_causal_claims"): assert features[key] is True
     assert features["premium_client_authority"] is False
