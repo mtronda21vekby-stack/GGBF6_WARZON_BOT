@@ -33,6 +33,6 @@ def test_tilt_reduces_speed_and_demon_stays_controlled():
 
     assert voice_speed(tilt) < voice_speed(calm)
     instructions = voice_instructions(tilt)
-    assert "lower the energy slightly" in instructions
+    assert "lower the energy slightly" in instructions.lower()
     assert "never shout" in instructions
     assert "artificially lower the pitch" in instructions
