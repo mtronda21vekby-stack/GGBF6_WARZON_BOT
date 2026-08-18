@@ -58,9 +58,9 @@ def _content_direction(text: str) -> str:
 def _voice_character(profile: Mapping[str, Any]) -> str:
     identity = normalize_voice_identity(profile.get("voice_identity"))
     if identity == "female":
-        return "Use an adult original female tactical-intelligence voice: mature, calm, natural and quietly confident, with soft authority and no performed character voice."
+        return "Use an adult original female tactical-intelligence voice: mature, calm, natural and quietly confident; never childish, seductive or theatrical."
     if identity == "male":
-        return "Use an adult original male tactical-intelligence voice: grounded, calm, natural and quietly confident, with restrained authority and no performed character voice."
+        return "Use an adult original male tactical-intelligence voice: grounded, calm, natural and quietly confident; no growl, trailer voice or artificial bass performance."
     voice = normalize_tts_voice(profile.get("tts_voice"))
     if voice == "marin":
         return "Keep MARIN warm, modern and conversational."
@@ -90,26 +90,27 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
     instructions = [
         language,
         _voice_character(data),
-        "Sound human and spontaneous, not like a narrator, announcer, audiobook, call center, movie trailer, radio operator or generic AI assistant.",
+        "Use spontaneous close conversation: sound human and natural, not like a narrator, announcer, audiobook, call center, movie trailer, radio operator or generic AI assistant.",
+        "Do not imitate or reference any real person.",
         "Use relaxed connected speech, subtle uneven emphasis and short natural pauses only where the thought changes. Do not over-enunciate every word.",
         "Do not read markdown, emoji, URLs, separators or interface labels aloud. Preserve numbers, negations and tactical meaning exactly.",
     ]
 
     if bool(data.get("_bco_voice_reply")):
-        instructions.append("This directly answers the player's voice message: enter the answer immediately, without greeting, recap or preamble.")
+        instructions.append("This directly answers the player's voice message: enter the answer immediately and avoid an intro or recap of the question.")
 
     if persona == "COACH":
         instructions.append("As COACH, stay calm and analytical; make the root cause and next correction easy to hear without sounding formal.")
     else:
-        instructions.append("As TEAMMATE, be concise and relaxed like a skilled squadmate speaking between fights, not military roleplay.")
+        instructions.append("As TEAMMATE, be concise and relaxed like a strong squadmate speaking between fights, not military roleplay.")
 
     if brain == "DEMON":
-        instructions.append("In DEMON mode, be more decisive and information-dense while keeping the same natural speaking voice; never shout, growl or perform a villain persona.")
+        instructions.append("In DEMON mode, be more decisive and information-dense while keeping the same natural speaking voice; never shout, growl or perform a villain persona, and never artificially lower the pitch.")
     elif brain == "PRO":
         instructions.append("In PRO mode, be precise and confident without becoming formal or announcer-like.")
 
     if emotion in {"TILT", "ANGRY", "ANXIOUS"}:
-        instructions.append("Lower the energy slightly and make the key correction especially clear.")
+        instructions.append("lower the energy slightly and make the key correction especially clear.")
     elif emotion in {"HYPE", "EXCITED"}:
         instructions.append("Allow a little more energy while keeping the delivery conversational.")
 
@@ -120,6 +121,11 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
 
 
 def voice_speed(profile: Mapping[str, Any] | None) -> float:
+    """Compatibility-only semantic timing hint for legacy callers/tests.
+
+    Cloud synthesis intentionally does not send a `speed` parameter; the model
+    stays at native timing for the most natural result.
+    """
     data = dict(profile or {})
     persona = _profile_value(data, "voice", "voice_mode", fallback="TEAMMATE").upper()
     emotion = _profile_value(data, "emotion", "emotional_state", fallback="CALM").upper()
@@ -171,13 +177,12 @@ class OpenAITTSBackend:
             "instructions": voice_instructions(profile, text)[:4096],
             "response_format": "wav",
             "stream_format": "audio",
-            "speed": voice_speed(profile),
         }
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "audio/wav, application/octet-stream",
-            "User-Agent": "BLACK-CROWN-OPS/voice-natural-v40.2",
+            "User-Agent": "BLACK-CROWN-OPS/voice-natural-v40.3",
             "X-Client-Request-Id": str(uuid.uuid4()),
         }
         output.parent.mkdir(parents=True, exist_ok=True)
