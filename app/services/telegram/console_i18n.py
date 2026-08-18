@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from copy import deepcopy
 from functools import wraps
 from typing import Any, Mapping
 
@@ -59,9 +60,10 @@ def _translate_text(text: str, locale: str) -> str:
 
 def _translate_markup(markup: dict[str, Any], locale: str) -> dict[str, Any]:
     mapping = _RU_BUTTONS if locale == "ru" else _EN_BUTTONS
-    rows = markup.get("inline_keyboard") if isinstance(markup, dict) else None
+    result = deepcopy(markup)
+    rows = result.get("inline_keyboard") if isinstance(result, dict) else None
     if not isinstance(rows, list):
-        return markup
+        return result
     for row in rows:
         if not isinstance(row, list):
             continue
@@ -73,14 +75,17 @@ def _translate_markup(markup: dict[str, Any], locale: str) -> dict[str, Any]:
             raw = label[2:] if active else label
             translated = mapping.get(raw, raw)
             button["text"] = ("✓ " if active else "") + translated
-    return markup
+    return result
 
 
 def localize_view(view: Any, profile: Mapping[str, Any] | None) -> Any:
     locale = _locale(profile)
-    view.text = _translate_text(str(view.text), locale)
-    view.reply_markup = _translate_markup(view.reply_markup, locale)
-    return view
+    text = _translate_text(str(view.text), locale)
+    markup = _translate_markup(view.reply_markup, locale)
+    try:
+        return type(view)(text=text, reply_markup=markup)
+    except Exception:
+        return view
 
 
 def _wrap(original):
@@ -97,11 +102,6 @@ def _wrap(original):
 
 
 def install() -> None:
-    """Install localization on both the UI module and already-imported controller aliases.
-
-    Re-checks each function instead of trusting a one-shot module marker so reloads and
-    import ordering cannot leave production with stale English buttons.
-    """
     import app.ui.command_console as cc
 
     wrapped_by_name = {}
