@@ -58,8 +58,8 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           from app.release import APP_VERSION, RELEASE_CONTRACT
-          assert APP_VERSION == '43.0.1'
-          assert RELEASE_CONTRACT == 'bco-personal-meta-baseline-v43.0.1'
+          assert APP_VERSION == '44.0.0'
+          assert RELEASE_CONTRACT == 'bco-aaa-war-room-alerts-v44'
           package=Path('app/services/operator_intelligence/__init__.py').read_text()
           wrapper=Path('app/services/operator_intelligence/orchestrated_service.py').read_text()
           orchestrator=Path('app/services/operator_intelligence/mission_orchestrator.py').read_text()
@@ -67,6 +67,7 @@ jobs:
           orch_ui=Path('app/webapp/static/bco.orchestrator.js').read_text()
           i18n=Path('app/i18n.py').read_text(); web_i18n=Path('app/webapp/static/bco.i18n.js').read_text(); router=Path('app/core/router.py').read_text(); analytics=Path('app/services/analytics/admin_usage.py').read_text(); brain_patch=Path('app/services/brain/locale_patch.py').read_text()
           voice_ui=Path('app/ui/crown_voice_console.py').read_text(); console=Path('app/services/telegram/command_console.py').read_text(); voice_backend=Path('app/services/voice/openai_backend.py').read_text(); bridge=Path('app/services/entitlements/site_bridge.py').read_text(); crown_intel=Path('app/services/brain/crown_intel_runtime.py').read_text(); ledger=Path('app/services/brain/crown_intel_ledger.py').read_text(); engine=Path('app/services/brain/engine.py').read_text(); live=Path('app/services/brain/live_official.py').read_text(); migration=Path('migrations/004_crown_intel_v43_ledger.sql').read_text()
+          aaa=Path('app/ui/aaa_console.py').read_text(); aaa_surface=Path('app/services/telegram/aaa_surface.py').read_text(); alert_delivery=Path('app/services/brain/crown_alert_delivery.py').read_text(); war_room=Path('app/webapp/static/bco.war-room.js').read_text(); app_js=Path('app/webapp/static/app.js').read_text()
           assert 'OrchestratedOperatorIntelligenceService as OperatorIntelligenceService' in package
           assert 'CurrentOperatorIntelligenceService' in wrapper
           assert 'bco_mission_orchestrator_v36' in orchestrator
@@ -89,5 +90,10 @@ jobs:
           for marker in ('CROWN INTEL CHANGE','CROWN ALERT:','CROWN ALERT SUPPRESSED','build_crown_intel_ledger'): assert marker in engine
           assert 'bco_game_intel_snapshots' in migration and 'bco_game_intel_changes' in migration and 'enable row level security' in migration
           assert '_ALLOWED_HOSTS' in live and 'callofduty.com' in live and 'ea.com' in live
-          print('v43.0.1 release/baseline-safe-personal-meta/crown-alert authority contract: clean')
+          for marker in ('aaa_home_view','war_room_view','modules_view','CROWN // READY','ВСЕ МОДУЛИ','ALL MODULES'): assert marker in aaa
+          for marker in ('bco:warroom','bco:modules','_aaa_home_actions','🧠 AI BRIEF'): assert marker in aaa_surface
+          for marker in ('baseline_not_alert','duplicate_suppressed','strong_personal_relevance','below_relevance_threshold'): assert marker in alert_delivery
+          for marker in ('__BCO_WAR_ROOM_V44_LOADED__','No hidden score','VOD never auto-completes a mission'): assert marker in war_room
+          assert '/webapp/bco.war-room.js' in app_js
+          print('v44 AAA War Room/CROWN ALERT/product-surface authority contract: clean')
           PY
