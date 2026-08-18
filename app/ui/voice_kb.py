@@ -5,6 +5,7 @@ from __future__ import annotations
 def kb_voice_panel() -> dict:
     return {
         "keyboard": [
+            [{"text": "♀ CROWN // FEMALE"}, {"text": "♂ CROWN // MALE"}],
             [{"text": "🤝 Тиммейт"}, {"text": "📚 Коуч"}],
             [{"text": "🔇 Voice OFF"}, {"text": "🔊 Voice AUTO"}],
             [{"text": "🎧 Voice ON-DEMAND"}, {"text": "🔊 Озвучить ответ"}],

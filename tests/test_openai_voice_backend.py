@@ -43,11 +43,10 @@ def test_voice_normalization_defaults_to_marin_and_profile_direction_is_bounded(
 
     assert "natural Russian" in coach
     assert "one person" in coach
-    assert "real person" in coach
     assert "COACH" in coach
     assert "TEAMMATE" in teammate
-    assert "never shout" in teammate
-    assert voice_speed({"voice": "COACH"}) == 0.975
+    assert "spontaneous close conversation" in teammate
+    assert voice_speed({"voice": "COACH"}) == 1.0
     assert voice_speed({"voice": "TEAMMATE"}) == 1.0
 
 
@@ -63,7 +62,7 @@ def test_user_selected_voice_is_authoritative_and_persona_does_not_swap_it():
         asyncio.run(backend.close())
 
 
-def test_openai_backend_requests_wav_with_selected_voice_and_instructions(tmp_path: Path):
+def test_openai_backend_requests_wav_with_selected_voice_and_natural_instructions(tmp_path: Path):
     requests: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -112,9 +111,10 @@ def test_openai_backend_requests_wav_with_selected_voice_and_instructions(tmp_pa
     assert payload["model"] == "gpt-4o-mini-tts"
     assert payload["voice"] == "coral"
     assert payload["response_format"] == "wav"
-    assert payload["speed"] == 0.975
+    assert "speed" not in payload
     assert "natural Russian" in payload["instructions"]
-    assert "warm, friendly" in payload["instructions"]
+    assert "CORAL" in payload["instructions"]
+    assert "spontaneous close conversation" in payload["instructions"]
     assert payload["input"] == "Держи высоту и не отдавай центр."
 
 

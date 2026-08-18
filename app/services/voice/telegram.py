@@ -16,12 +16,15 @@ _MODE_BUTTONS = {
     "🔊 Voice AUTO": TTSMode.AUTO,
     "🎧 Voice ON-DEMAND": TTSMode.ON_DEMAND,
 }
+_IDENTITY_BUTTONS = {
+    "♀ CROWN // FEMALE": ("female", "marin"),
+    "♂ CROWN // MALE": ("male", "cedar"),
+}
 _VOICE_BUTTONS = {
     "🎙 MARIN · SOFT": "marin",
     "🎙 CORAL · WARM": "coral",
     "🎙 SHIMMER · LIGHT": "shimmer",
     "🎙 CEDAR · TACTICAL": "cedar",
-    # Backward compatibility for cached v22 keyboards.
     "🎙 CEDAR": "cedar",
     "🎙 MARIN": "marin",
 }
@@ -74,6 +77,15 @@ def _signature(history: list[dict]) -> str:
     text = _last_assistant(history)
     payload = f"{len(history or [])}:{text}".encode("utf-8", errors="ignore")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _identity_label(profile: dict) -> str:
+    identity = str(profile.get("voice_identity") or "").strip().casefold()
+    if identity == "female":
+        return "CROWN // FEMALE"
+    if identity == "male":
+        return "CROWN // MALE"
+    return "CUSTOM"
 
 
 @dataclass
@@ -131,18 +143,20 @@ class VoiceTelegramController:
             }[mode]
         fallback = " · PIPER FALLBACK" if details.get("local_fallback") else ""
         body = (prefix + "\n\n" if prefix else "") + (
-            "🔊 BLACK CROWN VOICE // NATURAL v23\n"
+            "🔊 BLACK CROWN VOICE // AAA v40\n"
+            f"Идентичность: {_identity_label(profile)}\n"
             f"Режим: {state}\n"
             f"Движок: {str(details.get('provider') or 'VOICE').upper()}{fallback}\n"
-            f"Голос: {str(details.get('voice') or 'MARIN').upper()}\n"
+            f"Тембр: {str(details.get('voice') or 'MARIN').upper()}\n"
             f"Обработка: {str(details.get('mastering') or 'NATURAL').upper()}\n\n"
             "🎤 Входящие голосовые: ПОНИМАЮ. Voice note распознаётся через STT и идёт в тот же Intelligence Core, что и текст.\n"
-            "🔁 Если ты говоришь голосом и не зафиксировал другой режим, SMART DUPLEX отвечает голосом + текстом.\n\n"
-            "MARIN · SOFT — основной мягкий профиль, по восприятию более женственная подача.\n"
-            "CORAL · WARM — тёплый и спокойный альтернативный профиль.\n"
-            "SHIMMER · LIGHT — более лёгкая и светлая подача.\n"
-            "CEDAR · TACTICAL — более низкий и собранный профиль.\n\n"
-            "Все варианты — синтетические AI-голоса; это не имитация реального человека."
+            "🔁 SMART DUPLEX: говоришь голосом — получаешь полный текстовый ответ и короткую естественную голосовую версию.\n\n"
+            "♀ CROWN // FEMALE — взрослый естественный женский tactical-intelligence профиль; базовый тембр MARIN.\n"
+            "♂ CROWN // MALE — взрослый естественный мужской tactical-intelligence профиль; базовый тембр CEDAR.\n\n"
+            "Дополнительные тембры MARIN / CORAL / SHIMMER / CEDAR можно выбрать вручную. "
+            "Они меняют тембр, но не логику ответа, память или роль TEAMMATE / COACH.\n\n"
+            "Без дикторской подачи, трейлерного баса, радио-эффекта, искусственного занижения тона и чтения интерфейса вслух. "
+            "Все варианты — синтетические AI-голоса, без имитации реального человека."
         )
         await self.tg.send_message(chat_id, body, kb_voice_panel())
 
@@ -162,10 +176,7 @@ class VoiceTelegramController:
                 if not bool(getattr(decision, "allowed", True)):
                     if explicit:
                         wait = max(1, int(getattr(decision, "retry_after_s", 1) or 1))
-                        await self._send_panel(
-                            chat_id,
-                            f"⏳ Озвучка на cooldown. Повтори примерно через {wait} сек.",
-                        )
+                        await self._send_panel(chat_id, f"⏳ Озвучка на cooldown. Повтори примерно через {wait} сек.")
                     return False
             except Exception:
                 pass
@@ -178,16 +189,13 @@ class VoiceTelegramController:
             try:
                 await self._chat_action(chat_id, "upload_voice")
                 caption = "Синтетический AI-голос · BLACK CROWN OPS"
-                await self.tg.send_voice_file(
-                    chat_id,
-                    str(artifact.path),
-                    caption=caption,
-                )
+                await self.tg.send_voice_file(chat_id, str(artifact.path), caption=caption)
                 log.info(
-                    "voice delivered chat_id=%s provider=%s voice=%s mastering=%s chars=%s duplex=%s",
+                    "voice delivered chat_id=%s provider=%s voice=%s identity=%s mastering=%s chars=%s duplex=%s",
                     chat_id,
                     str(getattr(artifact, "provider", "unknown"))[:24],
                     str(getattr(artifact, "voice_name", ""))[:32],
+                    str(profile.get("voice_identity") or "custom")[:16],
                     str(getattr(artifact, "mastering", ""))[:32],
                     len(str(getattr(artifact, "spoken_text", "") or "")),
                     profile["_bco_voice_reply"],
@@ -198,10 +206,7 @@ class VoiceTelegramController:
         except Exception as exc:
             log.warning("voice synthesis failed chat_id=%s error=%s", chat_id, type(exc).__name__)
             if explicit:
-                await self._send_panel(
-                    chat_id,
-                    "⚠️ Озвучка сейчас недоступна. Текстовый бот продолжает работать без ограничений.",
-                )
+                await self._send_panel(chat_id, "⚠️ Озвучка сейчас недоступна. Текстовый бот продолжает работать без ограничений.")
             return False
 
     async def maybe_handle_command(self, raw: dict) -> bool:
@@ -222,13 +227,23 @@ class VoiceTelegramController:
             await self._send_panel(chat_id, f"✅ Voice mode = {mode.value}")
             return True
 
+        if text in _IDENTITY_BUTTONS:
+            identity, voice_name = _IDENTITY_BUTTONS[text]
+            try:
+                self.profiles.patch(chat_id, {"voice_identity": identity, "tts_voice": voice_name})
+            except Exception:
+                pass
+            label = "CROWN // FEMALE" if identity == "female" else "CROWN // MALE"
+            await self._send_panel(chat_id, f"✅ Голосовая идентичность: {label}")
+            return True
+
         if text in _VOICE_BUTTONS:
             voice_name = _VOICE_BUTTONS[text]
             try:
                 self.profiles.patch(chat_id, {"tts_voice": voice_name})
             except Exception:
                 pass
-            await self._send_panel(chat_id, f"✅ Голос переключён: {voice_name.upper()}")
+            await self._send_panel(chat_id, f"✅ Тембр переключён: {voice_name.upper()}")
             return True
 
         if text in _TEST_BUTTONS:
