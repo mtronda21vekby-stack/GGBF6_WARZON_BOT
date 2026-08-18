@@ -86,15 +86,9 @@ class CrownIntelLedger:
         digest = _content_hash(document)
         previous = self.latest_snapshot(game)
         if previous.get("content_hash") == digest:
-            return {"changed": False, "content_hash": digest, "game": game}
+            return {"changed": False, "baseline": False, "content_hash": digest, "game": game}
 
         blocks = [_norm(x) for x in getattr(document, "blocks", ()) if _norm(x)]
-        old_blocks = [_norm(x) for x in (previous.get("blocks") or []) if _norm(x)]
-        old_set, new_set = set(old_blocks), set(blocks)
-        added = [x for x in blocks if x not in old_set][:120]
-        removed = [x for x in old_blocks if x not in new_set][:120]
-        cats = _categories(added + removed)
-
         snapshot = {
             "game": game,
             "source_url": str(getattr(document, "url", "") or ""),
@@ -106,9 +100,21 @@ class CrownIntelLedger:
         }
         self._rows("POST", "bco_game_intel_snapshots", params={"on_conflict": "game,content_hash"}, payload=snapshot, prefer="resolution=ignore-duplicates,return=minimal")
 
+        previous_hash = str(previous.get("content_hash") or "")
+        if not previous_hash:
+            # The first observed official document establishes a trusted baseline.
+            # It is not evidence that a change occurred during CROWN INTEL's watch window,
+            # therefore it must never generate Personal Meta delta or CROWN ALERT noise.
+            return {"changed": False, "baseline": True, "content_hash": digest, "game": game}
+
+        old_blocks = [_norm(x) for x in (previous.get("blocks") or []) if _norm(x)]
+        old_set, new_set = set(old_blocks), set(blocks)
+        added = [x for x in blocks if x not in old_set][:120]
+        removed = [x for x in old_blocks if x not in new_set][:120]
+        cats = _categories(added + removed)
         change = {
             "game": game,
-            "from_hash": str(previous.get("content_hash") or ""),
+            "from_hash": previous_hash,
             "to_hash": digest,
             "source_url": snapshot["source_url"],
             "published": snapshot["published"],
@@ -117,7 +123,7 @@ class CrownIntelLedger:
             "categories": cats,
         }
         self._rows("POST", "bco_game_intel_changes", params={"on_conflict": "game,to_hash"}, payload=change, prefer="resolution=ignore-duplicates,return=minimal")
-        return {"changed": True, **change}
+        return {"changed": True, "baseline": False, **change}
 
     def personalize(self, change: Mapping[str, Any], profile: Mapping[str, Any], *, query_text: str = "") -> PersonalImpact:
         categories = tuple(str(x) for x in (change.get("categories") or []) if x)

@@ -40,19 +40,27 @@ def doc(*blocks):
     )
 
 
-def test_ledger_records_snapshot_then_real_diff_only():
+def test_first_snapshot_is_baseline_then_only_real_diff_becomes_change():
     ledger = MemoryLedger()
+
     first = ledger.record_document(doc("Weapons", "Rifle damage 30"))
-    assert first["changed"] is True
+    assert first["changed"] is False
+    assert first["baseline"] is True
+    assert ledger.latest_change("warzone") == {}
+
     same = ledger.record_document(doc("Weapons", "Rifle damage 30"))
     assert same["changed"] is False
+    assert same["baseline"] is False
+    assert ledger.latest_change("warzone") == {}
+
     changed = ledger.record_document(doc("Weapons", "Rifle damage 27", "Recoil increased"))
     assert changed["changed"] is True
+    assert changed["baseline"] is False
     assert "weapons" in changed["categories"]
     assert "Rifle damage 27" in changed["added_blocks"]
     assert "Rifle damage 30" in changed["removed_blocks"]
     assert len(ledger.snapshots) == 2
-    assert len(ledger.changes) == 2
+    assert len(ledger.changes) == 1
 
 
 def test_personal_meta_suppresses_irrelevant_noise_and_promotes_weapon_change():

@@ -58,8 +58,8 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           from app.release import APP_VERSION, RELEASE_CONTRACT
-          assert APP_VERSION == '43.0.0'
-          assert RELEASE_CONTRACT == 'bco-personal-meta-v43'
+          assert APP_VERSION == '43.0.1'
+          assert RELEASE_CONTRACT == 'bco-personal-meta-baseline-v43.0.1'
           package=Path('app/services/operator_intelligence/__init__.py').read_text()
           wrapper=Path('app/services/operator_intelligence/orchestrated_service.py').read_text()
           orchestrator=Path('app/services/operator_intelligence/mission_orchestrator.py').read_text()
@@ -85,9 +85,9 @@ jobs:
           assert 'IDENTITY_DEFAULT_VOICES' in voice_backend and '"female": "marin"' in voice_backend and '"male": "cedar"' in voice_backend
           for marker in ('SiteIdentityAssertionVerifier','BLACKCROWN_SITE_BRIDGE_SECRET','x_bc_site_assertion','hmac.compare_digest','site_assertion_not_configured','/api/auth/session/verify','_ALLOWED_VERIFY_PATHS','site-session-verifier-v14'): assert marker in bridge
           for marker in ('zero_extra_paid_api','callofduty.com','ea.com','CROWN_INTEL_AUTONOMOUS_ENABLED','CROWN_INTEL_REFRESH_INTERVAL_S','warzone','bo7','bf6','ledger_enabled','last_change_count'): assert marker in crown_intel
-          for marker in ('bco_game_intel_snapshots','bco_game_intel_changes','content_hash','added_blocks','removed_blocks','PersonalImpact','personalize'): assert marker in ledger
+          for marker in ('bco_game_intel_snapshots','bco_game_intel_changes','content_hash','added_blocks','removed_blocks','PersonalImpact','personalize','baseline','first observed official document establishes a trusted baseline'): assert marker in ledger
           for marker in ('CROWN INTEL CHANGE','CROWN ALERT:','CROWN ALERT SUPPRESSED','build_crown_intel_ledger'): assert marker in engine
           assert 'bco_game_intel_snapshots' in migration and 'bco_game_intel_changes' in migration and 'enable row level security' in migration
           assert '_ALLOWED_HOSTS' in live and 'callofduty.com' in live and 'ea.com' in live
-          print('v43 release/personal-meta/crown-alert/game-ledger authority contract: clean')
+          print('v43.0.1 release/baseline-safe-personal-meta/crown-alert authority contract: clean')
           PY
