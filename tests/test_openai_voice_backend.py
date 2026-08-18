@@ -46,7 +46,7 @@ def test_voice_normalization_defaults_to_marin_and_profile_direction_is_bounded(
     assert "COACH" in coach
     assert "TEAMMATE" in teammate
     assert "spontaneous close conversation" in teammate
-    assert voice_speed({"voice": "COACH"}) == 1.0
+    assert voice_speed({"voice": "COACH"}) == 0.975
     assert voice_speed({"voice": "TEAMMATE"}) == 1.0
 
 
@@ -111,7 +111,7 @@ def test_openai_backend_requests_wav_with_selected_voice_and_natural_instruction
     assert payload["model"] == "gpt-4o-mini-tts"
     assert payload["voice"] == "coral"
     assert payload["response_format"] == "wav"
-    assert "speed" not in payload
+    assert payload["speed"] == 0.975
     assert "natural Russian" in payload["instructions"]
     assert "CORAL" in payload["instructions"]
     assert "spontaneous close conversation" in payload["instructions"]
