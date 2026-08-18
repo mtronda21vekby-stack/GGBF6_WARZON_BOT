@@ -25,7 +25,6 @@ _VOICE_BUTTONS = {
     "🎙 CORAL · WARM": "coral",
     "🎙 SHIMMER · LIGHT": "shimmer",
     "🎙 CEDAR · TACTICAL": "cedar",
-    # Backward compatibility for cached v22 keyboards.
     "🎙 CEDAR": "cedar",
     "🎙 MARIN": "marin",
 }
@@ -150,7 +149,7 @@ class VoiceTelegramController:
             f"Движок: {str(details.get('provider') or 'VOICE').upper()}{fallback}\n"
             f"Тембр: {str(details.get('voice') or 'MARIN').upper()}\n"
             f"Обработка: {str(details.get('mastering') or 'NATURAL').upper()}\n\n"
-            "🎤 Голосовые сообщения распознаются через STT и идут в тот же Intelligence Core, что и текст.\n"
+            "🎤 Входящие голосовые: ПОНИМАЮ. Voice note распознаётся через STT и идёт в тот же Intelligence Core, что и текст.\n"
             "🔁 SMART DUPLEX: говоришь голосом — получаешь полный текстовый ответ и короткую естественную голосовую версию.\n\n"
             "♀ CROWN // FEMALE — взрослый естественный женский tactical-intelligence профиль; базовый тембр MARIN.\n"
             "♂ CROWN // MALE — взрослый естественный мужской tactical-intelligence профиль; базовый тембр CEDAR.\n\n"
