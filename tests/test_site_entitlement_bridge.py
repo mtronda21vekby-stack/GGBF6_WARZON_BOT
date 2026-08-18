@@ -142,28 +142,52 @@ def test_status_response_does_not_expose_site_or_telegram_identity():
     run(scenario())
 
 
-def test_site_session_verifier_forwards_only_the_signed_cookie_and_matches_id():
+def test_site_session_verifier_uses_lightweight_crypto_endpoint_and_matches_id():
     observed = {}
 
     def handler(request: httpx.Request):
         observed["url"] = str(request.url)
         observed["cookie"] = request.headers.get("cookie")
-        return httpx.Response(200, json={"ok": True, "profile": {"id": "site-user-c"}})
+        return httpx.Response(200, json={"ok": True, "userId": "site-user-c", "issuedAt": 1, "expiresAt": 2})
 
     async def scenario():
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         verifier = SiteSessionVerifier(SimpleNamespace(), client=client)
         try:
-            verified = await verifier.verify(
-                token=SESSION_TOKEN,
-                expected_user_id="site-user-c",
-            )
+            verified = await verifier.verify(token=SESSION_TOKEN, expected_user_id="site-user-c")
             assert verified == "site-user-c"
         finally:
             await client.aclose()
 
     run(scenario())
     assert observed == {
-        "url": "https://blackcrown.work/api/me",
+        "url": "https://blackcrown.work/api/auth/session/verify",
         "cookie": f"bc_session={SESSION_TOKEN}",
     }
+
+
+def test_site_session_verifier_retains_explicit_legacy_api_me_compatibility():
+    def handler(request: httpx.Request):
+        return httpx.Response(200, json={"ok": True, "profile": {"id": "site-user-legacy"}})
+
+    async def scenario():
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        verifier = SiteSessionVerifier(
+            SimpleNamespace(blackcrown_session_verify_url="https://blackcrown.work/api/me"),
+            client=client,
+        )
+        try:
+            assert await verifier.verify(token=SESSION_TOKEN, expected_user_id="site-user-legacy") == "site-user-legacy"
+        finally:
+            await client.aclose()
+
+    run(scenario())
+
+
+def test_site_session_verifier_rejects_unapproved_verify_path():
+    try:
+        SiteSessionVerifier(SimpleNamespace(blackcrown_session_verify_url="https://blackcrown.work/account/telegram"))
+    except ValueError as exc:
+        assert str(exc) == "blackcrown_verify_url_invalid"
+    else:
+        raise AssertionError("unapproved session verifier path must fail closed")
