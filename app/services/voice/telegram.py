@@ -28,7 +28,7 @@ _VOICE_BUTTONS = {
     "🎙 CEDAR": "cedar",
     "🎙 MARIN": "marin",
 }
-_OPEN_BUTTONS = {"🎙 Голос: Тиммейт/Коуч", "🔊 Озвучка", "/voice"}
+_OPEN_BUTTONS = {"🎙 Голос", "🎙 Голос: Тиммейт/Коуч", "🔊 Озвучка", "/voice"}
 _SPEAK_BUTTONS = {"🔊 Озвучить ответ", "/speak"}
 _TEST_BUTTONS = {"🧪 Тест голоса", "/voice_test"}
 _TEST_LINE = (
