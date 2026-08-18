@@ -13,8 +13,8 @@ def test_operator_rollbacks_remain_independent_from_current_release(monkeypatch)
     monkeypatch.setenv("REGIME_CHANGE_DETECTION_ENABLED", "0")
     monkeypatch.setenv("MISSION_ORCHESTRATOR_ENABLED", "0")
     settings = Settings()
-    assert APP_VERSION == "40.2.0"
-    assert RELEASE_CONTRACT == "bco-crown-voice-command-console-v40.2"
+    assert APP_VERSION == "41.0.0"
+    assert RELEASE_CONTRACT == "bco-site-identity-assertion-v41"
     assert settings.operator_intelligence_enabled is False
     assert settings.adaptive_mission_control_enabled is False
     assert settings.mission_vod_evidence_fusion_enabled is False
