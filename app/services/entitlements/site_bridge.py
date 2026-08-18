@@ -17,8 +17,9 @@ from app.services.entitlements.service import EntitlementStatus, PremiumEntitlem
 
 log = logging.getLogger("bco.entitlements.site_bridge")
 
-_DEFAULT_VERIFY_URL = "https://blackcrown.work/api/me"
+_DEFAULT_VERIFY_URL = "https://blackcrown.work/api/auth/session/verify"
 _ALLOWED_VERIFY_HOSTS = {"blackcrown.work", "www.blackcrown.work"}
+_ALLOWED_VERIFY_PATHS = {"/api/auth/session/verify", "/api/me"}
 _MAX_BODY_BYTES = 2_048
 _ASSERTION_VERSION = "v1"
 _ASSERTION_MAX_SKEW_S = 90
@@ -111,15 +112,16 @@ class SiteIdentityAssertionVerifier:
 
 
 class SiteSessionVerifier:
-    """Legacy fallback: independently asks blackcrown.work to verify its signed session cookie."""
+    """Fallback verifier using the site's cryptographic session-verification endpoint."""
 
     def __init__(self, settings: Any, *, client: httpx.AsyncClient | None = None):
         raw_url = str(getattr(settings, "blackcrown_session_verify_url", "") or _DEFAULT_VERIFY_URL).strip()
         parsed = urlsplit(raw_url)
-        if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_VERIFY_HOSTS or parsed.path != "/api/me":
+        if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_VERIFY_HOSTS or parsed.path not in _ALLOWED_VERIFY_PATHS:
             raise ValueError("blackcrown_verify_url_invalid")
         timeout_s = max(2.0, min(float(getattr(settings, "site_session_verify_timeout_s", 10.0) or 10.0), 20.0))
         self._url = raw_url
+        self._legacy_profile_shape = parsed.path == "/api/me"
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(timeout_s))
 
@@ -137,7 +139,7 @@ class SiteSessionVerifier:
             headers={
                 "accept": "application/json",
                 "cookie": f"bc_session={safe_token}",
-                "user-agent": "BLACK-CROWN-OPS/site-session-verifier-v13",
+                "user-agent": "BLACK-CROWN-OPS/site-session-verifier-v14",
             },
         )
         if response.status_code != 200:
@@ -146,8 +148,12 @@ class SiteSessionVerifier:
             payload = response.json()
         except Exception as exc:
             raise PermissionError("auth_required") from exc
-        profile = payload.get("profile") if isinstance(payload, dict) else None
-        verified = _safe_site_user(profile.get("id") if isinstance(profile, dict) else "")
+        verified = ""
+        if isinstance(payload, dict):
+            verified = _safe_site_user(payload.get("userId"))
+            if not verified and self._legacy_profile_shape:
+                profile = payload.get("profile")
+                verified = _safe_site_user(profile.get("id") if isinstance(profile, dict) else "")
         if not verified:
             raise PermissionError("auth_required")
         if verified != expected:
