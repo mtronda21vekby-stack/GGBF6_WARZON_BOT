@@ -58,21 +58,21 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           from app.release import APP_VERSION, RELEASE_CONTRACT
-          assert APP_VERSION == '38.0.0'
-          assert RELEASE_CONTRACT == 'bco-ecosystem-i18n-admin-analytics-v38'
+          assert APP_VERSION == '40.2.0'
+          assert RELEASE_CONTRACT == 'bco-crown-voice-command-console-v40.2'
           package=Path('app/services/operator_intelligence/__init__.py').read_text()
           wrapper=Path('app/services/operator_intelligence/orchestrated_service.py').read_text()
           orchestrator=Path('app/services/operator_intelligence/mission_orchestrator.py').read_text()
           strategy_ui=Path('app/webapp/static/bco.strategy.js').read_text()
           orch_ui=Path('app/webapp/static/bco.orchestrator.js').read_text()
           i18n=Path('app/i18n.py').read_text(); web_i18n=Path('app/webapp/static/bco.i18n.js').read_text(); router=Path('app/core/router.py').read_text(); analytics=Path('app/services/analytics/admin_usage.py').read_text(); brain_patch=Path('app/services/brain/locale_patch.py').read_text()
+          voice_ui=Path('app/ui/crown_voice_console.py').read_text(); console=Path('app/services/telegram/command_console.py').read_text(); voice_backend=Path('app/services/voice/openai_backend.py').read_text()
           assert 'OrchestratedOperatorIntelligenceService as OperatorIntelligenceService' in package
           assert 'CurrentOperatorIntelligenceService' in wrapper
           assert 'bco_mission_orchestrator_v36' in orchestrator
           assert 'explicit_operator_report_only' in orchestrator
           for marker in ('ASSOCIATION ≠ CAUSATION','EFFECTIVENESS ≠ CAUSAL PROOF','PORTFOLIO PRIOR ≠ CAUSAL PROOF','EXPLORATION ≠ RANDOMNESS','STALE ≠ FALSE','SHIFT ≠ CAUSE','ONE SESSION ≠ REGIME'): assert marker in strategy_ui
           for marker in ('EXPLICIT OUTCOME ONLY','VOD CANNOT ADVANCE STAGE','STAGE ≠ PLAYER TRAIT'): assert marker in orch_ui
-          # v38 locale: Telegram language, typed-script detection, manual override and Mini App locale all converge on RU/EN.
           assert 'detect_text_locale' in i18n and 'language_override' in i18n
           assert 'initDataUnsafe?.user?.language_code' in web_i18n
           assert 'document.documentElement.lang = locale' in web_i18n
@@ -80,5 +80,9 @@ jobs:
           assert 'BCO_ADMIN_TELEGRAM_USER_ID' in router and '/adminstats' in router
           assert 'server-side Supabase activity ledger' in analytics
           assert 'Respond in English' in brain_patch and 'Respond in Russian' in brain_patch
-          print('v38 release/i18n/admin analytics contract: clean')
+          # v40.2 production truth: the actual inline COMMAND CONSOLE must expose first-class Female/Male CROWN identities.
+          for marker in ('CROWN VOICE // LIVE CONTROL','♀ FEMALE','♂ MALE','ON-DEMAND'): assert marker in voice_ui
+          for marker in ('bco:set:voiceid:female','bco:set:voiceid:male','voice_identity','tts_voice'): assert marker in console
+          assert 'IDENTITY_DEFAULT_VOICES' in voice_backend and '"female": "marin"' in voice_backend and '"male": "cedar"' in voice_backend
+          print('v40.2 release/voice/identity authority contract: clean')
           PY
