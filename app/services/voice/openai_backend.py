@@ -14,6 +14,8 @@ OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
 DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
 DEFAULT_TTS_VOICE = "marin"
 ALLOWED_TTS_VOICES = frozenset({"alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse", "marin", "cedar"})
+ALLOWED_VOICE_IDENTITIES = frozenset({"female", "male"})
+IDENTITY_DEFAULT_VOICES = {"female": "marin", "male": "cedar"}
 
 
 def normalize_tts_voice(value: Any, fallback: str = DEFAULT_TTS_VOICE) -> str:
@@ -22,6 +24,11 @@ def normalize_tts_voice(value: Any, fallback: str = DEFAULT_TTS_VOICE) -> str:
         return requested
     normalized_fallback = str(fallback or DEFAULT_TTS_VOICE).strip().casefold()
     return normalized_fallback if normalized_fallback in ALLOWED_TTS_VOICES else DEFAULT_TTS_VOICE
+
+
+def normalize_voice_identity(value: Any) -> str:
+    requested = str(value or "").strip().casefold()
+    return requested if requested in ALLOWED_VOICE_IDENTITIES else ""
 
 
 def _profile_value(profile: Mapping[str, Any], *keys: str, fallback: str = "") -> str:
@@ -49,11 +56,11 @@ def _content_direction(text: str) -> str:
 
 
 def _voice_character(profile: Mapping[str, Any]) -> str:
-    identity = str(profile.get("voice_identity") or "").strip().casefold()
+    identity = normalize_voice_identity(profile.get("voice_identity"))
     if identity == "female":
-        return "Use an adult original female tactical-intelligence delivery: precise, calm, controlled, premium, authoritative without shouting; never childish, seductive, cartoonish or imitative of a real person."
+        return "Use an adult original female tactical-intelligence delivery: natural, calm, confident and premium. Keep a mature conversational register with soft authority; never childish, seductive, breathy, cartoonish, theatrical or imitative of a real person."
     if identity == "male":
-        return "Use an adult original male tactical-intelligence delivery: grounded, composed, natural and highly intelligible; no trailer voice, growl or artificial bass exaggeration."
+        return "Use an adult original male tactical-intelligence delivery: grounded, composed, natural and highly intelligible. Keep a mature conversational register with restrained authority; no trailer voice, growl, radio performance or artificial bass exaggeration."
     voice = normalize_tts_voice(profile.get("tts_voice"))
     if voice == "marin": return "Use a warm, modern, soft and confident synthetic delivery with light expressive color and no artificial sweetness."
     if voice == "coral": return "Use a warm, friendly and grounded synthetic delivery with relaxed energy and clean articulation."
@@ -75,6 +82,7 @@ def voice_instructions(profile: Mapping[str, Any] | None, text: str = "") -> str
         "Do not imitate or reference any real person. This is an original synthetic BLACK CROWN voice identity.",
         "Use relaxed connected speech, natural micro-pauses and uneven emphasis; do not over-enunciate every word or stress every sentence equally.",
         "Avoid a repetitive falling cadence at the end of every sentence; group related phrases into one natural thought and breathe when the idea changes.",
+        "Keep the first phrase clean and immediate. Do not add filler sounds, fake breaths, stage whispers, verbal tics or performative pauses.",
         "Do not read markdown, emoji, URLs, separators, UI labels or BLACK CROWN headers aloud.",
         "Preserve negations, numbers and tactical meaning exactly.", _voice_character(data)]
     if bool(data.get("_bco_voice_reply")):
@@ -106,13 +114,20 @@ class OpenAITTSBackend:
     @property
     def configured(self) -> bool: return bool(self._api_key and self.model)
     def voice_for(self, profile: Mapping[str, Any] | None) -> str:
-        data = dict(profile or {}); explicit = str(data.get("tts_voice") or "").strip(); return normalize_tts_voice(explicit, self.default_voice) if explicit else self.default_voice
+        data = dict(profile or {})
+        explicit = str(data.get("tts_voice") or "").strip()
+        if explicit:
+            return normalize_tts_voice(explicit, self.default_voice)
+        identity = normalize_voice_identity(data.get("voice_identity"))
+        if identity:
+            return IDENTITY_DEFAULT_VOICES[identity]
+        return self.default_voice
     async def close(self) -> None:
         if self._owns_client: await self._client.aclose()
     async def _download_once(self, *, text: str, output: Path, profile: Mapping[str, Any]) -> Path:
         if not self.configured: raise RuntimeError("OpenAI TTS is not configured")
         payload = {"model": self.model, "voice": self.voice_for(profile), "input": str(text or "")[:4096], "instructions": voice_instructions(profile, text)[:4096], "response_format": "wav", "stream_format": "audio", "speed": voice_speed(profile)}
-        headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json", "Accept": "audio/wav, application/octet-stream", "User-Agent": "BLACK-CROWN-OPS/voice-intelligence-v38", "X-Client-Request-Id": str(uuid.uuid4())}
+        headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json", "Accept": "audio/wav, application/octet-stream", "User-Agent": "BLACK-CROWN-OPS/voice-aaa-v40", "X-Client-Request-Id": str(uuid.uuid4())}
         output.parent.mkdir(parents=True, exist_ok=True); part = output.with_suffix(output.suffix + ".part"); part.unlink(missing_ok=True); total = 0
         try:
             async with self._client.stream("POST", OPENAI_SPEECH_URL, headers=headers, json=payload) as response:
