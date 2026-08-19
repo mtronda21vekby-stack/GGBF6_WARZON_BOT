@@ -43,27 +43,20 @@ class CrownAfterActionService:
             out.append({"metric": str(key)[:40], "before": bv, "after": av, "delta": delta})
         return out[:12]
 
-    def _session_vod_evidence(self, chat_id: int, crown_session_id: str, mission_id: str) -> list[dict[str, Any]]:
+    def _progression(self, chat_id: int) -> list[dict[str, Any]]:
         fn = getattr(self.store, "list_progression_events", None)
-        if not callable(fn):
-            return []
-        try:
-            rows = fn(int(chat_id), 180)
-        except TypeError:
-            rows = fn(int(chat_id))
-        except Exception:
-            return []
+        if not callable(fn): return []
+        try: rows = fn(int(chat_id), 220)
+        except TypeError: rows = fn(int(chat_id))
+        except Exception: return []
+        return [dict(x) for x in list(rows or []) if isinstance(x, Mapping)]
+
+    def _session_vod_evidence(self, rows: list[dict[str, Any]], crown_session_id: str, mission_id: str) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
-        for raw in list(rows or []):
-            if not isinstance(raw, Mapping):
-                continue
-            row = dict(raw)
-            if str(row.get("type") or "") != "operator_mission_evidence":
-                continue
-            if str(row.get("mission_id") or "") != str(mission_id or ""):
-                continue
-            if crown_session_id and str(row.get("crown_session_id") or "") != crown_session_id:
-                continue
+        for row in rows:
+            if str(row.get("type") or "") != "operator_mission_evidence": continue
+            if str(row.get("mission_id") or "") != str(mission_id or ""): continue
+            if crown_session_id and str(row.get("crown_session_id") or "") != crown_session_id: continue
             out.append({
                 "crown_session_id": str(row.get("crown_session_id") or "")[:64] or None,
                 "mission_id": str(row.get("mission_id") or "")[:64],
@@ -80,45 +73,58 @@ class CrownAfterActionService:
         out.sort(key=lambda x: str(x.get("at") or ""), reverse=True)
         return out[:4]
 
+    def _session_engagements(self, rows: list[dict[str, Any]], crown_session_id: str, mission_id: str) -> list[dict[str, Any]]:
+        matches = []
+        for row in rows:
+            if str(row.get("type") or "") != "vod_engagement_intelligence": continue
+            if str(row.get("mission_id") or "") != str(mission_id or ""): continue
+            if crown_session_id and str(row.get("crown_session_id") or "") != crown_session_id: continue
+            matches.extend(list(row.get("engagements") or [])[:12])
+        out = []
+        for item in matches[:12]:
+            if not isinstance(item, Mapping): continue
+            out.append({
+                "engagement_id": str(item.get("engagement_id") or "")[:32],
+                "timestamp": str(item.get("timestamp") or "")[:32] or None,
+                "entry": str(item.get("entry") or "")[:420] or None,
+                "first_damage": item.get("first_damage"),
+                "position": str(item.get("position") or "")[:420] or None,
+                "decision": str(item.get("decision") or "")[:320] or None,
+                "result": str(item.get("result") or "")[:320] or None,
+                "correction": str(item.get("correction") or "")[:360] or None,
+                "category": str(item.get("category") or "unknown")[:32],
+                "confidence": item.get("confidence"),
+                "sampled_frame_only": True,
+            })
+        return out
+
     async def complete(self, *, chat_id: int, telegram_user_id: int, mission_id: str, outcome: str, metrics: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        cid = int(chat_id)
-        uid = int(telegram_user_id)
-        mission_id = str(mission_id or "")[:64]
-        outcome = str(outcome or "reported")[:32]
+        cid = int(chat_id); uid = int(telegram_user_id)
+        mission_id = str(mission_id or "")[:64]; outcome = str(outcome or "reported")[:32]
         session_service = CrownSessionService(store=self.store, profiles=self.profiles, entitlements=self.entitlements)
         before = await session_service.snapshot(chat_id=cid, telegram_user_id=uid)
         cycle_service = CrownSessionCycleService(self.store)
         cycle = cycle_service.current(cid, mission_id)
         crown_session_id = str((cycle or {}).get("crown_session_id") or "")[:64]
-        linked_vod = self._session_vod_evidence(cid, crown_session_id, mission_id)
+        rows = self._progression(cid)
+        linked_vod = self._session_vod_evidence(rows, crown_session_id, mission_id)
+        engagements = self._session_engagements(rows, crown_session_id, mission_id)
 
         operator = OrchestratedOperatorIntelligenceService.from_components(store=self.store, profiles=self.profiles)
         completed = operator.complete(cid, mission_id, outcome=outcome, metrics=dict(metrics or {}))
         cycle_close = cycle_service.close(cid, crown_session_id, mission_id, outcome) if crown_session_id else None
         after = await session_service.snapshot(chat_id=cid, telegram_user_id=uid)
 
-        before_mistakes = self._mistake_labels(before)
-        after_mistakes = self._mistake_labels(after)
+        before_mistakes = self._mistake_labels(before); after_mistakes = self._mistake_labels(after)
         new_weaknesses = [x for x in after_mistakes if x not in before_mistakes]
         strategy = PremiumStrategyOutcomeService(self.store).snapshot(cid)
         next_mission = after.get("next_mission") or after.get("mission") or completed.get("next_mission")
 
         return {
-            "schema": "crown-after-action-v2",
+            "schema": "crown-after-action-v3",
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "crown_session": {
-                "id": crown_session_id or None,
-                "status": "closed" if cycle_close else "untracked",
-                "mission_id": mission_id,
-                "evidence_items": len(linked_vod),
-                "authority": "server_progression_event" if crown_session_id else "legacy_untracked",
-            },
-            "mission_outcome": {
-                "mission_id": mission_id,
-                "outcome": outcome,
-                "explicit_operator_report": True,
-                "vod_auto_complete": False,
-            },
+            "crown_session": {"id": crown_session_id or None, "status": "closed" if cycle_close else "untracked", "mission_id": mission_id, "evidence_items": len(linked_vod), "engagements": len(engagements), "authority": "server_progression_event" if crown_session_id else "legacy_untracked"},
+            "mission_outcome": {"mission_id": mission_id, "outcome": outcome, "explicit_operator_report": True, "vod_auto_complete": False},
             "what_changed": {
                 "coverage_before": int((before.get("personal_meta") or {}).get("coverage") or 0),
                 "coverage_after": int((after.get("personal_meta") or {}).get("coverage") or 0),
@@ -128,6 +134,7 @@ class CrownAfterActionService:
             },
             "new_weaknesses": new_weaknesses[:4],
             "linked_vod_evidence": linked_vod,
+            "engagements": engagements,
             "strategy_outcome": {"latest": strategy.get("latest"), "association_not_causation": True},
             "next_mission": next_mission,
             "session": after,
@@ -135,6 +142,8 @@ class CrownAfterActionService:
                 "explicit_outcome_authoritative": True,
                 "vod_evidence_only": True,
                 "vod_must_match_session_and_mission": bool(crown_session_id),
+                "engagements_are_sampled_frame_observations": True,
+                "continuous_video_claimed": False,
                 "new_weakness_requires_new_persisted_evidence": True,
                 "strategy_effectiveness_is_associative": True,
                 "causal_claims": False,
