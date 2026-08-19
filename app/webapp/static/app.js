@@ -35,6 +35,7 @@
       return loadScript("/webapp/bco.crown-session.js","__BCO_CROWN_SESSION_V45_LOADED__")
         .catch((error)=>{window.__BCO_CROWN_SESSION_V45_LOADED__=false;console.warn("[BCO v45] CROWN SESSION unavailable; legacy surfaces remain active",error);return false;});
     })
+    .then(()=>loadScript("/webapp/bco.profile-projection.js","__BCO_PROFILE_PROJECTION_V49_LOADED__").catch((error)=>{window.__BCO_PROFILE_PROJECTION_V49_LOADED__=false;console.warn("[BCO v49] server profile projection unavailable",error);return false;}))
     .then(()=>loadScript("/webapp/bco.session-home.js","__BCO_SESSION_HOME_V45_LOADED__").catch((error)=>{window.__BCO_SESSION_HOME_V45_LOADED__=false;console.warn("[BCO v45] SESSION HOME unavailable; legacy home remains active",error);return false;}))
     .then(()=>loadScript("/webapp/bco.after-action.js","__BCO_AFTER_ACTION_V48_LOADED__").catch((error)=>{window.__BCO_AFTER_ACTION_V48_LOADED__=false;console.warn("[BCO v48] AFTER ACTION engagement review unavailable; session home remains active",error);return false;}))
     .then(()=>loadScript("/webapp/bco.operator.js","__BCO_OPERATOR_V25_LOADED__").catch((error)=>{window.__BCO_OPERATOR_V25_LOADED__=false;console.warn("[BCO] Operator Twin unavailable",error);return false;}))
