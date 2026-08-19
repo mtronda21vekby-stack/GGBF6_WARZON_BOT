@@ -9,18 +9,14 @@ from app.services.brain.intents import Intent, IntentResult
 from app.services.brain.knowledge_context import KnowledgeRequest
 from app.services.brain.live_official import OfficialPatchKnowledgeProvider
 from app.services.crown_session import CrownSessionService
+from app.services.session_cycle import CrownSessionCycleService
 
 
 _OFFICIAL = OfficialPatchKnowledgeProvider(ttl_s=900, timeout_s=6.0)
 
 
 class SessionBriefingService:
-    """Build a pre-session briefing from trusted player state + official current-game evidence.
-
-    The service is deliberately evidence-first: official patch evidence may inform
-    preparation, but it does not manufacture an "official meta ranking". Missing
-    squad data is surfaced as UNKNOWN instead of inferred from chat/profile noise.
-    """
+    """Build a pre-session briefing from trusted player state + official current-game evidence."""
 
     def __init__(self, *, store: Any, profiles: Any, entitlements: Any = None) -> None:
         self.store = store
@@ -68,6 +64,9 @@ class SessionBriefingService:
 
         profile = dict(session.get("profile") or {})
         game = str(profile.get("game") or "Warzone")[:40]
+        mission = dict(session.get("mission") or session.get("next_mission") or {})
+        cycle = CrownSessionCycleService(self.store).start(int(chat_id), mission)
+
         request = KnowledgeRequest(
             intent=IntentResult(Intent.PATCH_CURRENT, 1.0, needs_current_data=True, reason="prepare_session"),
             text=f"latest official patch changes relevant to {game} session preparation",
@@ -75,12 +74,18 @@ class SessionBriefingService:
         )
         official = await asyncio.to_thread(_OFFICIAL.query, request)
         official_payload = self._official_payload(official)
-        mission = session.get("mission") or session.get("next_mission")
         entitlement = dict(session.get("entitlement") or {})
 
         return {
             "schema": "crown-war-room-briefing-v1",
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "crown_session": {
+                "id": cycle.get("crown_session_id"),
+                "status": "prepared",
+                "mission_id": cycle.get("mission_id"),
+                "prepared_at": cycle.get("at"),
+                "authority": "server_progression_event",
+            },
             "identity": session.get("identity") or {},
             "world": {
                 "game": game,
@@ -109,5 +114,6 @@ class SessionBriefingService:
                 "official_meta_ranking_claimed": False,
                 "unknown_squad_not_inferred": True,
                 "mission_authority": "operator_intelligence",
+                "session_cycle_persisted": True,
             },
         }
