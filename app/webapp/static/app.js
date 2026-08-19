@@ -30,7 +30,12 @@
       }
       return loadScript("/webapp/bco.live.js", "__BCO_LIVE_LAYER_LOADED__");
     })
-    .then((loaded)=>{if(loaded!==false){window.__BCO_LIVE_LAYER_LOADED__=true;window.__BCO_V18_READY__=true;}return loadScript("/webapp/bco.operator.js","__BCO_OPERATOR_V25_LOADED__").catch((error)=>{window.__BCO_OPERATOR_V25_LOADED__=false;console.warn("[BCO] Operator Twin unavailable",error);return false;});})
+    .then((loaded)=>{
+      if(loaded!==false){window.__BCO_LIVE_LAYER_LOADED__=true;window.__BCO_V18_READY__=true;}
+      return loadScript("/webapp/bco.crown-session.js","__BCO_CROWN_SESSION_V45_LOADED__")
+        .catch((error)=>{window.__BCO_CROWN_SESSION_V45_LOADED__=false;console.warn("[BCO v45] CROWN SESSION unavailable; legacy surfaces remain active",error);return false;});
+    })
+    .then(()=>loadScript("/webapp/bco.operator.js","__BCO_OPERATOR_V25_LOADED__").catch((error)=>{window.__BCO_OPERATOR_V25_LOADED__=false;console.warn("[BCO] Operator Twin unavailable",error);return false;}))
     .then(()=>loadScript("/webapp/bco.war-room.js","__BCO_WAR_ROOM_V44_LOADED__").catch((error)=>{window.__BCO_WAR_ROOM_V44_LOADED__=false;console.warn("[BCO v44] War Room surface unavailable; Operator remains active",error);return false;}))
     .then(()=>loadScript("/webapp/bco.orchestrator.js","__BCO_MISSION_ORCHESTRATOR_V36_LOADED__").catch((error)=>{window.__BCO_MISSION_ORCHESTRATOR_V36_LOADED__=false;console.warn("[BCO v36] Mission Orchestrator unavailable",error);return false;}))
     .then(()=>loadScript("/webapp/bco.deep-history.js","__BCO_DEEP_HISTORY_V29_LOADED__").catch((error)=>{window.__BCO_DEEP_HISTORY_V29_LOADED__=false;console.warn("[BCO v29] Deep History unavailable",error);return false;}))
