@@ -38,6 +38,7 @@
     .then(()=>loadScript("/webapp/bco.ecosystem-shell.js","__BCO_ECOSYSTEM_SHELL_V49_LOADED__").catch((error)=>{console.warn("[BCO v49] ecosystem shell unavailable",error);return false;}))
     .then(()=>loadScript("/webapp/bco.ecosystem-parity.js","__BCO_ECOSYSTEM_PARITY_V49_LOADED__").catch(()=>false))
     .then(()=>loadScript("/webapp/bco.aaa-surfaces.js","__BCO_AAA_SURFACES_V50__").catch((error)=>{console.warn("[BCO v50] AAA surfaces unavailable",error);return false;}))
+    .then(()=>loadScript("/webapp/bco.home-v50.js","__BCO_HOME_V50__").catch((error)=>{console.warn("[BCO v50] cinematic home unavailable",error);return false;}))
     .then(()=>{try{window.BCO_I18N?.apply();}catch(_){}return true;})
     .catch((error)=>{window.__BCO_V18_READY__=false;console.error("[BCO] boot coordinator failed",error);throw error;});
 })();
