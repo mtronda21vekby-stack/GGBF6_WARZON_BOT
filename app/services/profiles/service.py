@@ -7,6 +7,7 @@ import secrets
 from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping
 
+from app.services.identity.core import CrownIdentityCore
 from app.services.profiles.models import PlayerIntelligence
 
 
@@ -34,6 +35,20 @@ class ProfileService:
     def _context_token(self, chat_id: int) -> str:
         return hmac.new(self._context_secret, str(int(chat_id)).encode("utf-8"), hashlib.sha256).hexdigest()
 
+    def _canonical_identity_projection(self, telegram_user_id: int) -> dict[str, Any]:
+        """Resolve canonical identity server-side without making profile JSON authoritative."""
+        try:
+            projection = CrownIdentityCore(self.store).project_telegram(int(telegram_user_id))
+        except Exception:
+            projection = None
+        if not projection:
+            return {}
+        return {
+            "black_crown_user_id": str(projection.get("black_crown_user_id") or ""),
+            "crown_identity_status": str(projection.get("identity_status") or "provisional"),
+            "crown_account_status": str(projection.get("account_status") or "provisional"),
+        }
+
     def get(self, chat_id: int) -> Dict[str, Any]:
         prof: Dict[str, Any] = {}
         if self.store and hasattr(self.store, "get_profile"):
@@ -47,6 +62,11 @@ class ProfileService:
             out[str(key)] = value
         for key, value in DEFAULT_PROFILE.items():
             out.setdefault(key, value)
+
+        # Canonical identity is a server-side projection. It is shared by the
+        # Telegram bot and trusted Mini App context but is never read from or
+        # trusted from client profile JSON.
+        out.update(self._canonical_identity_projection(int(chat_id)))
 
         # Internal context proof: generated server-side and never persisted.
         out["_chat_id"] = int(chat_id)
@@ -74,6 +94,10 @@ class ProfileService:
             str(k): v for k, v in (patch or {}).items()
             if v is not None and not str(k).startswith("_")
         }
+        # Canonical identity is server-owned and may never be patched from a
+        # Telegram command, Mini App payload, or client profile mutation.
+        for protected in ("black_crown_user_id", "crown_identity_status", "crown_account_status"):
+            clean.pop(protected, None)
         # New Intelligence Core names and legacy Router names remain equivalent
         # during the incremental migration.
         if clean.get("brain_mode") is not None and clean.get("difficulty") is None:
