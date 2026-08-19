@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.services.analytics.command_center import CommandCenterService
+from app.services.crown_session import CrownSessionService
 from app.services.operator_intelligence import MissionConflict
 from app.services.operator_intelligence.adaptive_strategy import PremiumAdaptiveStrategyService
 from app.services.operator_intelligence.deep_history import PremiumDeepHistoryService
@@ -116,6 +117,20 @@ def _snapshot_response(init_data: str):
     return _no_store({"ok": True, "trusted": True, "player": snapshot, "operator_intelligence": operator})
 
 
+@router.get("/webapp/api/crown-session")
+async def crown_session_get(
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    """Trusted Mini App bootstrap: canonical identity + profile + Twin + mission + meta + entitlement."""
+    chat_id, user_id, _ = _trusted_meta(x_telegram_init_data or "")
+    data = await CrownSessionService(
+        store=APP_STORE,
+        profiles=APP_PROFILES,
+        entitlements=APP_ENTITLEMENTS,
+    ).snapshot(chat_id=chat_id, telegram_user_id=user_id)
+    return _no_store({"ok": True, "trusted": True, "data": data})
+
+
 @router.get("/webapp/api/intelligence")
 def command_center_intelligence_get(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
@@ -168,13 +183,7 @@ async def operator_strategy_get(
     regime_enabled = _env_on("REGIME_CHANGE_DETECTION_ENABLED")
     regime = PlayerRegimeChangeDetector.snapshot(deep_history) if regime_enabled else None
 
-    data = PremiumAdaptiveStrategyService().build(
-        deep_history,
-        operator,
-        portfolio,
-        freshness,
-        regime,
-    )
+    data = PremiumAdaptiveStrategyService().build(deep_history, operator, portfolio, freshness, regime)
     strategy_id = outcome_loop.record_issue(chat_id, data)
     effectiveness = outcome_loop.snapshot(chat_id)
     data = dict(data)
