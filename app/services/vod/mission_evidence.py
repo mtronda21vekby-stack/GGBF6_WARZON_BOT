@@ -6,55 +6,24 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from app.services.session_cycle import CrownSessionCycleService
+
 
 EVENT_TYPE = "operator_mission_evidence"
 SOURCE = "vision_sampled_frames"
 
 _FOCUS_RULES = {
-    "aim": {
-        "categories": {"aim"},
-        "keywords": ("aim", "accuracy", "прицел", "recoil", "отдач", "tracking", "трекинг", "crosshair", "кроссхейр"),
-    },
-    "movement": {
-        "categories": {"movement"},
-        "keywords": ("movement", "slide", "слайд", "strafe", "стрейф", "jump", "прыж", "exit", "мув"),
-    },
-    "positioning": {
-        "categories": {"positioning", "awareness"},
-        "keywords": ("position", "пози", "cover", "укрыт", "angle", "угол", "height", "высот", "exposed", "open field"),
-    },
-    "rotations": {
-        "categories": {"positioning", "awareness", "decision"},
-        "keywords": ("rotation", "rotate", "ротац", "zone", "зон", "gas", "газ", "circle", "круг", "timing", "тайминг", "late"),
-    },
-    "decision": {
-        "categories": {"decision", "utility", "awareness"},
-        "keywords": ("decision", "решен", "engage", "reset", "ресет", "push", "пуш", "trade", "timing", "тайминг"),
-    },
-    "aggression": {
-        "categories": {"decision", "positioning"},
-        "keywords": ("aggression", "агресс", "greed", "жад", "chase", "догон", "overpush", "перепуш", "passive", "пассив"),
-    },
-    "survivability": {
-        "categories": {"decision", "positioning", "awareness"},
-        "keywords": ("surviv", "выжива", "death", "смерт", "escape", "выход", "disengage", "third party", "газ"),
-    },
-    "comms": {
-        "categories": set(),
-        "keywords": ("comms", "communication", "коммуникац", "callout", "колл", "инфо"),
-    },
-    "discipline": {
-        "categories": {"decision", "movement", "positioning"},
-        "keywords": ("repeat peek", "повторный пик", "discipline", "дисцип", "panic", "паник", "rule", "habit", "привыч"),
-    },
-    "consistency": {
-        "categories": set(),
-        "keywords": ("consistency", "стабиль", "variance", "разброс", "repeat", "повтор"),
-    },
-    "tilt_susceptibility": {
-        "categories": set(),
-        "keywords": ("tilt", "тильт", "rage", "эмоц", "revenge", "месть"),
-    },
+    "aim": {"categories": {"aim"}, "keywords": ("aim", "accuracy", "прицел", "recoil", "отдач", "tracking", "трекинг", "crosshair", "кроссхейр")},
+    "movement": {"categories": {"movement"}, "keywords": ("movement", "slide", "слайд", "strafe", "стрейф", "jump", "прыж", "exit", "мув")},
+    "positioning": {"categories": {"positioning", "awareness"}, "keywords": ("position", "пози", "cover", "укрыт", "angle", "угол", "height", "высот", "exposed", "open field")},
+    "rotations": {"categories": {"positioning", "awareness", "decision"}, "keywords": ("rotation", "rotate", "ротац", "zone", "зон", "gas", "газ", "circle", "круг", "timing", "тайминг", "late")},
+    "decision": {"categories": {"decision", "utility", "awareness"}, "keywords": ("decision", "решен", "engage", "reset", "ресет", "push", "пуш", "trade", "timing", "тайминг")},
+    "aggression": {"categories": {"decision", "positioning"}, "keywords": ("aggression", "агресс", "greed", "жад", "chase", "догон", "overpush", "перепуш", "passive", "пассив")},
+    "survivability": {"categories": {"decision", "positioning", "awareness"}, "keywords": ("surviv", "выжива", "death", "смерт", "escape", "выход", "disengage", "third party", "газ")},
+    "comms": {"categories": set(), "keywords": ("comms", "communication", "коммуникац", "callout", "колл", "инфо")},
+    "discipline": {"categories": {"decision", "movement", "positioning"}, "keywords": ("repeat peek", "повторный пик", "discipline", "дисцип", "panic", "паник", "rule", "habit", "привыч")},
+    "consistency": {"categories": set(), "keywords": ("consistency", "стабиль", "variance", "разброс", "repeat", "повтор")},
+    "tilt_susceptibility": {"categories": set(), "keywords": ("tilt", "тильт", "rage", "эмоц", "revenge", "месть")},
 }
 
 
@@ -98,8 +67,7 @@ def _active_mission(events: list[dict[str, Any]]) -> dict[str, Any] | None:
         and str(row.get("status") or "").casefold() == "completed"
     }
     accepted = [
-        row
-        for row in events
+        row for row in events
         if str(row.get("type") or "") == "operator_mission"
         and str(row.get("status") or "").casefold() == "accepted"
         and str(row.get("mission_id") or "").strip()
@@ -131,7 +99,7 @@ class MissionEvidenceFusionService:
         if not callable(fn):
             return []
         try:
-            return [dict(row) for row in list(fn(int(chat_id)) or [])[:100] if isinstance(row, Mapping)]
+            return [dict(row) for row in list(fn(int(chat_id)) or [])[:160] if isinstance(row, Mapping)]
         except Exception:
             return []
 
@@ -143,15 +111,8 @@ class MissionEvidenceFusionService:
                 continue
             label = _clean(getattr(item, "label", ""), 240)
             category = _clean(getattr(item, "category", "unknown"), 32)
-            if not label or not _signal_matches(focus, category, label):
-                continue
-            signals.append({
-                "kind": "mistake",
-                "label": label,
-                "category": category or "unknown",
-                "confidence": round(confidence, 3),
-                "timestamp": "",
-            })
+            if label and _signal_matches(focus, category, label):
+                signals.append({"kind": "mistake", "label": label, "category": category or "unknown", "confidence": round(confidence, 3), "timestamp": ""})
 
         for item in list(getattr(result, "timeline", []) or [])[:16]:
             confidence = _confidence(getattr(item, "confidence", 0.0))
@@ -162,15 +123,8 @@ class MissionEvidenceFusionService:
             correction = _clean(getattr(item, "correction", ""), 180)
             category = _clean(getattr(item, "category", "unknown"), 32)
             combined = " ".join(x for x in (issue, decision, correction) if x)
-            if not combined or not _signal_matches(focus, category, combined):
-                continue
-            signals.append({
-                "kind": "timeline",
-                "label": issue or decision or correction,
-                "category": category or "unknown",
-                "confidence": round(confidence, 3),
-                "timestamp": _clean(getattr(item, "timestamp", ""), 32),
-            })
+            if combined and _signal_matches(focus, category, combined):
+                signals.append({"kind": "timeline", "label": issue or decision or correction, "category": category or "unknown", "confidence": round(confidence, 3), "timestamp": _clean(getattr(item, "timestamp", ""), 32)})
 
         deduped: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
@@ -195,22 +149,20 @@ class MissionEvidenceFusionService:
         if not mission_id:
             return None
 
+        cycle = CrownSessionCycleService(self.store).current(int(chat_id), mission_id)
         signals = self._signals(result, focus)
         categories = {str(item.get("category") or "") for item in signals if item.get("category")}
         if len(signals) >= 3 and len(categories) >= 2:
-            classification = "mission_relevant_evidence_high"
-            confidence = "high"
+            classification, confidence = "mission_relevant_evidence_high", "high"
         elif signals:
-            classification = "mission_relevant_evidence"
-            confidence = "medium" if len(signals) >= 2 else "low"
+            classification, confidence = "mission_relevant_evidence", ("medium" if len(signals) >= 2 else "low")
         else:
-            classification = "insufficient_relevant_evidence"
-            confidence = "unknown"
+            classification, confidence = "insufficient_relevant_evidence", "unknown"
 
-        limitations = _clean(getattr(result, "limitations", ""), 500)
         event = {
             "type": EVENT_TYPE,
             "status": "observed",
+            "crown_session_id": str((cycle or {}).get("crown_session_id") or "")[:64] or None,
             "mission_id": mission_id,
             "focus": focus,
             "mission_title": _clean(mission.get("title"), 140),
@@ -220,27 +172,23 @@ class MissionEvidenceFusionService:
             "signals": signals,
             "sampled_frames": len(list(getattr(result, "sampled_timestamps", []) or [])),
             "source": SOURCE,
-            "limitations": limitations,
+            "limitations": _clean(getattr(result, "limitations", ""), 500),
             "does_not_complete_mission": True,
+            "session_link_authority": "server_progression_event" if cycle else "mission_only_no_prepared_session",
             "at": _now_iso(),
         }
-
         add_progression = getattr(self.store, "add_progression_event", None)
-        if callable(add_progression):
-            try:
-                add_progression(int(chat_id), event)
-            except Exception:
-                return None
-        else:
+        if not callable(add_progression):
+            return None
+        try:
+            add_progression(int(chat_id), event)
+        except Exception:
             return None
 
         add_episode = getattr(self.store, "add_episode", None)
         if callable(add_episode):
             try:
-                add_episode(int(chat_id), {
-                    "kind": EVENT_TYPE,
-                    **{key: value for key, value in event.items() if key != "type"},
-                })
+                add_episode(int(chat_id), {"kind": EVENT_TYPE, **{key: value for key, value in event.items() if key != "type"}})
             except Exception:
                 pass
         return event
@@ -252,12 +200,6 @@ def format_mission_evidence(event: Mapping[str, Any] | None) -> str:
     title = _clean(event.get("mission_title"), 140) or "CURRENT MISSION"
     classification = _clean(event.get("classification"), 64)
     count = int(event.get("evidence_count") or 0)
-    if classification == "insufficient_relevant_evidence":
-        verdict = "Клип не дал достаточно релевантных визуальных сигналов по текущей миссии."
-    else:
-        verdict = f"Найдено релевантных визуальных сигналов: {count}."
-    return (
-        "\n\nMISSION EVIDENCE // " + title + "\n"
-        + verdict
-        + "\nЭто sampled-frame evidence, а не автоматический итог миссии. CLEAN/MIXED/FAILED подтверждает игрок после сессии."
-    )
+    verdict = "Клип не дал достаточно релевантных визуальных сигналов по текущей миссии." if classification == "insufficient_relevant_evidence" else f"Найдено релевантных визуальных сигналов: {count}."
+    linked = " CROWN SESSION linked." if event.get("crown_session_id") else ""
+    return "\n\nMISSION EVIDENCE // " + title + "\n" + verdict + linked + "\nЭто sampled-frame evidence, а не автоматический итог миссии. CLEAN/MIXED/FAILED подтверждает игрок после сессии."
