@@ -36,7 +36,7 @@
         .catch((error)=>{window.__BCO_CROWN_SESSION_V45_LOADED__=false;console.warn("[BCO v45] CROWN SESSION unavailable; legacy surfaces remain active",error);return false;});
     })
     .then(()=>loadScript("/webapp/bco.session-home.js","__BCO_SESSION_HOME_V45_LOADED__").catch((error)=>{window.__BCO_SESSION_HOME_V45_LOADED__=false;console.warn("[BCO v45] SESSION HOME unavailable; legacy home remains active",error);return false;}))
-    .then(()=>loadScript("/webapp/bco.after-action.js","__BCO_AFTER_ACTION_V46_LOADED__").catch((error)=>{window.__BCO_AFTER_ACTION_V46_LOADED__=false;console.warn("[BCO v46] AFTER ACTION unavailable; session home remains active",error);return false;}))
+    .then(()=>loadScript("/webapp/bco.after-action.js","__BCO_AFTER_ACTION_V47_LOADED__").catch((error)=>{window.__BCO_AFTER_ACTION_V47_LOADED__=false;console.warn("[BCO v47] AFTER ACTION unavailable; session home remains active",error);return false;}))
     .then(()=>loadScript("/webapp/bco.operator.js","__BCO_OPERATOR_V25_LOADED__").catch((error)=>{window.__BCO_OPERATOR_V25_LOADED__=false;console.warn("[BCO] Operator Twin unavailable",error);return false;}))
     .then(()=>loadScript("/webapp/bco.war-room.js","__BCO_WAR_ROOM_V44_LOADED__").catch((error)=>{window.__BCO_WAR_ROOM_V44_LOADED__=false;console.warn("[BCO v44] War Room surface unavailable; Operator remains active",error);return false;}))
     .then(()=>loadScript("/webapp/bco.orchestrator.js","__BCO_MISSION_ORCHESTRATOR_V36_LOADED__").catch((error)=>{window.__BCO_MISSION_ORCHESTRATOR_V36_LOADED__=false;console.warn("[BCO v36] Mission Orchestrator unavailable",error);return false;}))
