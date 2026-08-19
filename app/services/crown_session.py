@@ -11,12 +11,7 @@ from app.services.operator_intelligence.orchestrated_service import Orchestrated
 
 
 class CrownSessionService:
-    """Compose one trusted, read-only player session for every BLACK CROWN surface.
-
-    Legacy gameplay memory remains keyed by Telegram chat_id during the migration
-    window. The canonical black_crown_user_id is projected alongside it and is
-    the durable account identity for Website, Telegram Bot and Mini App.
-    """
+    """Compose one trusted, read-only player session for every BLACK CROWN surface."""
 
     def __init__(self, *, store: Any, profiles: Any, entitlements: Any = None) -> None:
         self.store = store
@@ -26,12 +21,20 @@ class CrownSessionService:
     @staticmethod
     def _public_entitlement(status: Any) -> dict[str, Any]:
         if status is None:
-            return {"linked": False, "premium": False, "entitlements": []}
+            return {
+                "linked": False,
+                "premium": False,
+                "entitlements": [],
+                "site_user_id": None,
+                "linked_at": None,
+            }
         raw = asdict(status) if is_dataclass(status) else dict(status) if isinstance(status, Mapping) else {}
+        site_user_id = str(raw.get("site_user_id") or "").strip()[:160] or None
         return {
             "linked": raw.get("linked") is True,
             "premium": raw.get("premium") is True,
             "entitlements": [str(x) for x in list(raw.get("entitlements") or [])[:100]],
+            "site_user_id": site_user_id,
             "linked_at": str(raw.get("linked_at") or "")[:64] or None,
         }
 
@@ -41,10 +44,7 @@ class CrownSessionService:
         identity = CrownIdentityCore(self.store).resolve_telegram(uid)
         profile = dict(self.profiles.get(cid) or {})
         player = CommandCenterService(store=self.store, profiles=self.profiles).snapshot(cid)
-        operator = OrchestratedOperatorIntelligenceService.from_components(
-            store=self.store,
-            profiles=self.profiles,
-        ).snapshot(cid)
+        operator = OrchestratedOperatorIntelligenceService.from_components(store=self.store, profiles=self.profiles).snapshot(cid)
 
         entitlement_status = None
         entitlement_state = "unavailable"
@@ -58,6 +58,7 @@ class CrownSessionService:
         canonical_id = identity.black_crown_user_id if identity is not None else str(profile.get("_black_crown_user_id") or "") or None
         identity_status = identity.status if identity is not None else str(profile.get("_identity_status") or "") or None
         account_status = identity.account_status if identity is not None else str(profile.get("_account_status") or "") or None
+        entitlement = self._public_entitlement(entitlement_status)
 
         return {
             "schema": "crown-session-v1",
@@ -81,9 +82,11 @@ class CrownSessionService:
                 "top_mistakes": player.get("top_mistakes") or [],
                 "trends": player.get("trends") or {},
             },
-            "entitlement": {
-                "authority": "server",
-                "state": entitlement_state,
-                **self._public_entitlement(entitlement_status),
+            "entitlement": {"authority": "server", "state": entitlement_state, **entitlement},
+            "ecosystem": {
+                "website": {"linked": entitlement["linked"], "site_user_id": entitlement["site_user_id"], "linked_at": entitlement["linked_at"]},
+                "telegram": {"linked": True, "telegram_user_id": uid},
+                "mini_app": {"trusted": True, "identity_source": "telegram_init_data"},
+                "canonical": bool(canonical_id),
             },
         }
