@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from app.services.after_action import CrownAfterActionService
 from app.services.analytics.command_center import CommandCenterService
 from app.services.crown_session import CrownSessionService
 from app.services.session_briefing import SessionBriefingService
@@ -39,10 +40,7 @@ def bind_runtime(*, store=None, profiles=None, entitlements=None) -> None:
     APP_STORE = store
     APP_PROFILES = profiles
     APP_ENTITLEMENTS = entitlements
-    log.info(
-        "command center runtime bind store=%s profiles=%s entitlements=%s",
-        bool(store), bool(profiles), bool(entitlements),
-    )
+    log.info("command center runtime bind store=%s profiles=%s entitlements=%s", bool(store), bool(profiles), bool(entitlements))
 
 
 def _identity(meta: dict) -> int | None:
@@ -124,6 +122,28 @@ async def crown_session_get(x_telegram_init_data: str | None = Header(default=No
 async def crown_session_prepare(x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
     chat_id, user_id, _ = _trusted_meta(x_telegram_init_data or "")
     data = await SessionBriefingService(store=APP_STORE, profiles=APP_PROFILES, entitlements=APP_ENTITLEMENTS).prepare(chat_id=chat_id, telegram_user_id=user_id)
+    return _no_store({"ok": True, "trusted": True, "data": data})
+
+
+class AfterActionBody(BaseModel):
+    mission_id: str = Field(default="", min_length=1, max_length=64)
+    outcome: str = Field(default="reported", max_length=32)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/webapp/api/crown-session/after-action")
+async def crown_session_after_action(body: AfterActionBody, x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
+    chat_id, user_id, _ = _trusted_meta(x_telegram_init_data or "")
+    try:
+        data = await CrownAfterActionService(store=APP_STORE, profiles=APP_PROFILES, entitlements=APP_ENTITLEMENTS).complete(
+            chat_id=chat_id,
+            telegram_user_id=user_id,
+            mission_id=body.mission_id,
+            outcome=body.outcome,
+            metrics=body.metrics,
+        )
+    except MissionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return _no_store({"ok": True, "trusted": True, "data": data})
 
 
