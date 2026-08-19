@@ -9,6 +9,7 @@ from app.services.brain.intents import Intent, classify_intent
 from app.services.player_memory.analytics import PlayerAnalytics
 from app.services.player_memory.extractor import extract_player_memory
 from app.services.session_cycle import CrownSessionCycleService
+from app.services.vod.engagements import VODEngagementIntelligenceService
 from app.services.vod.mission_evidence import MissionEvidenceFusionService
 
 
@@ -146,6 +147,15 @@ class PlayerMemoryService:
 
         try: fusion_event = MissionEvidenceFusionService(store=self.store).correlate_vod(cid, result)
         except Exception: fusion_event = None
+        try:
+            VODEngagementIntelligenceService(store=self.store).build(
+                chat_id=cid,
+                result=result,
+                crown_session_id=context["crown_session_id"],
+                mission_id=context["mission_id"],
+            )
+        except Exception:
+            pass
 
         summary = str(getattr(result, "summary", "") or "").strip()
         next_drill = str(getattr(result, "next_drill", "") or "").strip()
