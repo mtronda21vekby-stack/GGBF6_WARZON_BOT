@@ -26,6 +26,12 @@
   function mount() {
     const more = $("#b49More");
     if (!more || $("#b49ParityV49")) return false;
+
+    // b49CrownBody is a content container, not a routable view. Keeping the
+    // route class on it made hideAllCustom() hide the chat/training children.
+    const crownBody = $("#b49CrownBody");
+    crownBody?.classList.remove("b49-view", "active");
+
     style();
     const section = document.createElement("section");
     section.id = "b49ParityV49"; section.className = "b49-parity";
