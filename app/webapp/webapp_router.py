@@ -15,14 +15,15 @@ from fastapi import Header
 from fastapi.responses import StreamingResponse
 
 from app.webapp import webapp_router_base as _base
+from app.webapp import voice_router as _voice
 
 
 log = logging.getLogger("webapp.live")
 
-# Preserve the established static routes and runtime binding. This module only
-# adds the v18 live-intelligence transport to the same APIRouter instance.
+# Preserve established static/chat routes and compose voice as an isolated
+# surface on the same APIRouter. The base router remains independently stable.
 router = _base.router
-bind_runtime = _base.bind_runtime
+router.include_router(_voice.router)
 AskBody = _base.AskBody
 webapp_root = _base.webapp_root
 webapp_health = _base.webapp_health
@@ -30,6 +31,25 @@ webapp_version = _base.webapp_version
 webapp_files = _base.webapp_files
 webapp_api_ask = _base.webapp_api_ask
 webapp_game_event = _base.webapp_game_event
+
+
+def bind_runtime(
+    *,
+    brain=None,
+    profiles=None,
+    store=None,
+    settings=None,
+    transcription=None,
+    voice=None,
+):
+    _base.bind_runtime(brain=brain, profiles=profiles, store=store, settings=settings)
+    _voice.bind_runtime(
+        brain=brain,
+        profiles=profiles,
+        store=store,
+        transcription=transcription,
+        voice=voice,
+    )
 
 
 def __getattr__(name: str) -> Any:
