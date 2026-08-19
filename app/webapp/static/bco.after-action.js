@@ -1,8 +1,8 @@
-/* BLACK CROWN OPS v47 — AFTER ACTION session-scoped evidence */
+/* BLACK CROWN OPS v48 — AFTER ACTION + ENGAGEMENT REVIEW */
 (() => {
   "use strict";
-  if (window.__BCO_AFTER_ACTION_V47_LOADED__) return;
-  window.__BCO_AFTER_ACTION_V47_LOADED__ = true;
+  if (window.__BCO_AFTER_ACTION_V48_LOADED__) return;
+  window.__BCO_AFTER_ACTION_V48_LOADED__ = true;
 
   const $ = (q, root = document) => root.querySelector(q);
   const safe = (value, fallback = "—") => { const text = String(value ?? "").trim(); return text || fallback; };
@@ -19,11 +19,14 @@
       .bco-aa__inputs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:11px}.bco-aa input{width:100%;box-sizing:border-box;min-height:40px;padding:9px 10px;border:1px solid rgba(255,255,255,.08);border-radius:11px;background:rgba(255,255,255,.035);color:inherit}.bco-aa label{font-size:8px;letter-spacing:.1em;opacity:.55}.bco-aa label input{display:block;margin-top:5px;opacity:1}
       .bco-aa__actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}.bco-aa__actions button{min-height:41px;border-radius:11px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.045);color:inherit;font-weight:800;letter-spacing:.04em}.bco-aa__actions button[data-outcome="clean"]{border-color:rgba(155,220,170,.22)}.bco-aa__actions button[data-outcome="failed"]{border-color:rgba(230,130,130,.22)}
       .bco-aa__report{display:none;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.07)}.bco-aa__report.active{display:block}.bco-aa__grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.bco-aa__cell{padding:10px;border:1px solid rgba(255,255,255,.055);border-radius:11px;background:rgba(255,255,255,.025)}.bco-aa__cell span{display:block;font-size:8px;letter-spacing:.13em;opacity:.45;margin-bottom:5px}.bco-aa__cell strong{font-size:12px;line-height:1.35}.bco-aa__status{margin-top:9px;font-size:9px;line-height:1.45;opacity:.44}
+      .bco-aa__engagements{display:none;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.07)}.bco-aa__engagements.active{display:block}.bco-aa__engagements-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.bco-aa__engagements-head span{font-size:8px;letter-spacing:.16em;opacity:.48}.bco-aa__engagements-head b{font-size:9px;color:#d9bb79}.bco-aa__engagement-list{display:grid;gap:8px}.bco-aa__engagement{padding:11px;border:1px solid rgba(255,255,255,.06);border-radius:12px;background:linear-gradient(145deg,rgba(255,255,255,.028),rgba(255,255,255,.012))}.bco-aa__engagement-top{display:flex;justify-content:space-between;gap:10px;align-items:center}.bco-aa__engagement-id{font-size:10px;font-weight:850;letter-spacing:.08em}.bco-aa__engagement-meta{font-size:8px;opacity:.5;text-align:right}.bco-aa__engagement-badge{display:inline-block;margin-top:6px;padding:3px 6px;border:1px solid rgba(216,177,91,.18);border-radius:999px;font-size:7px;letter-spacing:.1em;color:#d9bb79}.bco-aa__engagement-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}.bco-aa__engagement-field{padding:8px;border-radius:9px;background:rgba(255,255,255,.02)}.bco-aa__engagement-field span{display:block;margin-bottom:4px;font-size:7px;letter-spacing:.12em;opacity:.4}.bco-aa__engagement-field strong{font-size:10px;line-height:1.4}.bco-aa__engagement-limit{margin-top:8px;font-size:8px;line-height:1.4;opacity:.38}
+      @media(min-width:740px){.bco-aa__engagement-list{grid-template-columns:1fr 1fr}}
     `;
     document.head.appendChild(style);
   }
 
   function set(id, value, fallback = "—") { const el = $(id); if (el) el.textContent = safe(value, fallback); }
+  function esc(value) { return String(value ?? "").replace(/[&<>"']/g, (ch) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch])); }
 
   function renderSession(session) {
     currentMission = session?.mission || null;
@@ -32,6 +35,41 @@
     set("#bcoAaState", active ? "READY FOR REPORT" : "MISSION REQUIRED");
     document.querySelectorAll(".bco-aa__actions button").forEach((btn) => { btn.disabled = !active; });
     return true;
+  }
+
+  function engagementRelevance(item) {
+    const raw = String(item?.mission_relevance || item?.relevance || item?.classification || "").toLowerCase();
+    if (raw.includes("support") || raw.includes("relevant") || raw.includes("confirm")) return "MISSION RELEVANT";
+    if (raw.includes("insufficient") || raw.includes("unknown")) return "INSUFFICIENT EVIDENCE";
+    return "NEUTRAL / OBSERVED";
+  }
+
+  function renderEngagements(data) {
+    const root = $("#bcoAaEngagements");
+    const list = $("#bcoAaEngagementList");
+    if (!root || !list) return;
+    const rows = Array.isArray(data?.engagements) ? data.engagements.slice(0, 6) : [];
+    if (!rows.length) {
+      root.classList.remove("active");
+      list.innerHTML = "";
+      set("#bcoAaEngagementCount", "0 LINKED");
+      return;
+    }
+    list.innerHTML = rows.map((item, index) => {
+      const id = safe(item.engagement_id || item.id, `#${String(index + 1).padStart(2,"0")}`);
+      const ts = safe(item.timestamp || item.start_timestamp || item.at, "NO TIMESTAMP");
+      const confValue = Number(item.confidence ?? 0);
+      const confidence = Number.isFinite(confValue) ? `${Math.round(Math.max(0, Math.min(1, confValue)) * 100)}%` : safe(item.confidence, "UNKNOWN");
+      const position = safe(item.position || item.entry || item.observation, "NOT OBSERVED");
+      const decision = safe(item.decision, "NOT OBSERVED");
+      const result = safe(item.result, "UNKNOWN");
+      const correction = safe(item.correction, "NO CORRECTION");
+      const firstDamage = item.first_damage == null ? "UNKNOWN" : safe(item.first_damage, "UNKNOWN");
+      const limitation = safe(item.limitations || item.limitation, "Sampled-frame evidence only; no continuous sequence claim.");
+      return `<article class="bco-aa__engagement"><div class="bco-aa__engagement-top"><div class="bco-aa__engagement-id">${esc(id)}</div><div class="bco-aa__engagement-meta">${esc(ts)} • ${esc(confidence)}</div></div><div class="bco-aa__engagement-badge">${esc(engagementRelevance(item))}</div><div class="bco-aa__engagement-grid"><div class="bco-aa__engagement-field"><span>POSITION / ENTRY</span><strong>${esc(position)}</strong></div><div class="bco-aa__engagement-field"><span>FIRST DAMAGE</span><strong>${esc(firstDamage)}</strong></div><div class="bco-aa__engagement-field"><span>DECISION</span><strong>${esc(decision)}</strong></div><div class="bco-aa__engagement-field"><span>RESULT</span><strong>${esc(result)}</strong></div><div class="bco-aa__engagement-field" style="grid-column:1/-1"><span>CORRECTION</span><strong>${esc(correction)}</strong></div></div><div class="bco-aa__engagement-limit">SAMPLED FRAME ONLY • ${esc(limitation)}</div></article>`;
+    }).join("");
+    set("#bcoAaEngagementCount", `${rows.length} LINKED`);
+    root.classList.add("active");
   }
 
   function renderReport(data) {
@@ -50,6 +88,7 @@
     set("#bcoAaStrategy", strategy.verdict ? `${strategy.verdict} • association only` : "INSUFFICIENT FOLLOW-UP");
     set("#bcoAaNext", next.title || "CALIBRATING NEXT MISSION");
     set("#bcoAaStatus", cycle.id ? `AFTER ACTION committed • ${cycle.id} CLOSED • only session-matched VOD used.` : "AFTER ACTION committed • legacy untracked cycle • VOD was not auto-completed.");
+    renderEngagements(data);
   }
 
   async function submit(outcome) {
@@ -80,7 +119,7 @@
     const home = $("#bcoSessionHomeV45"); if (!home || $("#bcoAfterActionV46")) return false; css();
     const section = document.createElement("section");
     section.id = "bcoAfterActionV46"; section.className = "bco-aa";
-    section.innerHTML = `<div class="bco-aa__head"><span>AFTER ACTION</span><b id="bcoAaState">MISSION REQUIRED</b></div><h3 id="bcoAaMission">NO ACTIVE MISSION</h3><p>Close the loop with an explicit operator report. VOD may support evidence but never completes the mission automatically.</p><div class="bco-aa__inputs"><label>CLEAN EXECUTIONS<input id="bcoAaClean" type="number" min="0" max="100" inputmode="numeric" placeholder="optional"></label><label>DEATH CAUSE<input id="bcoAaDeath" maxlength="240" placeholder="optional evidence"></label></div><div class="bco-aa__actions"><button type="button" data-outcome="clean">CLEAN</button><button type="button" data-outcome="mixed">MIXED</button><button type="button" data-outcome="failed">FAILED</button></div><div class="bco-aa__report" id="bcoAaReport"><div class="bco-aa__grid"><div class="bco-aa__cell"><span>MISSION OUTCOME</span><strong id="bcoAaOutcome">—</strong></div><div class="bco-aa__cell"><span>WHAT CHANGED</span><strong id="bcoAaChanged">—</strong></div><div class="bco-aa__cell"><span>NEW WEAKNESS</span><strong id="bcoAaWeakness">—</strong></div><div class="bco-aa__cell"><span>SESSION VOD EVIDENCE</span><strong id="bcoAaVod">—</strong></div><div class="bco-aa__cell"><span>STRATEGY OUTCOME</span><strong id="bcoAaStrategy">—</strong></div><div class="bco-aa__cell"><span>NEXT MISSION</span><strong id="bcoAaNext">—</strong></div></div></div><div class="bco-aa__status" id="bcoAaStatus">Waiting for active mission.</div>`;
+    section.innerHTML = `<div class="bco-aa__head"><span>AFTER ACTION</span><b id="bcoAaState">MISSION REQUIRED</b></div><h3 id="bcoAaMission">NO ACTIVE MISSION</h3><p>Close the loop with an explicit operator report. VOD may support evidence but never completes the mission automatically.</p><div class="bco-aa__inputs"><label>CLEAN EXECUTIONS<input id="bcoAaClean" type="number" min="0" max="100" inputmode="numeric" placeholder="optional"></label><label>DEATH CAUSE<input id="bcoAaDeath" maxlength="240" placeholder="optional evidence"></label></div><div class="bco-aa__actions"><button type="button" data-outcome="clean">CLEAN</button><button type="button" data-outcome="mixed">MIXED</button><button type="button" data-outcome="failed">FAILED</button></div><div class="bco-aa__report" id="bcoAaReport"><div class="bco-aa__grid"><div class="bco-aa__cell"><span>MISSION OUTCOME</span><strong id="bcoAaOutcome">—</strong></div><div class="bco-aa__cell"><span>WHAT CHANGED</span><strong id="bcoAaChanged">—</strong></div><div class="bco-aa__cell"><span>NEW WEAKNESS</span><strong id="bcoAaWeakness">—</strong></div><div class="bco-aa__cell"><span>SESSION VOD EVIDENCE</span><strong id="bcoAaVod">—</strong></div><div class="bco-aa__cell"><span>STRATEGY OUTCOME</span><strong id="bcoAaStrategy">—</strong></div><div class="bco-aa__cell"><span>NEXT MISSION</span><strong id="bcoAaNext">—</strong></div></div><div class="bco-aa__engagements" id="bcoAaEngagements"><div class="bco-aa__engagements-head"><span>ENGAGEMENT REVIEW</span><b id="bcoAaEngagementCount">0 LINKED</b></div><div class="bco-aa__engagement-list" id="bcoAaEngagementList"></div></div></div><div class="bco-aa__status" id="bcoAaStatus">Waiting for active mission.</div>`;
     const actions = home.querySelector(".bco-sh-actions"); if (actions) home.insertBefore(section, actions); else home.appendChild(section);
     section.querySelectorAll("button[data-outcome]").forEach((btn) => btn.addEventListener("click", () => submit(btn.dataset.outcome)));
     renderSession(window.BCO_CROWN_SESSION?.getSnapshot?.());
@@ -89,5 +128,5 @@
   }
 
   if (!mount()) { let tries=0; const timer=setInterval(()=>{tries+=1;if(mount()||tries>30)clearInterval(timer);},200); }
-  window.BCO_AFTER_ACTION = { renderSession, renderReport, submit };
+  window.BCO_AFTER_ACTION = { renderSession, renderReport, renderEngagements, submit };
 })();
