@@ -42,6 +42,7 @@
     .then(()=>loadScript("/webapp/bco.orchestrator.js","__BCO_MISSION_ORCHESTRATOR_V36_LOADED__").catch((error)=>{window.__BCO_MISSION_ORCHESTRATOR_V36_LOADED__=false;console.warn("[BCO v36] Mission Orchestrator unavailable",error);return false;}))
     .then(()=>loadScript("/webapp/bco.deep-history.js","__BCO_DEEP_HISTORY_V29_LOADED__").catch((error)=>{window.__BCO_DEEP_HISTORY_V29_LOADED__=false;console.warn("[BCO v29] Deep History unavailable",error);return false;}))
     .then(()=>loadScript("/webapp/bco.strategy.js","__BCO_STRATEGY_V35_LOADED__").catch((error)=>{window.__BCO_STRATEGY_V35_LOADED__=false;console.warn("[BCO v35] Strategy layer unavailable",error);return false;}))
+    .then(()=>loadScript("/webapp/bco.ecosystem-shell.js","__BCO_ECOSYSTEM_SHELL_V49_LOADED__").catch((error)=>{window.__BCO_ECOSYSTEM_SHELL_V49_LOADED__=false;console.warn("[BCO v49] ecosystem shell unavailable; legacy Mini App remains active",error);return false;}))
     .then(()=>{try{window.BCO_I18N?.apply();}catch(_){}return true;})
     .catch((error)=>{window.__BCO_V18_READY__=false;console.error("[BCO] boot coordinator failed",error);throw error;});
 })();
