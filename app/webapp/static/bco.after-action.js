@@ -1,8 +1,8 @@
-/* BLACK CROWN OPS v46 — AFTER ACTION */
+/* BLACK CROWN OPS v47 — AFTER ACTION session-scoped evidence */
 (() => {
   "use strict";
-  if (window.__BCO_AFTER_ACTION_V46_LOADED__) return;
-  window.__BCO_AFTER_ACTION_V46_LOADED__ = true;
+  if (window.__BCO_AFTER_ACTION_V47_LOADED__) return;
+  window.__BCO_AFTER_ACTION_V47_LOADED__ = true;
 
   const $ = (q, root = document) => root.querySelector(q);
   const safe = (value, fallback = "—") => { const text = String(value ?? "").trim(); return text || fallback; };
@@ -39,15 +39,17 @@
     const changed = data.what_changed || {};
     const weaknesses = Array.isArray(data.new_weaknesses) ? data.new_weaknesses : [];
     const next = data.next_mission || {};
-    const vod = data.latest_vod_evidence || {};
+    const vodRows = Array.isArray(data.linked_vod_evidence) ? data.linked_vod_evidence : [];
+    const vod = vodRows[0] || {};
     const strategy = data.strategy_outcome?.latest || {};
+    const cycle = data.crown_session || {};
     set("#bcoAaOutcome", String(data.mission_outcome?.outcome || "reported").toUpperCase());
     set("#bcoAaChanged", `${changed.operator_state_before || "unknown"} → ${changed.operator_state_after || "unknown"} • coverage ${Number(changed.coverage_before || 0)}% → ${Number(changed.coverage_after || 0)}%`);
     set("#bcoAaWeakness", weaknesses.length ? weaknesses.join(" • ") : "NO NEW PERSISTED WEAKNESS");
-    set("#bcoAaVod", vod.summary || "NO NEW VOD EVIDENCE");
+    set("#bcoAaVod", vodRows.length ? `${vod.classification || "evidence"} • ${vod.evidence_count || 0} signals • ${vod.confidence || "unknown"}` : "NO VOD EVIDENCE LINKED TO THIS SESSION");
     set("#bcoAaStrategy", strategy.verdict ? `${strategy.verdict} • association only` : "INSUFFICIENT FOLLOW-UP");
     set("#bcoAaNext", next.title || "CALIBRATING NEXT MISSION");
-    set("#bcoAaStatus", "AFTER ACTION committed. VOD is evidence-only; strategy evaluation is association, not causation.");
+    set("#bcoAaStatus", cycle.id ? `AFTER ACTION committed • ${cycle.id} CLOSED • only session-matched VOD used.` : "AFTER ACTION committed • legacy untracked cycle • VOD was not auto-completed.");
   }
 
   async function submit(outcome) {
@@ -78,7 +80,7 @@
     const home = $("#bcoSessionHomeV45"); if (!home || $("#bcoAfterActionV46")) return false; css();
     const section = document.createElement("section");
     section.id = "bcoAfterActionV46"; section.className = "bco-aa";
-    section.innerHTML = `<div class="bco-aa__head"><span>AFTER ACTION</span><b id="bcoAaState">MISSION REQUIRED</b></div><h3 id="bcoAaMission">NO ACTIVE MISSION</h3><p>Close the loop with an explicit operator report. VOD may support evidence but never completes the mission automatically.</p><div class="bco-aa__inputs"><label>CLEAN EXECUTIONS<input id="bcoAaClean" type="number" min="0" max="100" inputmode="numeric" placeholder="optional"></label><label>DEATH CAUSE<input id="bcoAaDeath" maxlength="240" placeholder="optional evidence"></label></div><div class="bco-aa__actions"><button type="button" data-outcome="clean">CLEAN</button><button type="button" data-outcome="mixed">MIXED</button><button type="button" data-outcome="failed">FAILED</button></div><div class="bco-aa__report" id="bcoAaReport"><div class="bco-aa__grid"><div class="bco-aa__cell"><span>MISSION OUTCOME</span><strong id="bcoAaOutcome">—</strong></div><div class="bco-aa__cell"><span>WHAT CHANGED</span><strong id="bcoAaChanged">—</strong></div><div class="bco-aa__cell"><span>NEW WEAKNESS</span><strong id="bcoAaWeakness">—</strong></div><div class="bco-aa__cell"><span>VOD EVIDENCE</span><strong id="bcoAaVod">—</strong></div><div class="bco-aa__cell"><span>STRATEGY OUTCOME</span><strong id="bcoAaStrategy">—</strong></div><div class="bco-aa__cell"><span>NEXT MISSION</span><strong id="bcoAaNext">—</strong></div></div></div><div class="bco-aa__status" id="bcoAaStatus">Waiting for active mission.</div>`;
+    section.innerHTML = `<div class="bco-aa__head"><span>AFTER ACTION</span><b id="bcoAaState">MISSION REQUIRED</b></div><h3 id="bcoAaMission">NO ACTIVE MISSION</h3><p>Close the loop with an explicit operator report. VOD may support evidence but never completes the mission automatically.</p><div class="bco-aa__inputs"><label>CLEAN EXECUTIONS<input id="bcoAaClean" type="number" min="0" max="100" inputmode="numeric" placeholder="optional"></label><label>DEATH CAUSE<input id="bcoAaDeath" maxlength="240" placeholder="optional evidence"></label></div><div class="bco-aa__actions"><button type="button" data-outcome="clean">CLEAN</button><button type="button" data-outcome="mixed">MIXED</button><button type="button" data-outcome="failed">FAILED</button></div><div class="bco-aa__report" id="bcoAaReport"><div class="bco-aa__grid"><div class="bco-aa__cell"><span>MISSION OUTCOME</span><strong id="bcoAaOutcome">—</strong></div><div class="bco-aa__cell"><span>WHAT CHANGED</span><strong id="bcoAaChanged">—</strong></div><div class="bco-aa__cell"><span>NEW WEAKNESS</span><strong id="bcoAaWeakness">—</strong></div><div class="bco-aa__cell"><span>SESSION VOD EVIDENCE</span><strong id="bcoAaVod">—</strong></div><div class="bco-aa__cell"><span>STRATEGY OUTCOME</span><strong id="bcoAaStrategy">—</strong></div><div class="bco-aa__cell"><span>NEXT MISSION</span><strong id="bcoAaNext">—</strong></div></div></div><div class="bco-aa__status" id="bcoAaStatus">Waiting for active mission.</div>`;
     const actions = home.querySelector(".bco-sh-actions"); if (actions) home.insertBefore(section, actions); else home.appendChild(section);
     section.querySelectorAll("button[data-outcome]").forEach((btn) => btn.addEventListener("click", () => submit(btn.dataset.outcome)));
     renderSession(window.BCO_CROWN_SESSION?.getSnapshot?.());
