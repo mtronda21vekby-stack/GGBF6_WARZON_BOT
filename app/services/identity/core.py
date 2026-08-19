@@ -15,6 +15,16 @@ class CrownIdentity:
     def provisional(self) -> bool:
         return self.status == "provisional" or self.account_status == "provisional"
 
+    def public_projection(self) -> dict[str, str | bool]:
+        """Privacy-safe identity projection for trusted BLACK CROWN surfaces."""
+        return {
+            "black_crown_user_id": self.black_crown_user_id,
+            "provider": self.provider,
+            "identity_status": self.status,
+            "account_status": self.account_status,
+            "provisional": self.provisional,
+        }
+
 
 class CrownIdentityCore:
     """Canonical account resolver.
@@ -39,3 +49,7 @@ class CrownIdentityCore:
             status=str(raw.get("identity_status") or "provisional"),
             account_status=str(raw.get("account_status") or "provisional"),
         )
+
+    def project_telegram(self, telegram_user_id: int) -> dict[str, str | bool] | None:
+        identity = self.resolve_telegram(int(telegram_user_id))
+        return identity.public_projection() if identity is not None else None
