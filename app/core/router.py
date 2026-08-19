@@ -28,8 +28,37 @@ def _accepts_partial(fn: Any) -> bool:
     return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values())
 
 
+def _clean_ecosystem_profile_patch(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate v56 cross-surface profile fields before persistent storage."""
+    source = payload.get("profile") if isinstance(payload.get("profile"), dict) else payload
+    if not isinstance(source, dict):
+        return {}
+    out: dict[str, Any] = {}
+
+    name = str(source.get("profile_name") or "").strip()
+    if name:
+        out["profile_name"] = name[:32]
+
+    identity = str(source.get("voice_identity") or "").strip().lower()
+    if identity in {"female", "male"}:
+        out["voice_identity"] = identity
+        # Voice identity owns the default synthetic voice. Do not accept an
+        # arbitrary model voice from the Mini App as server authority.
+        out["tts_voice"] = "marin" if identity == "female" else "cedar"
+
+    tts_mode = str(source.get("tts_mode") or "").strip().lower()
+    if tts_mode in {"auto", "on_demand", "off"}:
+        out["tts_mode"] = tts_mode
+
+    focus = str(source.get("training_focus") or source.get("focus") or "").strip().lower()
+    if focus in {"aim", "movement", "position", "positioning"}:
+        out["training_focus"] = "position" if focus == "positioning" else focus
+
+    return out
+
+
 class Router(_base.Router):
-    """Production Router with live intelligence + v38 locale/activity boundary."""
+    """Production Router with live intelligence + ecosystem profile boundary."""
 
     def _locale_profile(self, chat_id: int, update: dict, text: str) -> tuple[dict, str, int | None]:
         profile = self._get_profile(chat_id)
@@ -85,6 +114,26 @@ class Router(_base.Router):
                 return
 
         await super().handle_update(raw)
+
+    async def _on_webapp_data(self, chat_id: int, data: str) -> None:
+        """Persist v56 ecosystem fields, then delegate all established routing."""
+        payload = _base._safe_json_loads(str(data or "").strip())
+        if isinstance(payload, dict):
+            ptype = str(payload.get("type") or "").strip().lower()
+            patch: dict[str, Any] = {}
+            if ptype in {"set_profile", "profile", "settings"}:
+                patch.update(_clean_ecosystem_profile_patch(payload))
+            if ptype == "training_plan":
+                focus = str(payload.get("focus") or "").strip().lower()
+                if focus in {"aim", "movement", "position", "positioning"}:
+                    patch["training_focus"] = "position" if focus == "positioning" else focus
+            if patch and self.profiles is not None:
+                try:
+                    self.profiles.patch(int(chat_id), patch)
+                    log.info("ecosystem profile sync chat=%s fields=%s", chat_id, sorted(patch))
+                except Exception as exc:
+                    log.warning("ecosystem profile sync failed error=%s", type(exc).__name__)
+        await super()._on_webapp_data(chat_id, data)
 
     async def _chat_to_brain(self, chat_id: int, text: str) -> None:
         text = (text or "").strip()
