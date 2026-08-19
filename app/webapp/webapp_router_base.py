@@ -214,9 +214,12 @@ def _safe_history(history: Any) -> list[dict]:
         if not isinstance(item, dict):
             continue
         role = str(item.get("role") or "").lower()
-        content = str(item.get("content") or "").strip()
+        content = str(item.get("content") or item.get("text") or "").strip()
         if role in {"user", "assistant"} and content:
-            out.append({"role": role, "content": content[:2000]})
+            row = {"role": role, "content": content[:2000]}
+            if item.get("ts") is not None:
+                row["ts"] = item.get("ts")
+            out.append(row)
     return out
 
 
@@ -240,6 +243,30 @@ def _trusted_server_context(meta: dict) -> tuple[dict, list[dict], int | None]:
         except Exception:
             history = []
     return profile, _safe_history(history), identity
+
+
+@router.post("/webapp/api/conversation-history")
+async def webapp_conversation_history(
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    init_data = str(x_telegram_init_data or "").strip()
+    trusted, meta = verify_init_data(init_data)
+    if not trusted:
+        raise HTTPException(status_code=401, detail="trusted_telegram_context_required")
+    _, history, identity = _trusted_server_context(dict(meta or {}))
+    if identity is None:
+        raise HTTPException(status_code=401, detail="telegram_identity_missing")
+    return JSONResponse(
+        {
+            "ok": True,
+            "trusted": True,
+            "authority": "shared_server_conversation_store",
+            "history": history[-20:],
+            "count": len(history[-20:]),
+            "build": _build_id(),
+        },
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
 @router.post("/webapp/api/ask")
