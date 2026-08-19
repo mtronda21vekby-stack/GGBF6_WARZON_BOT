@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.services.analytics.command_center import CommandCenterService
 from app.services.crown_session import CrownSessionService
+from app.services.session_briefing import SessionBriefingService
 from app.services.operator_intelligence import MissionConflict
 from app.services.operator_intelligence.adaptive_strategy import PremiumAdaptiveStrategyService
 from app.services.operator_intelligence.deep_history import PremiumDeepHistoryService
@@ -75,7 +76,6 @@ def _trusted_identity(init_data: str) -> int:
 
 
 async def _require_premium(init_data: str, *, feature: str) -> tuple[int, int]:
-    """Resolve Premium from the shared server authority; never from client state."""
     chat_id, user_id, _ = _trusted_meta(init_data)
     if APP_ENTITLEMENTS is None:
         raise HTTPException(status_code=503, detail="premium_authority_unavailable")
@@ -103,11 +103,7 @@ def _operator_service() -> OrchestratedOperatorIntelligenceService:
 
 
 def _no_store(payload: dict[str, Any], status_code: int = 200) -> JSONResponse:
-    return JSONResponse(
-        payload,
-        status_code=status_code,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
+    return JSONResponse(payload, status_code=status_code, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 def _snapshot_response(init_data: str):
@@ -118,45 +114,37 @@ def _snapshot_response(init_data: str):
 
 
 @router.get("/webapp/api/crown-session")
-async def crown_session_get(
-    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
-):
-    """Trusted Mini App bootstrap: canonical identity + profile + Twin + mission + meta + entitlement."""
+async def crown_session_get(x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
     chat_id, user_id, _ = _trusted_meta(x_telegram_init_data or "")
-    data = await CrownSessionService(
-        store=APP_STORE,
-        profiles=APP_PROFILES,
-        entitlements=APP_ENTITLEMENTS,
-    ).snapshot(chat_id=chat_id, telegram_user_id=user_id)
+    data = await CrownSessionService(store=APP_STORE, profiles=APP_PROFILES, entitlements=APP_ENTITLEMENTS).snapshot(chat_id=chat_id, telegram_user_id=user_id)
+    return _no_store({"ok": True, "trusted": True, "data": data})
+
+
+@router.post("/webapp/api/crown-session/prepare")
+async def crown_session_prepare(x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
+    chat_id, user_id, _ = _trusted_meta(x_telegram_init_data or "")
+    data = await SessionBriefingService(store=APP_STORE, profiles=APP_PROFILES, entitlements=APP_ENTITLEMENTS).prepare(chat_id=chat_id, telegram_user_id=user_id)
     return _no_store({"ok": True, "trusted": True, "data": data})
 
 
 @router.get("/webapp/api/intelligence")
-def command_center_intelligence_get(
-    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
-):
+def command_center_intelligence_get(x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
     return _snapshot_response(x_telegram_init_data or "")
 
 
 @router.post("/webapp/api/intelligence")
-def command_center_intelligence_post(
-    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
-):
+def command_center_intelligence_post(x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
     return _snapshot_response(x_telegram_init_data or "")
 
 
 @router.get("/webapp/api/operator-intelligence")
-def operator_intelligence_get(
-    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
-):
+def operator_intelligence_get(x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
     chat_id = _trusted_identity(x_telegram_init_data or "")
     return _no_store({"ok": True, "trusted": True, "data": _operator_service().snapshot(chat_id)})
 
 
 @router.get("/webapp/api/operator-deep-history")
-async def operator_deep_history_get(
-    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
-):
+async def operator_deep_history_get(x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
     if not _env_on("PREMIUM_DEEP_HISTORY_ENABLED"):
         raise HTTPException(status_code=503, detail="premium_deep_history_disabled")
     chat_id, _ = await _require_premium(x_telegram_init_data or "", feature="deep_history")
@@ -165,9 +153,7 @@ async def operator_deep_history_get(
 
 
 @router.get("/webapp/api/operator-strategy")
-async def operator_strategy_get(
-    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
-):
+async def operator_strategy_get(x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
     if not _env_on("PREMIUM_ADAPTIVE_STRATEGY_ENABLED"):
         raise HTTPException(status_code=503, detail="premium_adaptive_strategy_disabled")
     chat_id, _ = await _require_premium(x_telegram_init_data or "", feature="adaptive_strategy")
@@ -176,13 +162,10 @@ async def operator_strategy_get(
     outcome_loop = PremiumStrategyOutcomeService(APP_STORE)
     prior_effectiveness = outcome_loop.snapshot(chat_id)
     portfolio = StrategyPortfolioCalibration.snapshot(prior_effectiveness)
-
     freshness_enabled = _env_on("EVIDENCE_FRESHNESS_ENABLED")
     freshness = EvidenceFreshnessPolicy.snapshot(deep_history, prior_effectiveness) if freshness_enabled else {}
-
     regime_enabled = _env_on("REGIME_CHANGE_DETECTION_ENABLED")
     regime = PlayerRegimeChangeDetector.snapshot(deep_history) if regime_enabled else None
-
     data = PremiumAdaptiveStrategyService().build(deep_history, operator, portfolio, freshness, regime)
     strategy_id = outcome_loop.record_issue(chat_id, data)
     effectiveness = outcome_loop.snapshot(chat_id)
@@ -217,10 +200,7 @@ class MissionCompleteBody(BaseModel):
 
 
 @router.post("/webapp/api/operator-mission/accept")
-def operator_mission_accept(
-    body: MissionAcceptBody,
-    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
-):
+def operator_mission_accept(body: MissionAcceptBody, x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
     chat_id = _trusted_identity(x_telegram_init_data or "")
     try:
         data = _operator_service().accept(chat_id, body.mission_id)
@@ -230,10 +210,7 @@ def operator_mission_accept(
 
 
 @router.post("/webapp/api/operator-mission/complete")
-def operator_mission_complete(
-    body: MissionCompleteBody,
-    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
-):
+def operator_mission_complete(body: MissionCompleteBody, x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
     chat_id = _trusted_identity(x_telegram_init_data or "")
     try:
         data = _operator_service().complete(chat_id, body.mission_id, outcome=body.outcome, metrics=body.metrics)
