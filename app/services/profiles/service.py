@@ -17,13 +17,14 @@ DEFAULT_PROFILE: Dict[str, str] = {
     "input": "Controller",
     "difficulty": "Normal",
     "voice": "TEAMMATE",
+    "voice_identity": "female",
     "role": "Flex",
     "bf6_class": "Assault",
     "zombies_active": "0",
     "zombies_map": "ashes",
     "zombies_mode": "",
     "zombies_search_last": "",
-    "tts_voice": "cedar",
+    "tts_voice": "marin",
 }
 
 
