@@ -52,6 +52,7 @@
     const mission = session.mission || session.next_mission || {};
     const meta = session.personal_meta || {};
     const entitlement = session.entitlement || {};
+    const coverage = `${Number(meta.coverage || 0)}%`;
 
     set("#bcoShAccount", `CROWN ${shortId(identity.black_crown_user_id)}`);
     set("#bcoShState", stateLabel(op));
@@ -59,7 +60,8 @@
     set("#bcoShMode", [profile.mode, profile.input || profile.platform].filter(Boolean).join(" • ") || "—");
     set("#bcoShPremium", entitlement.premium ? "PREMIUM" : "STANDARD");
     set("#bcoShPremiumSub", entitlement.state === "resolved" ? t("сервер подтверждён", "server verified") : t("проверка недоступна", "authority unavailable"));
-    set("#bcoShCoverage", `${Number(meta.coverage || 0)}%`);
+    set("#bcoShCoverage", coverage);
+    set("#bcoShKnown", coverage);
     set("#bcoShSummary", meta.summary || t("CROWN ещё собирает данные, чтобы построить персональную модель.", "CROWN is still collecting evidence for your personal model."));
     set("#bcoShMissionTitle", mission.title || t("КАЛИБРОВКА", "CALIBRATING"));
     set("#bcoShMissionObjective", mission.objective || t("Собираю достаточно evidence для измеримой цели.", "Collecting enough evidence for a measurable objective."));
@@ -108,17 +110,17 @@
         <div class="bco-sh-account" id="bcoShAccount">CROWN —</div>
       </div>
       <div class="bco-sh-state">
-        <div class="bco-sh-cell"><span>${t("CURRENT STATE", "CURRENT STATE")}</span><strong id="bcoShState">SYNCING</strong><small>${t("operator readiness", "operator readiness")}</small></div>
-        <div class="bco-sh-cell"><span>${t("WORLD", "WORLD")}</span><strong id="bcoShGame">—</strong><small id="bcoShMode">—</small></div>
-        <div class="bco-sh-cell"><span>${t("ACCESS", "ACCESS")}</span><strong id="bcoShPremium">SYNCING</strong><small id="bcoShPremiumSub">server authority</small></div>
-        <div class="bco-sh-cell"><span>${t("PERSONAL META", "PERSONAL META")}</span><strong id="bcoShCoverage">0%</strong><small>${t("evidence coverage", "evidence coverage")}</small></div>
+        <div class="bco-sh-cell"><span>CURRENT STATE</span><strong id="bcoShState">SYNCING</strong><small>operator readiness</small></div>
+        <div class="bco-sh-cell"><span>WORLD</span><strong id="bcoShGame">—</strong><small id="bcoShMode">—</small></div>
+        <div class="bco-sh-cell"><span>ACCESS</span><strong id="bcoShPremium">SYNCING</strong><small id="bcoShPremiumSub">server authority</small></div>
+        <div class="bco-sh-cell"><span>PERSONAL META</span><strong id="bcoShCoverage">0%</strong><small>evidence coverage</small></div>
       </div>
       <div class="bco-sh-meta">
-        <div class="bco-sh-panel"><span>${t("CROWN READ", "CROWN READ")}</span><p id="bcoShSummary">${t("Синхронизация…", "Synchronizing…")}</p></div>
-        <div class="bco-sh-panel"><span>${t("CONFIDENCE MODEL", "CONFIDENCE MODEL")}</span><div class="bco-sh-score"><span id="bcoShCoverage">0%</span> <small>KNOWN</small></div></div>
+        <div class="bco-sh-panel"><span>CROWN READ</span><p id="bcoShSummary">${t("Синхронизация…", "Synchronizing…")}</p></div>
+        <div class="bco-sh-panel"><span>CONFIDENCE MODEL</span><div class="bco-sh-score"><span id="bcoShKnown">0%</span> <small>KNOWN</small></div></div>
       </div>
-      <div class="bco-sh-mission"><div class="bco-sh-mission-head"><span>${t("CURRENT MISSION", "CURRENT MISSION")}</span><b id="bcoShMissionStatus">PRE_SESSION</b></div><h3 id="bcoShMissionTitle">CALIBRATING</h3><p id="bcoShMissionObjective"></p></div>
-      <div class="bco-sh-actions"><button class="bco-sh-primary" id="bcoShPrepare" type="button">${t("PREPARE SESSION", "PREPARE SESSION")}</button><button class="bco-sh-secondary" id="bcoShDossier" type="button">${t("ДОСЬЕ", "DOSSIER")}</button></div>
+      <div class="bco-sh-mission"><div class="bco-sh-mission-head"><span>CURRENT MISSION</span><b id="bcoShMissionStatus">PRE_SESSION</b></div><h3 id="bcoShMissionTitle">CALIBRATING</h3><p id="bcoShMissionObjective"></p></div>
+      <div class="bco-sh-actions"><button class="bco-sh-primary" id="bcoShPrepare" type="button">PREPARE SESSION</button><button class="bco-sh-secondary" id="bcoShDossier" type="button">${t("ДОСЬЕ", "DOSSIER")}</button></div>
       <div class="bco-sh-status" id="bcoShStatus">${t("Ожидаю trusted Telegram identity…", "Waiting for trusted Telegram identity…")}</div>`;
     home.prepend(section);
     $("#bcoShPrepare")?.addEventListener("click", prepareSession);
