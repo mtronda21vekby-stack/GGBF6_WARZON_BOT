@@ -2,13 +2,14 @@ from app.services.profiles.service import ProfileService
 from app.services.storage.memory import InMemoryStore
 
 
-def test_legacy_defaults_remain():
+def test_current_defaults_remain():
     service = ProfileService(InMemoryStore())
     profile = service.get(1)
     assert profile["game"] == "Warzone"
     assert profile["voice"] == "TEAMMATE"
     assert profile["difficulty"] == "Normal"
-    assert profile["tts_voice"] == "cedar"
+    assert profile["voice_identity"] == "female"
+    assert profile["tts_voice"] == "marin"
 
 
 def test_new_player_fields_do_not_get_invented_defaults():

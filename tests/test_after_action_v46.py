@@ -70,17 +70,20 @@ def test_after_action_closes_explicit_cycle_without_causal_or_vod_claims(monkeyp
         metrics={"clean_executions": 2},
     ))
 
-    assert result["schema"] == "crown-after-action-v1"
+    assert result["schema"] == "crown-after-action-v3"
     assert result["mission_outcome"]["explicit_operator_report"] is True
     assert result["mission_outcome"]["vod_auto_complete"] is False
     assert result["truth_contract"]["vod_evidence_only"] is True
+    assert result["truth_contract"]["continuous_video_claimed"] is False
     assert result["truth_contract"]["causal_claims"] is False
     assert result["strategy_outcome"]["association_not_causation"] is True
     assert result["new_weaknesses"] == ["repeat peek"]
     assert result["what_changed"]["coverage_before"] == 40
     assert result["what_changed"]["coverage_after"] == 47
     assert result["what_changed"]["score_changes"][0]["delta"] == 4.0
-    assert result["latest_vod_evidence"]["auto_completed_mission"] is False
+    assert result["linked_vod_evidence"] == []
+    assert result["engagements"] == []
+    assert result["crown_session"]["status"] == "untracked"
     assert result["next_mission"]["title"] == "EXIT VECTOR"
 
 

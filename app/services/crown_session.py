@@ -28,7 +28,25 @@ class CrownSessionService:
                 "site_user_id": None,
                 "linked_at": None,
             }
-        raw = asdict(status) if is_dataclass(status) else dict(status) if isinstance(status, Mapping) else {}
+        if is_dataclass(status):
+            raw = asdict(status)
+        elif isinstance(status, Mapping):
+            raw = dict(status)
+        else:
+            # The production entitlement client returns a dataclass, while
+            # compatibility adapters and tests may expose the same contract as
+            # a read-only attribute object. The server object remains the sole
+            # authority in either representation.
+            raw = {
+                key: getattr(status, key, None)
+                for key in (
+                    "linked",
+                    "premium",
+                    "entitlements",
+                    "site_user_id",
+                    "linked_at",
+                )
+            }
         site_user_id = str(raw.get("site_user_id") or "").strip()[:160] or None
         return {
             "linked": raw.get("linked") is True,

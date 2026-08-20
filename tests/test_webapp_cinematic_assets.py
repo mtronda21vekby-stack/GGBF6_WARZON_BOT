@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -19,7 +20,7 @@ def test_boot_coordinator_loads_stable_base_then_runtime_gated_v18_layer():
     assert "/webapp/app.base.js" in source
     assert "/webapp/bco.live.js" in source
     assert "/webapp/api/runtime" in source
-    assert 'method: "POST"' in source
+    assert re.search(r'method\s*:\s*"POST"', source)
     assert "flags.v18_overlay === false" in source
     assert "__BCO_RUNTIME_FLAGS__" in source
 
