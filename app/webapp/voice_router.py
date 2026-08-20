@@ -77,26 +77,9 @@ def _safe_suffix(filename: str | None, content_type: str | None) -> str:
     return ".webm"
 
 
-async def _reply(text: str, profile: dict[str, Any], history: list[dict[str, Any]]) -> str:
-    fn = getattr(APP_BRAIN, "reply", None)
-    if not callable(fn):
-        raise HTTPException(status_code=503, detail="conversation_runtime_unavailable")
-    kwargs = {"text": text, "profile": profile, "history": history}
-    if inspect.iscoroutinefunction(fn):
-        return str(await fn(**kwargs))
-    return str(await asyncio.to_thread(fn, **kwargs))
-
-
-@router.post("/webapp/api/voice-turn")
-async def voice_turn(
-    audio: UploadFile = File(...),
-    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
-):
-    request_started = time.perf_counter()
-    _, profile, history = _trusted_context(x_telegram_init_data or "")
+async def _transcribe_upload(audio: UploadFile, profile: dict[str, Any]) -> tuple[Any, int]:
     if APP_TRANSCRIPTION is None or not bool(getattr(APP_TRANSCRIPTION, "configured", False)):
         raise HTTPException(status_code=503, detail="transcription_unavailable")
-
     max_bytes = int(getattr(APP_TRANSCRIPTION, "max_bytes", 12 * 1024 * 1024) or 12 * 1024 * 1024)
     max_bytes = max(256 * 1024, min(max_bytes, 12 * 1024 * 1024))
     raw = await audio.read(max_bytes + 1)
@@ -109,41 +92,95 @@ async def voice_turn(
     source = temp_dir / ("input" + _safe_suffix(audio.filename, audio.content_type))
     try:
         source.write_bytes(raw)
-        stt_started = time.perf_counter()
+        started = time.perf_counter()
         result = await APP_TRANSCRIPTION.transcribe_result(source, profile=profile)
-        stt_ms = int((time.perf_counter() - stt_started) * 1000)
-        transcript = str(getattr(result, "text", "") or "").strip()
-        if not transcript:
-            raise HTTPException(status_code=422, detail="transcription_empty")
-        think_started = time.perf_counter()
-        reply = await _reply(transcript, profile, history)
-        think_ms = int((time.perf_counter() - think_started) * 1000)
-        mode = APP_VOICE.mode_for(profile) if APP_VOICE is not None else TTSMode.OFF
-        total_ms = int((time.perf_counter() - request_started) * 1000)
-        return JSONResponse(
-            {
-                "ok": True,
-                "trusted": True,
-                "authority": "shared_conversation_and_voice_runtime",
-                "transcript": transcript,
-                "reply": reply,
-                "latency": {"stt_ms": stt_ms, "think_ms": think_ms, "turn_ms": total_ms},
-                "transcription": {
-                    "model": str(getattr(result, "model", "") or ""),
-                    "language": str(getattr(result, "language", "") or ""),
-                    "confidence": getattr(result, "confidence", None),
-                    "fallback_used": bool(getattr(result, "fallback_used", False)),
-                },
-                "voice": {
-                    "identity": str(profile.get("voice_identity") or "female"),
-                    "mode": mode.value,
-                    "available": bool(APP_VOICE is not None and getattr(APP_VOICE, "enabled", False)),
-                },
-            },
-            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-        )
+        return result, int((time.perf_counter() - started) * 1000)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+async def _reply(text: str, profile: dict[str, Any], history: list[dict[str, Any]]) -> str:
+    fn = getattr(APP_BRAIN, "reply", None)
+    if not callable(fn):
+        raise HTTPException(status_code=503, detail="conversation_runtime_unavailable")
+    kwargs = {"text": text, "profile": profile, "history": history}
+    if inspect.iscoroutinefunction(fn):
+        return str(await fn(**kwargs))
+    return str(await asyncio.to_thread(fn, **kwargs))
+
+
+@router.post("/webapp/api/voice-transcribe")
+async def voice_transcribe(
+    audio: UploadFile = File(...),
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    _, profile, _ = _trusted_context(x_telegram_init_data or "")
+    result, stt_ms = await _transcribe_upload(audio, profile)
+    transcript = str(getattr(result, "text", "") or "").strip()
+    if not transcript:
+        raise HTTPException(status_code=422, detail="transcription_empty")
+    mode = APP_VOICE.mode_for(profile) if APP_VOICE is not None else TTSMode.OFF
+    return JSONResponse(
+        {
+            "ok": True,
+            "trusted": True,
+            "authority": "stt_only_shared_voice_runtime",
+            "transcript": transcript,
+            "latency": {"stt_ms": stt_ms},
+            "transcription": {
+                "model": str(getattr(result, "model", "") or ""),
+                "language": str(getattr(result, "language", "") or ""),
+                "confidence": getattr(result, "confidence", None),
+                "fallback_used": bool(getattr(result, "fallback_used", False)),
+            },
+            "voice": {
+                "identity": str(profile.get("voice_identity") or "female"),
+                "mode": mode.value,
+                "available": bool(APP_VOICE is not None and getattr(APP_VOICE, "enabled", False)),
+            },
+        },
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@router.post("/webapp/api/voice-turn")
+async def voice_turn(
+    audio: UploadFile = File(...),
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    request_started = time.perf_counter()
+    _, profile, history = _trusted_context(x_telegram_init_data or "")
+    result, stt_ms = await _transcribe_upload(audio, profile)
+    transcript = str(getattr(result, "text", "") or "").strip()
+    if not transcript:
+        raise HTTPException(status_code=422, detail="transcription_empty")
+    think_started = time.perf_counter()
+    reply = await _reply(transcript, profile, history)
+    think_ms = int((time.perf_counter() - think_started) * 1000)
+    mode = APP_VOICE.mode_for(profile) if APP_VOICE is not None else TTSMode.OFF
+    total_ms = int((time.perf_counter() - request_started) * 1000)
+    return JSONResponse(
+        {
+            "ok": True,
+            "trusted": True,
+            "authority": "shared_conversation_and_voice_runtime",
+            "transcript": transcript,
+            "reply": reply,
+            "latency": {"stt_ms": stt_ms, "think_ms": think_ms, "turn_ms": total_ms},
+            "transcription": {
+                "model": str(getattr(result, "model", "") or ""),
+                "language": str(getattr(result, "language", "") or ""),
+                "confidence": getattr(result, "confidence", None),
+                "fallback_used": bool(getattr(result, "fallback_used", False)),
+            },
+            "voice": {
+                "identity": str(profile.get("voice_identity") or "female"),
+                "mode": mode.value,
+                "available": bool(APP_VOICE is not None and getattr(APP_VOICE, "enabled", False)),
+            },
+        },
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
 class SpeakBody(BaseModel):
