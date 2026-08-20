@@ -176,7 +176,8 @@ def test_callback_is_acknowledged_and_edits_the_same_console_message():
     assert len(tg.edited) == 1
     chat_id, message_id, text, markup = tg.edited[0]
     assert (chat_id, message_id) == (123, 77)
-    assert "WORLD SELECT" in text
+    assert "ИГРОВОЙ МИР" in text
+    assert "ИГРОВОЕ ОКРУЖЕНИЕ" in text
     assert "inline_keyboard" in markup
     assert tg.sent == []
 
@@ -187,7 +188,8 @@ def test_dynamic_brain_selection_patches_profile_and_keeps_active_state():
     assert run(console.maybe_handle(callback_update("bco:set:brain:demon"))) is True
     assert profiles.patches[-1] == (123, {"difficulty": "Demon"})
     _, _, text, markup = tg.edited[-1]
-    assert "INTELLIGENCE CORE" in text
+    assert "ЯДРО CROWN" in text
+    assert "РЕЖИМ МЫШЛЕНИЯ" in text
     demon = next(
         button
         for row in markup["inline_keyboard"]

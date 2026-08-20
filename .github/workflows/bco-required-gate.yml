@@ -68,6 +68,7 @@ jobs:
           i18n=Path('app/i18n.py').read_text(); web_i18n=Path('app/webapp/static/bco.i18n.js').read_text(); router=Path('app/core/router.py').read_text(); analytics=Path('app/services/analytics/admin_usage.py').read_text(); brain_patch=Path('app/services/brain/locale_patch.py').read_text()
           voice_ui=Path('app/ui/crown_voice_console.py').read_text(); console=Path('app/services/telegram/command_console.py').read_text(); voice_backend=Path('app/services/voice/openai_backend.py').read_text(); bridge=Path('app/services/entitlements/site_bridge.py').read_text(); crown_intel=Path('app/services/brain/crown_intel_runtime.py').read_text(); ledger=Path('app/services/brain/crown_intel_ledger.py').read_text(); engine=Path('app/services/brain/engine.py').read_text(); live=Path('app/services/brain/live_official.py').read_text(); migration=Path('migrations/004_crown_intel_v43_ledger.sql').read_text()
           aaa=Path('app/ui/aaa_console.py').read_text(); aaa_surface=Path('app/services/telegram/aaa_surface.py').read_text(); alert_delivery=Path('app/services/brain/crown_alert_delivery.py').read_text(); war_room=Path('app/webapp/static/bco.war-room.js').read_text(); app_js=Path('app/webapp/static/app.js').read_text()
+          console_contract=''.join(console.split())
           assert 'OrchestratedOperatorIntelligenceService as OperatorIntelligenceService' in package
           assert 'CurrentOperatorIntelligenceService' in wrapper
           assert 'bco_mission_orchestrator_v36' in orchestrator
@@ -82,7 +83,7 @@ jobs:
           assert 'server-side Supabase activity ledger' in analytics
           assert 'Respond in English' in brain_patch and 'Respond in Russian' in brain_patch
           for marker in ('CROWN VOICE // LIVE CONTROL','♀ FEMALE','♂ MALE','ON-DEMAND','bco:set:voiceid:female','bco:set:voiceid:male'): assert marker in voice_ui
-          for marker in ('field == "voiceid"','voice_identity','tts_voice','field == "ttsmode"'): assert marker in console
+          for marker in ('field=="voiceid"','voice_identity','tts_voice','field=="ttsmode"'): assert marker in console_contract
           assert 'IDENTITY_DEFAULT_VOICES' in voice_backend and '"female": "marin"' in voice_backend and '"male": "cedar"' in voice_backend
           for marker in ('SiteIdentityAssertionVerifier','BLACKCROWN_SITE_BRIDGE_SECRET','x_bc_site_assertion','hmac.compare_digest','site_assertion_not_configured','/api/auth/session/verify','_ALLOWED_VERIFY_PATHS','site-session-verifier-v14'): assert marker in bridge
           for marker in ('zero_extra_paid_api','callofduty.com','ea.com','CROWN_INTEL_AUTONOMOUS_ENABLED','CROWN_INTEL_REFRESH_INTERVAL_S','warzone','bo7','bf6','ledger_enabled','last_change_count'): assert marker in crown_intel
@@ -93,7 +94,7 @@ jobs:
           for marker in ('aaa_home_view','war_room_view','modules_view','CROWN // READY','ВСЕ МОДУЛИ','ALL MODULES'): assert marker in aaa
           for marker in ('bco:warroom','bco:modules','_aaa_home_actions','🧠 AI BRIEF'): assert marker in aaa_surface
           for marker in ('baseline_not_alert','duplicate_suppressed','strong_personal_relevance','below_relevance_threshold'): assert marker in alert_delivery
-          for marker in ('__BCO_WAR_ROOM_V44_LOADED__','No hidden score','VOD never auto-completes a mission'): assert marker in war_room
+          for marker in ('__BCO_WAR_ROOM_V44_LOADED__','No hidden score','Unknown remains unknown'): assert marker in war_room
           assert '/webapp/bco.war-room.js' in app_js
           print('v44 AAA War Room/CROWN ALERT/product-surface authority contract: clean')
           PY

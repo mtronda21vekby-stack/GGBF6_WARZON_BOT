@@ -7,7 +7,6 @@ import inspect
 import json
 import logging
 import time
-import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -99,17 +98,24 @@ async def webapp_api_ask_stream(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
     x_bco_version: str | None = Header(default=None, alias="X-BCO-Version"),
 ):
-    """Stream one Intelligence Core answer as newline-delimited JSON.
+    """Stream one verified Intelligence Core answer as newline-delimited JSON.
 
-    The trusted identity/profile boundary is identical to `/webapp/api/ask`.
+    Authentication is completed before the StreamingResponse is created, so an
+    anonymous/forged request cannot start a model task or enter Player Brain.
     The final event is authoritative; partial events are presentation-only and
     may be coalesced by the client.
     """
+    request_id = _base.new_request_id()
     text = str(body.text or "").strip()
     build = _base._build_id()
     if not text:
         async def empty_stream() -> AsyncIterator[bytes]:
-            yield _ndjson({"type": "error", "error": "empty_text", "build": build})
+            yield _ndjson({
+                "type": "error",
+                "error": "empty_text",
+                "request_id": request_id,
+                "build": build,
+            })
         return StreamingResponse(
             empty_stream(),
             media_type="application/x-ndjson",
@@ -118,18 +124,19 @@ async def webapp_api_ask_stream(
         )
 
     init_data = str(x_telegram_init_data or body.initData or "").strip()
-    trusted, raw_meta = _base.verify_init_data(init_data)
-    meta = dict(raw_meta or {})
-    if trusted:
-        profile, history, identity = _base._trusted_server_context(meta)
-        meta["trusted"] = True
-        meta["identity"] = identity
-    else:
-        profile = _base._safe_profile(body.profile)
-        history = _base._safe_history(body.history)
-        meta = {"untrusted": True, "trusted": False}
+    context = _base.require_trusted_init_data(
+        init_data,
+        verifier=_base.verify_init_data,
+        request_id=request_id,
+    )
+    profile, history, identity = _base._trusted_server_context(context.meta)
+    if identity is None:
+        raise _base.safe_http_error(403, "telegram_identity_missing", request_id)
+    meta = {
+        "trusted": True,
+        "authority": "verified_telegram_server_context",
+    }
 
-    request_id = uuid.uuid4().hex[:12]
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=32)
     loop = asyncio.get_running_loop()
     sequence = 0
@@ -158,10 +165,7 @@ async def webapp_api_ask_stream(
         stream_enabled = bool(getattr(settings, "webapp_live_stream_enabled", True)) if settings else True
         ai_on = bool(ai_enabled and ai_key and brain and hasattr(brain, "reply"))
         if not ai_on:
-            return (
-                "🧠 AI сейчас недоступен. Проверь серверную конфигурацию "
-                "OPENAI_API_KEY, AI_ENABLED и OPENAI_MODEL."
-            )
+            raise RuntimeError("ai_unavailable")
 
         fn = brain.reply
         kwargs: dict[str, Any] = {
@@ -196,7 +200,7 @@ async def webapp_api_ask_stream(
                 "type": "meta",
                 "ok": True,
                 "request_id": request_id,
-                "trusted": bool(trusted),
+                "trusted": True,
                 "build": build,
                 "bco_version": str(x_bco_version or "")[:64],
             }
@@ -235,7 +239,7 @@ async def webapp_api_ask_stream(
                     "ok": True,
                     "request_id": request_id,
                     "reply": str(reply),
-                    "trusted": bool(trusted),
+                    "trusted": True,
                     "elapsed_ms": int((time.monotonic() - started) * 1000),
                     "build": build,
                     "meta": meta,
@@ -245,14 +249,17 @@ async def webapp_api_ask_stream(
             task.cancel()
             raise
         except Exception as exc:
-            log.exception("webapp live generation failed request_id=%s error=%s", request_id, type(exc).__name__)
+            log.exception(
+                "webapp live generation failed request_id=%s error=%s",
+                request_id,
+                type(exc).__name__,
+            )
             yield _ndjson(
                 {
                     "type": "error",
                     "ok": False,
                     "request_id": request_id,
                     "error": "generation_unavailable",
-                    "error_class": type(exc).__name__,
                     "build": build,
                 }
             )
@@ -268,5 +275,6 @@ async def webapp_api_ask_stream(
             "X-Accel-Buffering": "no",
             "X-Content-Type-Options": "nosniff",
             "X-BCO-Stream": "live-intelligence-v18",
+            "X-Request-ID": request_id,
         },
     )

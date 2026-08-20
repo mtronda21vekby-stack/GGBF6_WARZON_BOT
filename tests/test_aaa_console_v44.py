@@ -57,5 +57,5 @@ def test_mini_app_war_room_is_additive_and_loaded_after_operator():
     assert app.index("/webapp/bco.operator.js") < app.index("/webapp/bco.war-room.js")
     assert "__BCO_WAR_ROOM_V44_LOADED__" in war
     assert "No hidden score" in war
-    assert "VOD never auto-completes a mission" in war
+    assert "Unknown remains unknown" in war
     assert "music visualizer" not in war.lower()

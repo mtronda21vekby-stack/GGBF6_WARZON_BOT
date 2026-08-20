@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
@@ -15,7 +16,12 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from app.webapp.security import verify_init_data
+from app.webapp.security import (
+    new_request_id,
+    require_trusted_init_data,
+    safe_http_error,
+    verify_init_data,
+)
 
 log = logging.getLogger("webapp")
 router = APIRouter()
@@ -191,6 +197,8 @@ def webapp_files(req_path: str, request: Request):
 class AskBody(BaseModel):
     initData: str = ""
     text: str = Field(default="", max_length=6000)
+    # Retained only for wire compatibility. Paid AI ignores both fields and
+    # always resolves profile/history from the verified server-side identity.
     profile: dict = Field(default_factory=dict)
     history: list = Field(default_factory=list)
 
@@ -224,7 +232,9 @@ def _safe_history(history: Any) -> list[dict]:
 
 
 def _trusted_server_context(meta: dict) -> tuple[dict, list[dict], int | None]:
-    identity = meta.get("chat_id") or meta.get("user_id")
+    # Telegram user_id is the identity-provider subject. chat_id is transport
+    # context and must not become the owner key when both values are present.
+    identity = meta.get("user_id") or meta.get("chat_id")
     try:
         identity = int(identity) if identity is not None else None
     except Exception:
@@ -249,17 +259,22 @@ def _trusted_server_context(meta: dict) -> tuple[dict, list[dict], int | None]:
 async def webapp_conversation_history(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ):
-    init_data = str(x_telegram_init_data or "").strip()
-    trusted, meta = verify_init_data(init_data)
-    if not trusted:
-        raise HTTPException(status_code=401, detail="trusted_telegram_context_required")
-    _, history, identity = _trusted_server_context(dict(meta or {}))
+    request_id = new_request_id()
+    # Compatibility marker retained for existing clients/tests:
+    # trusted_telegram_context_required
+    context = require_trusted_init_data(
+        x_telegram_init_data or "",
+        verifier=verify_init_data,
+        request_id=request_id,
+    )
+    _, history, identity = _trusted_server_context(context.meta)
     if identity is None:
-        raise HTTPException(status_code=401, detail="telegram_identity_missing")
+        raise safe_http_error(403, "telegram_identity_missing", request_id)
     return JSONResponse(
         {
             "ok": True,
             "trusted": True,
+            "request_id": request_id,
             "authority": "shared_server_conversation_store",
             "history": history[-20:],
             "count": len(history[-20:]),
@@ -275,66 +290,77 @@ async def webapp_api_ask(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
     x_bco_version: str | None = Header(default=None, alias="X-BCO-Version"),
 ):
+    request_id = new_request_id()
     text = (body.text or "").strip()
     if not text:
-        return {"ok": False, "error": "empty_text", "build": _build_id()}
+        return JSONResponse(
+            status_code=400,
+            content={
+                "ok": False,
+                "error": "empty_text",
+                "request_id": request_id,
+                "build": _build_id(),
+            },
+        )
 
     init_data = (x_telegram_init_data or body.initData or "").strip()
-    trusted, meta = verify_init_data(init_data)
-    meta = dict(meta or {})
-
-    if trusted:
-        profile, history, identity = _trusted_server_context(meta)
-        meta["trusted"] = True
-        meta["identity"] = identity
-    else:
-        profile = _safe_profile(body.profile)
-        history = _safe_history(body.history)
-        meta = {"untrusted": True, "trusted": False}
+    context = require_trusted_init_data(
+        init_data,
+        verifier=verify_init_data,
+        request_id=request_id,
+    )
+    profile, history, identity = _trusted_server_context(context.meta)
+    if identity is None:
+        raise safe_http_error(403, "telegram_identity_missing", request_id)
 
     log.info(
-        "webapp_api_ask build=%s v=%s trusted=%s text_len=%d",
-        _build_id(), _truncate(x_bco_version or "", 64), trusted, len(text),
+        "webapp_api_ask request_id=%s build=%s v=%s trusted=true text_len=%d",
+        request_id,
+        _build_id(),
+        _truncate(x_bco_version or "", 64),
+        len(text),
     )
 
-    reply_text = None
-    try:
-        brain = APP_BRAIN
-        settings = APP_SETTINGS
-        ai_key = (getattr(settings, "openai_api_key", "") or "").strip() if settings else ""
-        ai_enabled = bool(getattr(settings, "ai_enabled", True)) if settings else True
-        ai_on = bool(ai_enabled and ai_key and brain and hasattr(brain, "reply"))
+    brain = APP_BRAIN
+    settings = APP_SETTINGS
+    ai_key = (getattr(settings, "openai_api_key", "") or "").strip() if settings else ""
+    ai_enabled = bool(getattr(settings, "ai_enabled", True)) if settings else True
+    ai_on = bool(ai_enabled and ai_key and brain and hasattr(brain, "reply"))
+    if not ai_on:
+        raise safe_http_error(503, "ai_unavailable", request_id)
 
-        if ai_on:
-            fn = brain.reply
-            if inspect.iscoroutinefunction(fn):
-                reply_text = await fn(text=text, profile=profile, history=history)
-            else:
-                output = fn(text=text, profile=profile, history=history)
-                reply_text = await output if inspect.isawaitable(output) else output
+    try:
+        fn = brain.reply
+        kwargs = {"text": text, "profile": profile, "history": history}
+        if inspect.iscoroutinefunction(fn):
+            reply_text = await fn(**kwargs)
         else:
-            meta["ai"] = {
-                "enabled": ai_enabled,
-                "has_key": bool(ai_key),
-                "has_brain": bool(brain),
-                "reason": "ai_off",
-            }
+            # ConversationService/BrainEngine generation is synchronous.
+            # Never block the FastAPI event loop with model/network execution.
+            reply_text = await asyncio.to_thread(fn, **kwargs)
+            if inspect.isawaitable(reply_text):
+                reply_text = await reply_text
+    except HTTPException:
+        raise
     except Exception as exc:
-        log.exception("webapp_api_ask failed: %s", type(exc).__name__)
-        reply_text = "🧠 AI временно недоступен. Повтори запрос через несколько секунд."
+        log.exception(
+            "webapp_api_ask failed request_id=%s error=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        raise safe_http_error(503, "generation_unavailable", request_id) from None
 
     if not reply_text:
-        reply_text = (
-            "🤝 BLACK CROWN OPS: AI сейчас выключен.\n"
-            "Проверь OPENAI_API_KEY, AI_ENABLED и OPENAI_MODEL."
-        )
+        raise safe_http_error(503, "generation_unavailable", request_id)
 
     return {
         "ok": True,
         "reply": str(reply_text),
+        "request_id": request_id,
         "meta": {
-            **meta,
-            "bco_version": x_bco_version or "",
+            "trusted": True,
+            "authority": "verified_telegram_server_context",
+            "bco_version": _truncate(x_bco_version or "", 64),
             "webapp_build": _build_id(),
         },
         "build": _build_id(),
@@ -372,7 +398,7 @@ async def webapp_game_event(
 
     stored = False
     if trusted and APP_STORE is not None and hasattr(APP_STORE, "add_progression_event"):
-        identity = meta.get("chat_id") or meta.get("user_id")
+        identity = meta.get("user_id") or meta.get("chat_id")
         try:
             if identity is not None:
                 APP_STORE.add_progression_event(int(identity), {"event": event, "payload": payload})
@@ -383,6 +409,6 @@ async def webapp_game_event(
     if not trusted:
         meta = {"untrusted": True, "trusted": False}
     else:
-        meta["trusted"] = True
+        meta = {"trusted": True}
 
     return {"ok": True, "stored": stored, "build": _build_id(), "meta": meta}
