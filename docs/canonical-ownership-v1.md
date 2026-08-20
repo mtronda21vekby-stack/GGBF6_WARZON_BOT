@@ -77,9 +77,21 @@ For `merge_pending`:
 
 A bounded initial pass is part of the migration. Re-running the function processes only remaining null projections.
 
+### Concurrent-run serialization
+
+`007_canonical_ownership_backfill_serialization.sql` adds one server-only lock row and a `BEFORE INSERT` trigger on the migration-run ledger. Since every backfill transaction inserts its run record first, the trigger holds a row lock until commit or rollback.
+
+This gives the migration program one active writer at a time without trusting process-local locks:
+
+- concurrent service-role invocations block rather than race;
+- merge-pending audit-event creation remains sequential;
+- retries after commit remain idempotent;
+- missing lock state fails closed;
+- browser roles cannot read or mutate the lock.
+
 ## Transactional validation evidence
 
-The complete migration was executed against GAME inside `BEGIN ... ROLLBACK` before opening the PR. The dry-run completed successfully, including DDL, FK validation, RLS, backfill, mapping-state refresh, audit-event logic and coverage calculation.
+The complete foundation migration was executed against GAME inside `BEGIN ... ROLLBACK` before opening the PR. The dry-run completed successfully, including DDL, FK validation, RLS, backfill, mapping-state refresh, audit-event logic and coverage calculation.
 
 Dry-run result at that moment:
 
@@ -88,7 +100,9 @@ Dry-run result at that moment:
 - 50% projected coverage for profiles and analytics because one legacy subject had no active canonical identity;
 - no mutation remained after rollback.
 
-Post-rollback audit confirmed:
+The serialization migration was also executed transactionally against GAME with a temporary prerequisite run table. It created the lock row, installed the trigger and allowed one run insert. Post-rollback verification found no lock table, trigger, function or run table residue.
+
+Post-rollback audit for the foundation confirmed:
 
 - foundation tables: absent;
 - foundation functions: absent;
@@ -98,7 +112,7 @@ Post-rollback audit confirmed:
 
 ## Rollout sequence
 
-1. **Phase 2A — this migration:** additive columns, audit ledger, conflict state, backfill and metrics.
+1. **Phase 2A — these migrations:** additive columns, audit ledger, conflict state, serialized backfill and metrics.
 2. **Phase 2B:** server-resolved dual-write; legacy write remains mandatory.
 3. **Phase 2C:** canonical-first dual-read with measured fallback to legacy rows.
 4. **Phase 2D:** conflict-resolution workflow and controlled account confirmation.
