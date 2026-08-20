@@ -94,7 +94,7 @@ jobs:
           for marker in ('aaa_home_view','war_room_view','modules_view','CROWN // READY','ВСЕ МОДУЛИ','ALL MODULES'): assert marker in aaa
           for marker in ('bco:warroom','bco:modules','_aaa_home_actions','🧠 AI BRIEF'): assert marker in aaa_surface
           for marker in ('baseline_not_alert','duplicate_suppressed','strong_personal_relevance','below_relevance_threshold'): assert marker in alert_delivery
-          for marker in ('__BCO_WAR_ROOM_V44_LOADED__','No hidden score','VOD never auto-completes a mission'): assert marker in war_room
+          for marker in ('__BCO_WAR_ROOM_V44_LOADED__','No hidden score','Unknown remains unknown'): assert marker in war_room
           assert '/webapp/bco.war-room.js' in app_js
           print('v44 AAA War Room/CROWN ALERT/product-surface authority contract: clean')
           PY
