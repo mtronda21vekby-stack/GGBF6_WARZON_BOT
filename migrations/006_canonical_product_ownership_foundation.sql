@@ -1,14 +1,16 @@
--- BLACK CROWN canonical product ownership foundation
+-- BLACK CROWN canonical product ownership foundation (Phase 2A)
 --
--- Phase 2A is intentionally additive:
---   * legacy chat/site keys remain intact and authoritative for the current runtime;
---   * nullable black_crown_user_id projections are added for dual-read/dual-write rollout;
---   * no account is merged, no legacy row is deleted, and no owner column is made NOT NULL;
---   * ambiguous mappings remain unowned and are recorded as conflict/merge_pending;
---   * raw legacy subjects are never copied into the migration-state ledger.
+-- Additive migration only:
+--   * legacy chat_id / telegram_user_id / site_user_id keys remain intact;
+--   * black_crown_user_id is a nullable canonical projection during migration;
+--   * existing non-null canonical owners are never overwritten;
+--   * ambiguous identity mappings remain unowned;
+--   * Website/Telegram disagreement becomes merge_pending and emits an audit event;
+--   * no account, entitlement, Player Brain row, history row or identity is deleted;
+--   * no raw legacy subject is stored in migration audit tables.
 --
--- Rollback contract: disable future dual-write/read flags and leave these additive
--- columns/ledger rows in place. Dropping owner columns is not a safe rollback.
+-- Safe rollback: disable future dual-read/dual-write flags. Do not drop additive
+-- owner columns or audit records as an emergency rollback.
 
 create table if not exists public.black_crown_ownership_migration_state (
   scope text not null,
@@ -35,11 +37,16 @@ create table if not exists public.black_crown_ownership_migration_state (
     check (attempt_count >= 0),
   constraint black_crown_ownership_state_owner_check
     check (
-      (state = 'resolved'
+      (
+        state = 'resolved'
         and black_crown_user_id is not null
-        and cardinality(candidate_user_ids) = 1)
+        and cardinality(candidate_user_ids) = 1
+      )
       or
-      (state <> 'resolved' and black_crown_user_id is null)
+      (
+        state <> 'resolved'
+        and black_crown_user_id is null
+      )
     ),
   constraint black_crown_ownership_state_account_fkey
     foreign key (black_crown_user_id)
@@ -54,27 +61,11 @@ create index if not exists black_crown_ownership_state_user_idx
   where black_crown_user_id is not null;
 
 alter table public.black_crown_ownership_migration_state enable row level security;
-revoke all on table public.black_crown_ownership_migration_state from public, anon, authenticated;
-grant select, insert, update, delete on table public.black_crown_ownership_migration_state to service_role;
-
-do $policy$
-begin
-  if not exists (
-    select 1
-    from pg_policies
-    where schemaname = 'public'
-      and tablename = 'black_crown_ownership_migration_state'
-      and policyname = 'black_crown_ownership_state_browser_deny'
-  ) then
-    create policy black_crown_ownership_state_browser_deny
-      on public.black_crown_ownership_migration_state
-      for all
-      to anon, authenticated
-      using (false)
-      with check (false);
-  end if;
-end
-$policy$;
+revoke all on table public.black_crown_ownership_migration_state
+  from public, anon, authenticated;
+grant select, insert, update, delete
+  on table public.black_crown_ownership_migration_state
+  to service_role;
 
 create table if not exists public.black_crown_ownership_migration_runs (
   run_id uuid primary key default extensions.gen_random_uuid(),
@@ -94,11 +85,29 @@ create index if not exists black_crown_ownership_runs_started_idx
   on public.black_crown_ownership_migration_runs (started_at desc);
 
 alter table public.black_crown_ownership_migration_runs enable row level security;
-revoke all on table public.black_crown_ownership_migration_runs from public, anon, authenticated;
-grant select, insert, update on table public.black_crown_ownership_migration_runs to service_role;
+revoke all on table public.black_crown_ownership_migration_runs
+  from public, anon, authenticated;
+grant select, insert, update
+  on table public.black_crown_ownership_migration_runs
+  to service_role;
 
-do $policy$
+do $policies$
 begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'black_crown_ownership_migration_state'
+      and policyname = 'black_crown_ownership_state_browser_deny'
+  ) then
+    create policy black_crown_ownership_state_browser_deny
+      on public.black_crown_ownership_migration_state
+      for all
+      to anon, authenticated
+      using (false)
+      with check (false);
+  end if;
+
   if not exists (
     select 1
     from pg_policies
@@ -114,115 +123,70 @@ begin
       with check (false);
   end if;
 end
-$policy$;
+$policies$;
 
-alter table public.bco_players
-  add column if not exists black_crown_user_id uuid null;
-alter table public.bco_messages
-  add column if not exists black_crown_user_id uuid null;
-alter table public.bco_episodes
-  add column if not exists black_crown_user_id uuid null;
-alter table public.bco_player_mistakes
-  add column if not exists black_crown_user_id uuid null;
-alter table public.bco_mistake_receipts
-  add column if not exists black_crown_user_id uuid null;
-alter table public.bco_progression_events
-  add column if not exists black_crown_user_id uuid null;
-alter table public.bco_training_sessions
-  add column if not exists black_crown_user_id uuid null;
-alter table public.bco_user_activity
-  add column if not exists black_crown_user_id uuid null;
-alter table public.blackcrown_account_links
-  add column if not exists black_crown_user_id uuid null;
-alter table public.blackcrown_account_link_events
-  add column if not exists black_crown_user_id uuid null;
-alter table public.blackcrown_entitlements
-  add column if not exists black_crown_user_id uuid null;
-
--- Add owner FKs as NOT VALID first to avoid a long blocking validation scan on
--- larger future installations. Validation is then explicit and idempotent.
-do $constraints$
+-- Add the canonical projection, FK and partial index to every current
+-- user-owned product-state surface. Existing legacy keys are not modified.
+do $ownership_ddl$
 declare
-  item record;
-  constraint_name text;
+  v_table text;
+  v_constraint text;
+  v_index text;
 begin
-  for item in
-    select table_name
-    from (values
-      ('bco_players'),
-      ('bco_messages'),
-      ('bco_episodes'),
-      ('bco_player_mistakes'),
-      ('bco_mistake_receipts'),
-      ('bco_progression_events'),
-      ('bco_training_sessions'),
-      ('bco_user_activity'),
-      ('blackcrown_account_links'),
-      ('blackcrown_account_link_events'),
-      ('blackcrown_entitlements')
-    ) as tables(table_name)
+  foreach v_table in array array[
+    'bco_players',
+    'bco_messages',
+    'bco_episodes',
+    'bco_player_mistakes',
+    'bco_mistake_receipts',
+    'bco_progression_events',
+    'bco_training_sessions',
+    'bco_user_activity',
+    'blackcrown_account_links',
+    'blackcrown_account_link_events',
+    'blackcrown_entitlements'
+  ]
   loop
-    constraint_name := item.table_name || '_black_crown_user_id_fkey';
+    execute format(
+      'alter table public.%I add column if not exists black_crown_user_id uuid null',
+      v_table
+    );
+
+    v_constraint := v_table || '_black_crown_user_id_fkey';
     if not exists (
       select 1
-      from pg_constraint
-      where conname = constraint_name
-        and conrelid = to_regclass(format('public.%I', item.table_name))
+      from pg_constraint as constraints
+      where constraints.conname = v_constraint
+        and constraints.conrelid = to_regclass(format('public.%I', v_table))
     ) then
       execute format(
         'alter table public.%I add constraint %I foreign key (black_crown_user_id) references public.black_crown_accounts (black_crown_user_id) on delete restrict not valid',
-        item.table_name,
-        constraint_name
+        v_table,
+        v_constraint
       );
     end if;
+
     execute format(
       'alter table public.%I validate constraint %I',
-      item.table_name,
-      constraint_name
+      v_table,
+      v_constraint
+    );
+
+    v_index := v_table || '_black_crown_user_id_idx';
+    execute format(
+      'create index if not exists %I on public.%I (black_crown_user_id) where black_crown_user_id is not null',
+      v_index,
+      v_table
     );
   end loop;
 end
-$constraints$;
+$ownership_ddl$;
 
-create index if not exists bco_players_black_crown_user_idx
-  on public.bco_players (black_crown_user_id)
-  where black_crown_user_id is not null;
-create index if not exists bco_messages_black_crown_user_id_idx
-  on public.bco_messages (black_crown_user_id, id desc)
-  where black_crown_user_id is not null;
-create index if not exists bco_episodes_black_crown_user_id_idx
-  on public.bco_episodes (black_crown_user_id, id desc)
-  where black_crown_user_id is not null;
-create index if not exists bco_player_mistakes_black_crown_user_idx
-  on public.bco_player_mistakes (black_crown_user_id, count desc, last_seen desc)
-  where black_crown_user_id is not null;
-create index if not exists bco_mistake_receipts_black_crown_user_idx
-  on public.bco_mistake_receipts (black_crown_user_id, created_at desc)
-  where black_crown_user_id is not null;
-create index if not exists bco_progression_events_black_crown_user_idx
-  on public.bco_progression_events (black_crown_user_id, id desc)
-  where black_crown_user_id is not null;
-create index if not exists bco_training_sessions_black_crown_user_idx
-  on public.bco_training_sessions (black_crown_user_id, id desc)
-  where black_crown_user_id is not null;
-create index if not exists bco_user_activity_black_crown_user_idx
-  on public.bco_user_activity (black_crown_user_id, last_seen_at desc)
-  where black_crown_user_id is not null;
-create index if not exists blackcrown_account_links_black_crown_user_idx
-  on public.blackcrown_account_links (black_crown_user_id)
-  where black_crown_user_id is not null;
-create index if not exists blackcrown_account_link_events_black_crown_user_idx
-  on public.blackcrown_account_link_events (black_crown_user_id, id desc)
-  where black_crown_user_id is not null;
-create index if not exists blackcrown_entitlements_black_crown_user_active_idx
-  on public.blackcrown_entitlements (black_crown_user_id, entitlement_key, valid_until)
-  where black_crown_user_id is not null and status = 'active';
-
--- Analytics is server-owned. RLS was historically absent on this table.
+-- Analytics is server-owned. It previously had no RLS.
 alter table public.bco_user_activity enable row level security;
 revoke all on table public.bco_user_activity from anon, authenticated;
 
-do $policy$
+do $activity_policy$
 begin
   if not exists (
     select 1
@@ -239,7 +203,7 @@ begin
       with check (false);
   end if;
 end
-$policy$;
+$activity_policy$;
 
 create or replace function public.black_crown_legacy_subject_hash(
   p_provider text,
@@ -272,39 +236,49 @@ security definer
 set search_path = public, extensions
 as $function$
 declare
-  result jsonb;
+  v_metrics jsonb;
 begin
-  -- Persistent product state still keyed by chat_id.
+  -- Product state, analytics and entitlements resolve only through active,
+  -- server-owned identity records. Raw subjects exist only inside this query.
   with legacy_rows as (
-    select chat_id::text as legacy_subject from public.bco_players
-    union all select chat_id::text from public.bco_messages
-    union all select chat_id::text from public.bco_episodes
-    union all select chat_id::text from public.bco_player_mistakes
-    union all select chat_id::text from public.bco_mistake_receipts
-    union all select chat_id::text from public.bco_progression_events
-    union all select chat_id::text from public.bco_training_sessions
-  ), subjects as (
-    select legacy_subject, count(*)::bigint as legacy_row_count
+    select 'product_state'::text as scope, 'telegram'::text as provider, chat_id::text as subject
+      from public.bco_players
+    union all select 'product_state', 'telegram', chat_id::text from public.bco_messages
+    union all select 'product_state', 'telegram', chat_id::text from public.bco_episodes
+    union all select 'product_state', 'telegram', chat_id::text from public.bco_player_mistakes
+    union all select 'product_state', 'telegram', chat_id::text from public.bco_mistake_receipts
+    union all select 'product_state', 'telegram', chat_id::text from public.bco_progression_events
+    union all select 'product_state', 'telegram', chat_id::text from public.bco_training_sessions
+    union all select 'analytics_activity', 'telegram', telegram_user_id::text from public.bco_user_activity
+    union all select 'entitlement', 'website_auth', site_user_id from public.blackcrown_entitlements
+  ), grouped as (
+    select scope, provider, subject, count(*)::bigint as legacy_row_count
     from legacy_rows
-    group by legacy_subject
+    group by scope, provider, subject
   ), candidates as (
     select
-      subjects.legacy_subject,
-      subjects.legacy_row_count,
+      grouped.scope,
+      grouped.provider,
+      grouped.subject,
+      grouped.legacy_row_count,
       coalesce(
-        array_agg(distinct identities.black_crown_user_id order by identities.black_crown_user_id)
-          filter (where identities.black_crown_user_id is not null),
+        array_agg(
+          distinct identities.black_crown_user_id
+          order by identities.black_crown_user_id
+        ) filter (where identities.black_crown_user_id is not null),
         array[]::uuid[]
       ) as candidate_user_ids
-    from subjects
+    from grouped
     left join public.black_crown_identities as identities
-      on identities.provider = 'telegram'
-     and identities.provider_subject = subjects.legacy_subject
+      on identities.provider = grouped.provider
+     and identities.provider_subject = grouped.subject
      and identities.status = 'active'
-    group by subjects.legacy_subject, subjects.legacy_row_count
+    group by grouped.scope, grouped.provider, grouped.subject, grouped.legacy_row_count
   ), normalized as (
     select
-      legacy_subject,
+      scope,
+      provider,
+      subject,
       legacy_row_count,
       candidate_user_ids,
       case cardinality(candidate_user_ids)
@@ -312,11 +286,14 @@ begin
         when 1 then 'resolved'
         else 'conflict'
       end as state,
-      case when cardinality(candidate_user_ids) = 1 then candidate_user_ids[1] else null end as owner_id,
+      case
+        when cardinality(candidate_user_ids) = 1 then candidate_user_ids[1]
+        else null
+      end as owner_id,
       case cardinality(candidate_user_ids)
-        when 0 then 'active_telegram_identity_missing'
-        when 1 then 'active_telegram_identity_resolved'
-        else 'multiple_active_telegram_identities'
+        when 0 then 'active_identity_missing'
+        when 1 then 'active_identity_resolved'
+        else 'multiple_active_identities'
       end as reason
     from candidates
   )
@@ -336,22 +313,23 @@ begin
     resolved_at
   )
   select
-    'product_state',
-    'telegram',
-    public.black_crown_legacy_subject_hash('telegram', legacy_subject),
-    state,
-    owner_id,
-    candidate_user_ids,
-    legacy_row_count,
+    normalized.scope,
+    normalized.provider,
+    public.black_crown_legacy_subject_hash(normalized.provider, normalized.subject),
+    normalized.state,
+    normalized.owner_id,
+    normalized.candidate_user_ids,
+    normalized.legacy_row_count,
     1,
-    reason,
+    normalized.reason,
     jsonb_build_object(
-      'authority', 'active_telegram_identity',
-      'raw_subject_stored', false
+      'authority', 'active_server_identity',
+      'raw_subject_stored', false,
+      'silent_merge_allowed', false
     ),
     now(),
     now(),
-    case when state = 'resolved' then now() else null end
+    case when normalized.state = 'resolved' then now() else null end
   from normalized
   on conflict (scope, legacy_provider, legacy_subject_hash)
   do update set
@@ -368,226 +346,52 @@ begin
       else null
     end;
 
-  -- Analytics currently keys activity by Telegram user ID rather than chat ID.
-  with subjects as (
-    select telegram_user_id::text as legacy_subject, count(*)::bigint as legacy_row_count
-    from public.bco_user_activity
-    group by telegram_user_id
-  ), candidates as (
-    select
-      subjects.legacy_subject,
-      subjects.legacy_row_count,
-      coalesce(
-        array_agg(distinct identities.black_crown_user_id order by identities.black_crown_user_id)
-          filter (where identities.black_crown_user_id is not null),
-        array[]::uuid[]
-      ) as candidate_user_ids
-    from subjects
-    left join public.black_crown_identities as identities
-      on identities.provider = 'telegram'
-     and identities.provider_subject = subjects.legacy_subject
-     and identities.status = 'active'
-    group by subjects.legacy_subject, subjects.legacy_row_count
-  ), normalized as (
-    select
-      legacy_subject,
-      legacy_row_count,
-      candidate_user_ids,
-      case cardinality(candidate_user_ids)
-        when 0 then 'unresolved'
-        when 1 then 'resolved'
-        else 'conflict'
-      end as state,
-      case when cardinality(candidate_user_ids) = 1 then candidate_user_ids[1] else null end as owner_id,
-      case cardinality(candidate_user_ids)
-        when 0 then 'active_telegram_identity_missing'
-        when 1 then 'active_telegram_identity_resolved'
-        else 'multiple_active_telegram_identities'
-      end as reason
-    from candidates
-  )
-  insert into public.black_crown_ownership_migration_state as target (
-    scope,
-    legacy_provider,
-    legacy_subject_hash,
-    state,
-    black_crown_user_id,
-    candidate_user_ids,
-    legacy_row_count,
-    attempt_count,
-    last_reason,
-    metadata,
-    first_seen_at,
-    last_attempt_at,
-    resolved_at
-  )
-  select
-    'analytics_activity',
-    'telegram',
-    public.black_crown_legacy_subject_hash('telegram', legacy_subject),
-    state,
-    owner_id,
-    candidate_user_ids,
-    legacy_row_count,
-    1,
-    reason,
-    jsonb_build_object(
-      'authority', 'active_telegram_identity',
-      'raw_subject_stored', false
-    ),
-    now(),
-    now(),
-    case when state = 'resolved' then now() else null end
-  from normalized
-  on conflict (scope, legacy_provider, legacy_subject_hash)
-  do update set
-    state = excluded.state,
-    black_crown_user_id = excluded.black_crown_user_id,
-    candidate_user_ids = excluded.candidate_user_ids,
-    legacy_row_count = excluded.legacy_row_count,
-    attempt_count = target.attempt_count + 1,
-    last_reason = excluded.last_reason,
-    metadata = excluded.metadata,
-    last_attempt_at = now(),
-    resolved_at = case
-      when excluded.state = 'resolved' then coalesce(target.resolved_at, now())
-      else null
-    end;
-
-  -- Entitlements remain site-user keyed until the entitlement runtime cutover.
-  with subjects as (
-    select site_user_id as legacy_subject, count(*)::bigint as legacy_row_count
-    from public.blackcrown_entitlements
-    group by site_user_id
-  ), candidates as (
-    select
-      subjects.legacy_subject,
-      subjects.legacy_row_count,
-      coalesce(
-        array_agg(distinct identities.black_crown_user_id order by identities.black_crown_user_id)
-          filter (where identities.black_crown_user_id is not null),
-        array[]::uuid[]
-      ) as candidate_user_ids
-    from subjects
-    left join public.black_crown_identities as identities
-      on identities.provider = 'website_auth'
-     and identities.provider_subject = subjects.legacy_subject
-     and identities.status = 'active'
-    group by subjects.legacy_subject, subjects.legacy_row_count
-  ), normalized as (
-    select
-      legacy_subject,
-      legacy_row_count,
-      candidate_user_ids,
-      case cardinality(candidate_user_ids)
-        when 0 then 'unresolved'
-        when 1 then 'resolved'
-        else 'conflict'
-      end as state,
-      case when cardinality(candidate_user_ids) = 1 then candidate_user_ids[1] else null end as owner_id,
-      case cardinality(candidate_user_ids)
-        when 0 then 'active_website_identity_missing'
-        when 1 then 'active_website_identity_resolved'
-        else 'multiple_active_website_identities'
-      end as reason
-    from candidates
-  )
-  insert into public.black_crown_ownership_migration_state as target (
-    scope,
-    legacy_provider,
-    legacy_subject_hash,
-    state,
-    black_crown_user_id,
-    candidate_user_ids,
-    legacy_row_count,
-    attempt_count,
-    last_reason,
-    metadata,
-    first_seen_at,
-    last_attempt_at,
-    resolved_at
-  )
-  select
-    'entitlement',
-    'website_auth',
-    public.black_crown_legacy_subject_hash('website_auth', legacy_subject),
-    state,
-    owner_id,
-    candidate_user_ids,
-    legacy_row_count,
-    1,
-    reason,
-    jsonb_build_object(
-      'authority', 'active_website_identity',
-      'raw_subject_stored', false
-    ),
-    now(),
-    now(),
-    case when state = 'resolved' then now() else null end
-  from normalized
-  on conflict (scope, legacy_provider, legacy_subject_hash)
-  do update set
-    state = excluded.state,
-    black_crown_user_id = excluded.black_crown_user_id,
-    candidate_user_ids = excluded.candidate_user_ids,
-    legacy_row_count = excluded.legacy_row_count,
-    attempt_count = target.attempt_count + 1,
-    last_reason = excluded.last_reason,
-    metadata = excluded.metadata,
-    last_attempt_at = now(),
-    resolved_at = case
-      when excluded.state = 'resolved' then coalesce(target.resolved_at, now())
-      else null
-    end;
-
-  -- Legacy account links require agreement between Telegram and Website identity.
-  -- A disagreement is merge_pending and never receives an owner automatically.
-  with link_rows as (
+  -- Linked Website and Telegram identities must both exist and agree. A
+  -- disagreement is merge_pending; Premium and product state are not moved.
+  with mapped as (
     select
       links.site_user_id,
       links.telegram_user_id,
-      telegram_identity.black_crown_user_id as telegram_owner,
-      website_identity.black_crown_user_id as website_owner
+      website_identity.black_crown_user_id as website_owner,
+      telegram_identity.black_crown_user_id as telegram_owner
     from public.blackcrown_account_links as links
-    left join public.black_crown_identities as telegram_identity
-      on telegram_identity.provider = 'telegram'
-     and telegram_identity.provider_subject = links.telegram_user_id::text
-     and telegram_identity.status = 'active'
     left join public.black_crown_identities as website_identity
       on website_identity.provider = 'website_auth'
      and website_identity.provider_subject = links.site_user_id
      and website_identity.status = 'active'
+    left join public.black_crown_identities as telegram_identity
+      on telegram_identity.provider = 'telegram'
+     and telegram_identity.provider_subject = links.telegram_user_id::text
+     and telegram_identity.status = 'active'
   ), normalized as (
     select
       site_user_id,
       telegram_user_id,
-      telegram_owner,
       website_owner,
+      telegram_owner,
+      array(
+        select distinct owner_id
+        from unnest(array[website_owner, telegram_owner]::uuid[]) as owners(owner_id)
+        where owner_id is not null
+        order by owner_id
+      ) as candidate_user_ids,
       case
-        when telegram_owner is not null and website_owner = telegram_owner then 'resolved'
-        when telegram_owner is not null and website_owner is not null and website_owner <> telegram_owner then 'merge_pending'
+        when website_owner is not null and website_owner = telegram_owner then 'resolved'
+        when website_owner is not null and telegram_owner is not null and website_owner <> telegram_owner then 'merge_pending'
         else 'unresolved'
       end as state,
       case
-        when telegram_owner is not null and website_owner = telegram_owner then telegram_owner
+        when website_owner is not null and website_owner = telegram_owner then website_owner
         else null
       end as owner_id,
       case
-        when telegram_owner is null and website_owner is null then array[]::uuid[]
-        when telegram_owner is null then array[website_owner]
-        when website_owner is null then array[telegram_owner]
-        when telegram_owner = website_owner then array[telegram_owner]
-        when telegram_owner::text < website_owner::text then array[telegram_owner, website_owner]
-        else array[website_owner, telegram_owner]
-      end as candidate_user_ids,
-      case
-        when telegram_owner is not null and website_owner = telegram_owner then 'linked_identities_agree'
-        when telegram_owner is not null and website_owner is not null and website_owner <> telegram_owner then 'canonical_identity_conflict'
-        when telegram_owner is null and website_owner is null then 'linked_identities_missing'
-        when telegram_owner is null then 'telegram_identity_missing'
-        else 'website_identity_missing'
+        when website_owner is not null and website_owner = telegram_owner then 'linked_identities_agree'
+        when website_owner is not null and telegram_owner is not null and website_owner <> telegram_owner then 'canonical_identity_conflict'
+        when website_owner is null and telegram_owner is null then 'linked_identities_missing'
+        when website_owner is null then 'website_identity_missing'
+        else 'telegram_identity_missing'
       end as reason
-    from link_rows
+    from mapped
   )
   insert into public.black_crown_ownership_migration_state as target (
     scope,
@@ -609,22 +413,23 @@ begin
     'linked_identity',
     public.black_crown_legacy_subject_hash(
       'linked_identity',
-      site_user_id || ':' || telegram_user_id::text
+      normalized.site_user_id || ':' || normalized.telegram_user_id::text
     ),
-    state,
-    owner_id,
-    candidate_user_ids,
+    normalized.state,
+    normalized.owner_id,
+    normalized.candidate_user_ids,
     1,
     1,
-    reason,
+    normalized.reason,
     jsonb_build_object(
-      'authority', 'telegram_and_website_identity_agreement',
+      'authority', 'website_and_telegram_identity_agreement',
       'raw_subject_stored', false,
-      'silent_merge_allowed', false
+      'silent_merge_allowed', false,
+      'entitlement_transfer_allowed', false
     ),
     now(),
     now(),
-    case when state = 'resolved' then now() else null end
+    case when normalized.state = 'resolved' then now() else null end
   from normalized
   on conflict (scope, legacy_provider, legacy_subject_hash)
   do update set
@@ -641,16 +446,47 @@ begin
       else null
     end;
 
+  insert into public.black_crown_identity_events (
+    black_crown_user_id,
+    event_type,
+    provider,
+    provider_subject_hash,
+    metadata
+  )
+  select
+    null,
+    'merge_pending',
+    'linked_identity',
+    state.legacy_subject_hash,
+    jsonb_build_object(
+      'scope', state.scope,
+      'candidate_user_ids', state.candidate_user_ids,
+      'reason', state.last_reason,
+      'silent_merge_allowed', false,
+      'entitlement_transfer_allowed', false,
+      'raw_subject_stored', false
+    )
+  from public.black_crown_ownership_migration_state as state
+  where state.scope = 'account_link'
+    and state.state = 'merge_pending'
+    and not exists (
+      select 1
+      from public.black_crown_identity_events as events
+      where events.event_type = 'merge_pending'
+        and events.provider = 'linked_identity'
+        and events.provider_subject_hash = state.legacy_subject_hash
+    );
+
   select jsonb_build_object(
     'resolved', count(*) filter (where state = 'resolved'),
     'unresolved', count(*) filter (where state = 'unresolved'),
     'conflict', count(*) filter (where state = 'conflict'),
     'merge_pending', count(*) filter (where state = 'merge_pending')
   )
-  into result
+  into v_metrics
   from public.black_crown_ownership_migration_state;
 
-  return coalesce(result, '{}'::jsonb);
+  return coalesce(v_metrics, '{}'::jsonb);
 end;
 $function$;
 
@@ -722,7 +558,8 @@ as
     case when count(*) = 0 then 100.00 else round(100.0 * count(black_crown_user_id) / count(*), 2) end
   from public.blackcrown_entitlements;
 
-revoke all on table public.black_crown_ownership_coverage from public, anon, authenticated;
+revoke all on table public.black_crown_ownership_coverage
+  from public, anon, authenticated;
 grant select on table public.black_crown_ownership_coverage to service_role;
 
 create or replace function public.black_crown_backfill_product_ownership(
@@ -734,12 +571,13 @@ security definer
 set search_path = public, extensions
 as $function$
 declare
-  batch_size integer := greatest(1, least(coalesce(p_batch_size, 5000), 50000));
-  run_id uuid := extensions.gen_random_uuid();
-  affected integer;
-  updates jsonb := '{}'::jsonb;
-  state_metrics jsonb;
-  coverage_metrics jsonb;
+  v_batch_size integer := greatest(1, least(coalesce(p_batch_size, 5000), 50000));
+  v_run_id uuid := extensions.gen_random_uuid();
+  v_target record;
+  v_updated integer;
+  v_updates jsonb := '{}'::jsonb;
+  v_mapping_state jsonb;
+  v_coverage jsonb;
 begin
   insert into public.black_crown_ownership_migration_runs (
     run_id,
@@ -747,182 +585,87 @@ begin
     batch_size,
     metrics
   ) values (
-    run_id,
+    v_run_id,
     'running',
-    batch_size,
+    v_batch_size,
     '{}'::jsonb
   );
 
-  with candidates as (
-    select players.ctid as row_id, identities.black_crown_user_id
-    from public.bco_players as players
-    join public.black_crown_identities as identities
-      on identities.provider = 'telegram'
-     and identities.provider_subject = players.chat_id::text
-     and identities.status = 'active'
-    where players.black_crown_user_id is null
-    order by players.chat_id
-    limit batch_size
-  )
-  update public.bco_players as players
-  set black_crown_user_id = candidates.black_crown_user_id
-  from candidates
-  where players.ctid = candidates.row_id;
-  get diagnostics affected = row_count;
-  updates := updates || jsonb_build_object('bco_players', affected);
+  -- Simple one-provider mappings. The provider and table/column identifiers are
+  -- hard-coded server migration metadata, never browser input.
+  for v_target in
+    select *
+    from (values
+      ('bco_players', 'chat_id', 'telegram'),
+      ('bco_messages', 'chat_id', 'telegram'),
+      ('bco_episodes', 'chat_id', 'telegram'),
+      ('bco_player_mistakes', 'chat_id', 'telegram'),
+      ('bco_mistake_receipts', 'chat_id', 'telegram'),
+      ('bco_progression_events', 'chat_id', 'telegram'),
+      ('bco_training_sessions', 'chat_id', 'telegram'),
+      ('bco_user_activity', 'telegram_user_id', 'telegram'),
+      ('blackcrown_entitlements', 'site_user_id', 'website_auth')
+    ) as targets(table_name, subject_column, provider)
+  loop
+    execute format(
+      $sql$
+        with candidates as (
+          select target.ctid as row_id, identity.black_crown_user_id
+          from public.%I as target
+          join public.black_crown_identities as identity
+            on identity.provider = %L
+           and identity.provider_subject = target.%I::text
+           and identity.status = 'active'
+          where target.black_crown_user_id is null
+          order by target.%I::text
+          limit $1
+        )
+        update public.%I as target
+        set black_crown_user_id = candidates.black_crown_user_id
+        from candidates
+        where target.ctid = candidates.row_id
+          and target.black_crown_user_id is null
+      $sql$,
+      v_target.table_name,
+      v_target.provider,
+      v_target.subject_column,
+      v_target.subject_column,
+      v_target.table_name
+    ) using v_batch_size;
 
-  with candidates as (
-    select messages.ctid as row_id, identities.black_crown_user_id
-    from public.bco_messages as messages
-    join public.black_crown_identities as identities
-      on identities.provider = 'telegram'
-     and identities.provider_subject = messages.chat_id::text
-     and identities.status = 'active'
-    where messages.black_crown_user_id is null
-    order by messages.id
-    limit batch_size
-  )
-  update public.bco_messages as messages
-  set black_crown_user_id = candidates.black_crown_user_id
-  from candidates
-  where messages.ctid = candidates.row_id;
-  get diagnostics affected = row_count;
-  updates := updates || jsonb_build_object('bco_messages', affected);
+    get diagnostics v_updated = row_count;
+    v_updates := v_updates || jsonb_build_object(v_target.table_name, v_updated);
+  end loop;
 
-  with candidates as (
-    select episodes.ctid as row_id, identities.black_crown_user_id
-    from public.bco_episodes as episodes
-    join public.black_crown_identities as identities
-      on identities.provider = 'telegram'
-     and identities.provider_subject = episodes.chat_id::text
-     and identities.status = 'active'
-    where episodes.black_crown_user_id is null
-    order by episodes.id
-    limit batch_size
-  )
-  update public.bco_episodes as episodes
-  set black_crown_user_id = candidates.black_crown_user_id
-  from candidates
-  where episodes.ctid = candidates.row_id;
-  get diagnostics affected = row_count;
-  updates := updates || jsonb_build_object('bco_episodes', affected);
-
-  with candidates as (
-    select mistakes.ctid as row_id, identities.black_crown_user_id
-    from public.bco_player_mistakes as mistakes
-    join public.black_crown_identities as identities
-      on identities.provider = 'telegram'
-     and identities.provider_subject = mistakes.chat_id::text
-     and identities.status = 'active'
-    where mistakes.black_crown_user_id is null
-    order by mistakes.chat_id, mistakes.mistake_key
-    limit batch_size
-  )
-  update public.bco_player_mistakes as mistakes
-  set black_crown_user_id = candidates.black_crown_user_id
-  from candidates
-  where mistakes.ctid = candidates.row_id;
-  get diagnostics affected = row_count;
-  updates := updates || jsonb_build_object('bco_player_mistakes', affected);
-
-  with candidates as (
-    select receipts.ctid as row_id, identities.black_crown_user_id
-    from public.bco_mistake_receipts as receipts
-    join public.black_crown_identities as identities
-      on identities.provider = 'telegram'
-     and identities.provider_subject = receipts.chat_id::text
-     and identities.status = 'active'
-    where receipts.black_crown_user_id is null
-    order by receipts.created_at, receipts.operation_id
-    limit batch_size
-  )
-  update public.bco_mistake_receipts as receipts
-  set black_crown_user_id = candidates.black_crown_user_id
-  from candidates
-  where receipts.ctid = candidates.row_id;
-  get diagnostics affected = row_count;
-  updates := updates || jsonb_build_object('bco_mistake_receipts', affected);
-
-  with candidates as (
-    select events.ctid as row_id, identities.black_crown_user_id
-    from public.bco_progression_events as events
-    join public.black_crown_identities as identities
-      on identities.provider = 'telegram'
-     and identities.provider_subject = events.chat_id::text
-     and identities.status = 'active'
-    where events.black_crown_user_id is null
-    order by events.id
-    limit batch_size
-  )
-  update public.bco_progression_events as events
-  set black_crown_user_id = candidates.black_crown_user_id
-  from candidates
-  where events.ctid = candidates.row_id;
-  get diagnostics affected = row_count;
-  updates := updates || jsonb_build_object('bco_progression_events', affected);
-
-  with candidates as (
-    select sessions.ctid as row_id, identities.black_crown_user_id
-    from public.bco_training_sessions as sessions
-    join public.black_crown_identities as identities
-      on identities.provider = 'telegram'
-     and identities.provider_subject = sessions.chat_id::text
-     and identities.status = 'active'
-    where sessions.black_crown_user_id is null
-    order by sessions.id
-    limit batch_size
-  )
-  update public.bco_training_sessions as sessions
-  set black_crown_user_id = candidates.black_crown_user_id
-  from candidates
-  where sessions.ctid = candidates.row_id;
-  get diagnostics affected = row_count;
-  updates := updates || jsonb_build_object('bco_training_sessions', affected);
-
-  with candidates as (
-    select activity.ctid as row_id, identities.black_crown_user_id
-    from public.bco_user_activity as activity
-    join public.black_crown_identities as identities
-      on identities.provider = 'telegram'
-     and identities.provider_subject = activity.telegram_user_id::text
-     and identities.status = 'active'
-    where activity.black_crown_user_id is null
-    order by activity.telegram_user_id
-    limit batch_size
-  )
-  update public.bco_user_activity as activity
-  set black_crown_user_id = candidates.black_crown_user_id
-  from candidates
-  where activity.ctid = candidates.row_id;
-  get diagnostics affected = row_count;
-  updates := updates || jsonb_build_object('bco_user_activity', affected);
-
-  -- A legacy link receives an owner only when both verified identities agree.
+  -- Account links resolve only when verified Website and Telegram identities
+  -- agree on one canonical user. Conflicts remain null and become merge_pending.
   with candidates as (
     select links.ctid as row_id, telegram_identity.black_crown_user_id
     from public.blackcrown_account_links as links
-    join public.black_crown_identities as telegram_identity
-      on telegram_identity.provider = 'telegram'
-     and telegram_identity.provider_subject = links.telegram_user_id::text
-     and telegram_identity.status = 'active'
     join public.black_crown_identities as website_identity
       on website_identity.provider = 'website_auth'
      and website_identity.provider_subject = links.site_user_id
      and website_identity.status = 'active'
-     and website_identity.black_crown_user_id = telegram_identity.black_crown_user_id
+    join public.black_crown_identities as telegram_identity
+      on telegram_identity.provider = 'telegram'
+     and telegram_identity.provider_subject = links.telegram_user_id::text
+     and telegram_identity.status = 'active'
+     and telegram_identity.black_crown_user_id = website_identity.black_crown_user_id
     where links.black_crown_user_id is null
-    order by links.site_user_id
-    limit batch_size
+    order by links.site_user_id, links.telegram_user_id
+    limit v_batch_size
   )
   update public.blackcrown_account_links as links
   set black_crown_user_id = candidates.black_crown_user_id
   from candidates
-  where links.ctid = candidates.row_id;
-  get diagnostics affected = row_count;
-  updates := updates || jsonb_build_object('blackcrown_account_links', affected);
+  where links.ctid = candidates.row_id
+    and links.black_crown_user_id is null;
 
-  -- Audit events may resolve from one supplied identity, but if both subjects are
-  -- present they must both resolve and agree.
+  get diagnostics v_updated = row_count;
+  v_updates := v_updates || jsonb_build_object('blackcrown_account_links', v_updated);
+
+  -- Audit events can resolve from one supplied identity. If both are present,
+  -- both must resolve and agree.
   with mapped as (
     select
       events.ctid as row_id,
@@ -946,72 +689,60 @@ begin
     where coalesce(website_owner, telegram_owner) is not null
       and (site_user_id is null or website_owner is not null)
       and (telegram_user_id is null or telegram_owner is not null)
-      and (website_owner is null or telegram_owner is null or website_owner = telegram_owner)
+      and (
+        website_owner is null
+        or telegram_owner is null
+        or website_owner = telegram_owner
+      )
     order by row_id
-    limit batch_size
+    limit v_batch_size
   )
   update public.blackcrown_account_link_events as events
   set black_crown_user_id = candidates.black_crown_user_id
   from candidates
-  where events.ctid = candidates.row_id;
-  get diagnostics affected = row_count;
-  updates := updates || jsonb_build_object('blackcrown_account_link_events', affected);
+  where events.ctid = candidates.row_id
+    and events.black_crown_user_id is null;
 
-  with candidates as (
-    select entitlements.ctid as row_id, identities.black_crown_user_id
-    from public.blackcrown_entitlements as entitlements
-    join public.black_crown_identities as identities
-      on identities.provider = 'website_auth'
-     and identities.provider_subject = entitlements.site_user_id
-     and identities.status = 'active'
-    where entitlements.black_crown_user_id is null
-    order by entitlements.id
-    limit batch_size
-  )
-  update public.blackcrown_entitlements as entitlements
-  set black_crown_user_id = candidates.black_crown_user_id
-  from candidates
-  where entitlements.ctid = candidates.row_id;
-  get diagnostics affected = row_count;
-  updates := updates || jsonb_build_object('blackcrown_entitlements', affected);
+  get diagnostics v_updated = row_count;
+  v_updates := v_updates || jsonb_build_object('blackcrown_account_link_events', v_updated);
 
   select public.black_crown_refresh_ownership_migration_state()
-  into state_metrics;
+    into v_mapping_state;
 
   select coalesce(
     jsonb_object_agg(
-      table_name,
+      coverage.table_name,
       jsonb_build_object(
-        'total_rows', total_rows,
-        'canonical_rows', canonical_rows,
-        'legacy_only_rows', legacy_only_rows,
-        'coverage_percent', coverage_percent
+        'total_rows', coverage.total_rows,
+        'canonical_rows', coverage.canonical_rows,
+        'legacy_only_rows', coverage.legacy_only_rows,
+        'coverage_percent', coverage.coverage_percent
       )
     ),
     '{}'::jsonb
   )
-  into coverage_metrics
-  from public.black_crown_ownership_coverage;
+  into v_coverage
+  from public.black_crown_ownership_coverage as coverage;
 
-  update public.black_crown_ownership_migration_runs
+  update public.black_crown_ownership_migration_runs as runs
   set
     status = 'completed',
     metrics = jsonb_build_object(
-      'updated_rows', updates,
-      'mapping_state', state_metrics,
-      'coverage', coverage_metrics
+      'updated_rows', v_updates,
+      'mapping_state', v_mapping_state,
+      'coverage', v_coverage
     ),
     completed_at = now()
-  where black_crown_ownership_migration_runs.run_id = black_crown_backfill_product_ownership.run_id;
+  where runs.run_id = v_run_id;
 
   return jsonb_build_object(
     'ok', true,
-    'run_id', run_id,
+    'run_id', v_run_id,
     'schema_version', 'bco-canonical-owner-v1',
-    'batch_size', batch_size,
-    'updated_rows', updates,
-    'mapping_state', state_metrics,
-    'coverage', coverage_metrics
+    'batch_size', v_batch_size,
+    'updated_rows', v_updates,
+    'mapping_state', v_mapping_state,
+    'coverage', v_coverage
   );
 end;
 $function$;
@@ -1022,10 +753,10 @@ grant execute on function public.black_crown_backfill_product_ownership(integer)
   to service_role;
 
 comment on function public.black_crown_backfill_product_ownership(integer) is
-  'Idempotent/resumable canonical owner backfill. Never creates or merges accounts and never overwrites a non-null owner.';
+  'Idempotent and resumable canonical owner projection. Never creates or merges accounts and never overwrites a non-null owner.';
 comment on view public.black_crown_ownership_coverage is
-  'Privacy-safe canonical ownership coverage counts. Raw identity subjects are not exposed.';
+  'Privacy-safe canonical ownership coverage. Raw identity subjects are not exposed.';
 
--- Initial bounded pass. Re-running the function is safe and resumes only rows
--- that still have no canonical projection.
+-- Initial bounded pass. Re-running is safe: only rows with a null canonical
+-- projection are considered, and conflicting linked identities remain null.
 select public.black_crown_backfill_product_ownership(50000);
