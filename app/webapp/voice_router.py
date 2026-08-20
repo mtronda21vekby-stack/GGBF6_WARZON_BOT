@@ -6,6 +6,7 @@ import inspect
 import logging
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +92,7 @@ async def voice_turn(
     audio: UploadFile = File(...),
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ):
+    request_started = time.perf_counter()
     _, profile, history = _trusted_context(x_telegram_init_data or "")
     if APP_TRANSCRIPTION is None or not bool(getattr(APP_TRANSCRIPTION, "configured", False)):
         raise HTTPException(status_code=503, detail="transcription_unavailable")
@@ -107,12 +109,17 @@ async def voice_turn(
     source = temp_dir / ("input" + _safe_suffix(audio.filename, audio.content_type))
     try:
         source.write_bytes(raw)
+        stt_started = time.perf_counter()
         result = await APP_TRANSCRIPTION.transcribe_result(source, profile=profile)
+        stt_ms = int((time.perf_counter() - stt_started) * 1000)
         transcript = str(getattr(result, "text", "") or "").strip()
         if not transcript:
             raise HTTPException(status_code=422, detail="transcription_empty")
+        think_started = time.perf_counter()
         reply = await _reply(transcript, profile, history)
+        think_ms = int((time.perf_counter() - think_started) * 1000)
         mode = APP_VOICE.mode_for(profile) if APP_VOICE is not None else TTSMode.OFF
+        total_ms = int((time.perf_counter() - request_started) * 1000)
         return JSONResponse(
             {
                 "ok": True,
@@ -120,6 +127,7 @@ async def voice_turn(
                 "authority": "shared_conversation_and_voice_runtime",
                 "transcript": transcript,
                 "reply": reply,
+                "latency": {"stt_ms": stt_ms, "think_ms": think_ms, "turn_ms": total_ms},
                 "transcription": {
                     "model": str(getattr(result, "model", "") or ""),
                     "language": str(getattr(result, "language", "") or ""),
@@ -152,11 +160,13 @@ async def voice_speak(
         raise HTTPException(status_code=503, detail="tts_unavailable")
     if APP_VOICE.mode_for(profile) == TTSMode.OFF:
         raise HTTPException(status_code=409, detail="tts_disabled_in_profile")
+    started = time.perf_counter()
     artifact = await APP_VOICE.synthesize(str(body.text or "").strip(), profile)
     try:
         audio_bytes = artifact.path.read_bytes()
         if not audio_bytes:
             raise HTTPException(status_code=503, detail="tts_empty")
+        tts_ms = int((time.perf_counter() - started) * 1000)
         return Response(
             content=audio_bytes,
             media_type="audio/ogg",
@@ -164,6 +174,7 @@ async def voice_speak(
                 "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
                 "X-BCO-Voice": str(artifact.voice_name or "")[:80],
                 "X-BCO-Provider": str(artifact.provider or "")[:40],
+                "X-BCO-TTS-MS": str(tts_ms),
             },
         )
     finally:
