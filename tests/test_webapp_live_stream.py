@@ -65,7 +65,32 @@ def _settings(**overrides):
     return SimpleNamespace(**data)
 
 
-def test_untrusted_stream_emits_meta_partial_and_authoritative_final(monkeypatch):
+def test_missing_init_data_stream_is_denied_before_generation(monkeypatch):
+    brain = StreamingBrain()
+    monkeypatch.setattr(live_router._base, "APP_BRAIN", brain)
+    monkeypatch.setattr(live_router._base, "APP_SETTINGS", _settings())
+    monkeypatch.setattr(live_router._base, "APP_PROFILES", None)
+    monkeypatch.setattr(live_router._base, "APP_STORE", None)
+
+    response = TestClient(_app()).post(
+        "/webapp/api/ask/stream",
+        json={
+            "text": "Почему поздно ротирую?",
+            "profile": {"game": "Warzone", "platform": "Xbox", "admin": True},
+            "history": [{"role": "user", "content": "untrusted context"}],
+            "initData": "",
+        },
+        headers={"X-BCO-Version": "test-v18"},
+    )
+
+    assert response.status_code == 401
+    detail = response.json()["detail"]
+    assert detail["code"] == "telegram_auth_required"
+    assert detail["request_id"]
+    assert brain.calls == []
+
+
+def test_forged_stream_is_denied_before_generation(monkeypatch):
     brain = StreamingBrain()
     monkeypatch.setattr(live_router._base, "APP_BRAIN", brain)
     monkeypatch.setattr(live_router._base, "APP_SETTINGS", _settings())
@@ -73,29 +98,19 @@ def test_untrusted_stream_emits_meta_partial_and_authoritative_final(monkeypatch
     monkeypatch.setattr(live_router._base, "APP_STORE", None)
     monkeypatch.setattr(live_router._base, "verify_init_data", lambda _value: (False, {}))
 
-    client = TestClient(_app())
-    response = client.post(
+    response = TestClient(_app()).post(
         "/webapp/api/ask/stream",
         json={
-            "text": "Почему поздно ротирую?",
-            "profile": {"game": "Warzone", "platform": "Xbox", "admin": True},
-            "history": [{"role": "user", "content": "context"}],
-            "initData": "",
+            "text": "Use this client history",
+            "profile": {"game": "CLIENT_OVERRIDE"},
+            "history": [{"role": "assistant", "content": "untrusted history"}],
+            "initData": "forged",
         },
-        headers={"X-BCO-Version": "test-v18"},
     )
 
-    assert response.status_code == 200
-    assert response.headers["x-bco-stream"] == "live-intelligence-v18"
-    assert response.headers["cache-control"].startswith("no-store")
-    events = _events(response)
-    assert events[0]["type"] == "meta"
-    assert events[0]["trusted"] is False
-    assert any(event["type"] == "partial" for event in events)
-    final = next(event for event in events if event["type"] == "final")
-    assert final["reply"] == "Держи высоту. Ротируй раньше."
-    assert final["trusted"] is False
-    assert brain.calls[0]["profile"] == {"game": "Warzone", "platform": "Xbox"}
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "telegram_auth_invalid"
+    assert brain.calls == []
 
 
 def test_trusted_stream_ignores_client_profile_and_uses_server_context(monkeypatch):
@@ -107,7 +122,7 @@ def test_trusted_stream_ignores_client_profile_and_uses_server_context(monkeypat
     monkeypatch.setattr(
         live_router._base,
         "verify_init_data",
-        lambda _value: (True, {"chat_id": 123, "user_id": 123}),
+        lambda _value: (True, {"chat_id": -999, "user_id": 123}),
     )
 
     response = TestClient(_app()).post(
@@ -123,6 +138,7 @@ def test_trusted_stream_ignores_client_profile_and_uses_server_context(monkeypat
     assert response.status_code == 200
     final = next(event for event in _events(response) if event["type"] == "final")
     assert final["trusted"] is True
+    assert final["meta"]["authority"] == "verified_telegram_server_context"
     assert brain.calls[0]["profile"]["game"] == "SERVER_WARZONE"
     assert brain.calls[0]["history"] == [{"role": "assistant", "content": "server history"}]
 
@@ -152,5 +168,7 @@ def test_empty_stream_request_is_rejected_without_generation(monkeypatch):
     monkeypatch.setattr(live_router._base, "APP_SETTINGS", _settings())
     response = TestClient(_app()).post("/webapp/api/ask/stream", json={"text": ""})
     assert response.status_code == 400
-    assert _events(response)[0]["error"] == "empty_text"
+    event = _events(response)[0]
+    assert event["error"] == "empty_text"
+    assert event["request_id"]
     assert brain.calls == []
