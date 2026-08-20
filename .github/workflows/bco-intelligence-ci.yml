@@ -36,7 +36,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -110,7 +110,7 @@ jobs:
       DEPLOY_TRIGGER_MODE: ${{ needs.render-deploy.outputs.mode }}
     steps:
       - name: Checkout release contract
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Wait for Render release and persistent readiness
         shell: bash

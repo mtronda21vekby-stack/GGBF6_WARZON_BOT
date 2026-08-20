@@ -26,7 +26,7 @@ jobs:
       RENDER_DEPLOY_HOOK_FALLBACK: ${{ secrets.RENDER_DEPLOY_HOOK }}
     steps:
       - name: Checkout current main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Publish pending production status
         shell: bash
