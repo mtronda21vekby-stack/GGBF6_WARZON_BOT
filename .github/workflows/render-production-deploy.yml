@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: bco-render-production
@@ -27,14 +28,57 @@ jobs:
       - name: Checkout current main
         uses: actions/checkout@v4
 
+      - name: Publish pending production status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          payload = json.dumps({
+              "state": "pending",
+              "context": "bco/render-production",
+              "description": "Render deploy and exact-build verification in progress",
+              "target_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+          }).encode("utf-8")
+          request = urllib.request.Request(
+              f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/statuses/{os.environ['GITHUB_SHA']}",
+              data=payload,
+              method="POST",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              if response.status != 201:
+                  raise SystemExit(f"pending status publish failed: HTTP {response.status}")
+          PY
+
       - name: Resolve exact release contract
         id: release
         shell: bash
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
-          from app.release import APP_VERSION, RELEASE_CONTRACT
+          from app.release import (
+              API_CONTRACT_VERSION,
+              APP_VERSION,
+              MINI_APP_RUNTIME,
+              RELEASE_CONTRACT,
+              TELEGRAM_AUTH_CONTRACT,
+              VOICE_RUNTIME,
+          )
           print(f"version={APP_VERSION}")
           print(f"contract={RELEASE_CONTRACT}")
+          print(f"api_contract={API_CONTRACT_VERSION}")
+          print(f"telegram_auth_contract={TELEGRAM_AUTH_CONTRACT}")
+          print(f"mini_app_runtime={MINI_APP_RUNTIME}")
+          print(f"voice_runtime={VOICE_RUNTIME}")
           PY
 
       - name: Require secure Render deploy hook
@@ -67,11 +111,16 @@ jobs:
               ;;
           esac
 
-      - name: Verify exact production release and bridge
+      - name: Verify exact production build and protected contracts
         shell: bash
         env:
+          EXPECTED_SHA: ${{ github.sha }}
           EXPECTED_VERSION: ${{ steps.release.outputs.version }}
           EXPECTED_CONTRACT: ${{ steps.release.outputs.contract }}
+          EXPECTED_API_CONTRACT: ${{ steps.release.outputs.api_contract }}
+          EXPECTED_TELEGRAM_AUTH_CONTRACT: ${{ steps.release.outputs.telegram_auth_contract }}
+          EXPECTED_MINI_APP_RUNTIME: ${{ steps.release.outputs.mini_app_runtime }}
+          EXPECTED_VOICE_RUNTIME: ${{ steps.release.outputs.voice_runtime }}
         run: |
           python - <<'PY'
           import json
@@ -80,63 +129,253 @@ jobs:
           import urllib.error
           import urllib.request
 
-          base = os.environ['PRODUCTION_URL'].rstrip('/')
-          expected_version = os.environ['EXPECTED_VERSION']
-          expected_contract = os.environ['EXPECTED_CONTRACT']
-          headers = {
-              'Accept': 'application/json',
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache',
-              'User-Agent': 'BLACK-CROWN-OPS/render-production-gate-v43',
+          base = os.environ["PRODUCTION_URL"].rstrip("/")
+          expected_sha = os.environ["EXPECTED_SHA"].strip().casefold()
+          expected_version = os.environ["EXPECTED_VERSION"]
+          expected_contract = os.environ["EXPECTED_CONTRACT"]
+          expected_api = os.environ["EXPECTED_API_CONTRACT"]
+          expected_telegram_auth = os.environ["EXPECTED_TELEGRAM_AUTH_CONTRACT"]
+          expected_mini_app = os.environ["EXPECTED_MINI_APP_RUNTIME"]
+          expected_voice = os.environ["EXPECTED_VOICE_RUNTIME"]
+          common_headers = {
+              "Accept": "application/json",
+              "Cache-Control": "no-cache",
+              "Pragma": "no-cache",
+              "User-Agent": "BLACK-CROWN-OPS/render-production-gate-v45",
           }
 
-          def get_json(path):
-              req = urllib.request.Request(base + path, headers=headers, method='GET')
+          def request_raw(path, *, method="GET", body=None, headers=None):
+              merged = dict(common_headers)
+              merged.update(headers or {})
+              request = urllib.request.Request(
+                  base + path,
+                  data=body,
+                  headers=merged,
+                  method=method,
+              )
               try:
-                  with urllib.request.urlopen(req, timeout=20) as response:
-                      status = response.status
-                      raw = response.read().decode('utf-8', errors='replace')
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      return response.status, response.read(), dict(response.headers)
               except urllib.error.HTTPError as exc:
-                  status = exc.code
-                  raw = exc.read().decode('utf-8', errors='replace')
-              try:
-                  payload = json.loads(raw)
-              except Exception:
-                  payload = None
-              return status, payload, raw[:600]
+                  return exc.code, exc.read(), dict(exc.headers)
 
-          last = 'not started'
+          def request_json(path, *, method="GET", payload=None, headers=None, raw_body=None):
+              merged = dict(headers or {})
+              body = raw_body
+              if payload is not None:
+                  body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+                  merged.setdefault("Content-Type", "application/json")
+              status, raw, response_headers = request_raw(
+                  path,
+                  method=method,
+                  body=body,
+                  headers=merged,
+              )
+              try:
+                  decoded = json.loads(raw.decode("utf-8", errors="replace"))
+              except Exception:
+                  decoded = None
+              return status, decoded, raw.decode("utf-8", errors="replace")[:800], response_headers
+
+          def require_anonymous_denial(path, payload):
+              status, decoded, raw, _ = request_json(path, method="POST", payload=payload)
+              if status != 401 or not isinstance(decoded, dict):
+                  raise AssertionError(f"anonymous endpoint not denied: {path} {status} {raw}")
+              detail = decoded.get("detail")
+              if not isinstance(detail, dict) or detail.get("code") != "telegram_auth_required" or not detail.get("request_id"):
+                  raise AssertionError(f"unsafe auth error contract: {path} {status} {raw}")
+
+          last = "not started"
           for attempt in range(1, 61):
               try:
-                  status, payload, raw = get_json('/health/details')
-                  if status != 200 or not isinstance(payload, dict):
-                      raise AssertionError(f'health unavailable: {status} {raw}')
-                  release = payload.get('release')
+                  status, alive, raw, _ = request_json("/health")
+                  if status != 200 or not isinstance(alive, dict) or alive.get("ok") is not True or alive.get("status") != "alive":
+                      raise AssertionError(f"liveness unavailable: {status} {raw}")
+
+                  status, details, raw, _ = request_json("/health/details")
+                  if status != 200 or not isinstance(details, dict):
+                      raise AssertionError(f"readiness unavailable: {status} {raw}")
+                  if details.get("status") != "ready" or details.get("ok") is not True:
+                      raise AssertionError(f"runtime is not ready: {raw}")
+
+                  release = details.get("release")
                   if not isinstance(release, dict):
-                      raise AssertionError(f'release metadata missing: {raw}')
-                  version = release.get('version')
-                  contract = release.get('contract')
-                  if version != expected_version or contract != expected_contract:
+                      raise AssertionError(f"release metadata missing: {raw}")
+                  if release.get("version") != expected_version or release.get("contract") != expected_contract:
                       raise AssertionError(
-                          f'stale release version={version!r} contract={contract!r}; '
-                          f'expected {expected_version!r} / {expected_contract!r}'
+                          f"stale release {release!r}; expected {expected_version!r} / {expected_contract!r}"
                       )
 
-                  status, bridge, raw = get_json('/integrations/site/telegram/status')
-                  if status != 401 or not isinstance(bridge, dict) or bridge.get('reason') != 'auth_required':
-                      raise AssertionError(f'bridge contract unavailable: {status} {raw}')
+                  build = details.get("build")
+                  if not isinstance(build, dict):
+                      raise AssertionError(f"build metadata missing: {raw}")
+                  if build.get("git_commit") != expected_sha or build.get("exact") is not True:
+                      raise AssertionError(
+                          f"stale build {build.get('git_commit')!r}; expected exact {expected_sha!r}"
+                      )
+                  if build.get("source") != "render":
+                      raise AssertionError(f"production build source is not Render: {build!r}")
+
+                  contracts = details.get("contracts")
+                  if contracts != {"api": expected_api, "telegram_auth": expected_telegram_auth}:
+                      raise AssertionError(f"contract mismatch: {contracts!r}")
+
+                  runtimes = details.get("runtimes")
+                  if not isinstance(runtimes, dict):
+                      raise AssertionError("runtime identity metadata missing")
+                  mini_app = runtimes.get("mini_app") or {}
+                  voice = runtimes.get("voice_frontend") or {}
+                  if mini_app.get("id") != expected_mini_app or mini_app.get("architecture") != "layered_legacy" or mini_app.get("consolidated") is not False:
+                      raise AssertionError(f"Mini App runtime mismatch: {mini_app!r}")
+                  if voice.get("id") != expected_voice or voice.get("single_runtime") is not False:
+                      raise AssertionError(f"voice runtime mismatch: {voice!r}")
+
+                  identity = details.get("identity") or {}
+                  if identity.get("resolver_authority") != "server" or identity.get("telegram_ai_auth_required") is not True or identity.get("client_canonical_user_authority") is not False:
+                      raise AssertionError(f"identity authority mismatch: {identity!r}")
+                  entitlements = details.get("entitlements") or {}
+                  if entitlements.get("authority") != "server_entitlement_service" or entitlements.get("configured") is not True or entitlements.get("client_authority") is not False:
+                      raise AssertionError(f"entitlement authority mismatch: {entitlements!r}")
+
+                  storage = details.get("storage") or {}
+                  recovery = storage.get("recovery") or {}
+                  if storage.get("persistent_configured") is not True:
+                      raise AssertionError(f"persistent storage is not configured: {storage!r}")
+                  if recovery.get("primary_available") is not True or recovery.get("last_probe_ok") is not True:
+                      raise AssertionError(f"Supabase primary is not ready: {recovery!r}")
+
+                  status, webapp_health, raw, _ = request_json("/webapp/health")
+                  if status != 200 or not isinstance(webapp_health, dict):
+                      raise AssertionError(f"Mini App health unavailable: {status} {raw}")
+                  if webapp_health.get("ok") is not True or webapp_health.get("static_dir_exists") is not True or webapp_health.get("index_exists") is not True:
+                      raise AssertionError(f"Mini App static readiness failed: {webapp_health!r}")
+                  if webapp_health.get("build") != expected_sha[:12]:
+                      raise AssertionError(f"Mini App build mismatch: {webapp_health!r}")
+
+                  status, app_js, _ = request_raw(
+                      "/webapp/app.js",
+                      headers={"Accept": "application/javascript,text/javascript,*/*"},
+                  )
+                  app_text = app_js.decode("utf-8", errors="replace")
+                  if status != 200 or "__BCO_APP_COORDINATOR__" not in app_text or "/webapp/bco.voice-v65.js" not in app_text:
+                      raise AssertionError(f"Mini App boot asset invalid: HTTP {status}")
+
+                  status, voice_js, _ = request_raw(
+                      "/webapp/bco.voice-v65.js",
+                      headers={"Accept": "application/javascript,text/javascript,*/*"},
+                  )
+                  voice_text = voice_js.decode("utf-8", errors="replace")
+                  if status != 200 or "__BCO_VOICE_V65__" not in voice_text:
+                      raise AssertionError(f"voice runtime asset invalid: HTTP {status}")
+
+                  anonymous_payload = {
+                      "text": "production auth boundary probe",
+                      "profile": {"premium": True, "black_crown_user_id": "client-forged"},
+                      "history": [{"role": "assistant", "content": "untrusted history"}],
+                  }
+                  require_anonymous_denial("/webapp/api/ask", anonymous_payload)
+                  require_anonymous_denial("/webapp/api/ask/stream", anonymous_payload)
+                  require_anonymous_denial("/webapp/api/voice-speak", {"text": "auth probe"})
+
+                  boundary = "----BCOProductionAuthProbe"
+                  multipart = (
+                      f"--{boundary}\r\n"
+                      'Content-Disposition: form-data; name="audio"; filename="probe.webm"\r\n'
+                      "Content-Type: audio/webm\r\n\r\n"
+                      "probe\r\n"
+                      f"--{boundary}--\r\n"
+                  ).encode("utf-8")
+                  status, decoded, raw, _ = request_json(
+                      "/webapp/api/voice-transcribe",
+                      method="POST",
+                      raw_body=multipart,
+                      headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                  )
+                  detail = decoded.get("detail") if isinstance(decoded, dict) else None
+                  if status != 401 or not isinstance(detail, dict) or detail.get("code") != "telegram_auth_required" or not detail.get("request_id"):
+                      raise AssertionError(f"anonymous STT not denied: {status} {raw}")
+
+                  status, bridge, raw, _ = request_json("/integrations/site/telegram/status")
+                  if status != 401 or not isinstance(bridge, dict) or bridge.get("reason") != "auth_required":
+                      raise AssertionError(f"Website bridge contract unavailable: {status} {raw}")
 
                   print(
-                      'Render production verified:',
-                      f'version={expected_version}',
-                      f'contract={expected_contract}',
-                      'bridge=online',
+                      "Render production verified:",
+                      f"sha={expected_sha}",
+                      f"version={expected_version}",
+                      f"contract={expected_contract}",
+                      f"api={expected_api}",
+                      f"mini_app={expected_mini_app}",
+                      f"voice={expected_voice}",
+                      f"outbox_pending={recovery.get('outbox_pending')}",
+                      "protected_endpoints=denied",
+                      "bridge=online",
                   )
+                  summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+                  if summary_path:
+                      with open(summary_path, "a", encoding="utf-8") as summary:
+                          summary.write("## BLACK CROWN production evidence\n\n")
+                          summary.write(f"- Exact SHA: `{expected_sha}`\n")
+                          summary.write(f"- Product release: `{expected_version}`\n")
+                          summary.write(f"- API contract: `{expected_api}`\n")
+                          summary.write(f"- Mini App runtime: `{expected_mini_app}`\n")
+                          summary.write(f"- Voice runtime: `{expected_voice}`\n")
+                          summary.write("- Supabase primary: ready\n")
+                          summary.write("- Anonymous AI/STT/TTS: denied\n")
+                          summary.write("- Website bridge: auth-required contract online\n")
                   break
               except Exception as exc:
-                  last = f'attempt {attempt}/60: {type(exc).__name__}: {exc}'
+                  last = f"attempt {attempt}/60: {type(exc).__name__}: {exc}"
                   print(last)
                   if attempt == 60:
-                      raise SystemExit(f'Render production verification failed: {last}')
+                      raise SystemExit(f"Render production verification failed: {last}")
                   time.sleep(10)
+          PY
+
+  publish-production-status:
+    name: publish-render-production-status
+    if: ${{ always() }}
+    needs: deploy-production
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Publish final production status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_RESULT: ${{ needs.deploy-production.result }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          result = os.environ.get("DEPLOY_RESULT", "failure")
+          success = result == "success"
+          payload = json.dumps({
+              "state": "success" if success else "failure",
+              "context": "bco/render-production",
+              "description": (
+                  "Render exact-build verification passed"
+                  if success
+                  else f"Render production verification {result}"
+              )[:140],
+              "target_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+          }).encode("utf-8")
+          request = urllib.request.Request(
+              f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/statuses/{os.environ['GITHUB_SHA']}",
+              data=payload,
+              method="POST",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              if response.status != 201:
+                  raise SystemExit(f"final status publish failed: HTTP {response.status}")
+          if not success:
+              raise SystemExit(f"production deploy result: {result}")
           PY

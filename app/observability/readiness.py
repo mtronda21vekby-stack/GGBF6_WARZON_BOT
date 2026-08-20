@@ -5,6 +5,13 @@ import os
 from typing import Any
 
 from app.observability.quality import quality_telemetry
+from app.release import (
+    API_CONTRACT_VERSION,
+    MINI_APP_RUNTIME,
+    TELEGRAM_AUTH_CONTRACT,
+    VOICE_RUNTIME,
+    runtime_build_metadata,
+)
 from app.services.operator_intelligence.evidence_freshness import AGING_MAX_DAYS, FRESH_MAX_DAYS
 from app.services.operator_intelligence.mission_orchestrator import CURRENT_HORIZON_MAX_DAYS, ORCHESTRATOR_SCHEMA, STAGES
 from app.services.operator_intelligence.regime_change import MIN_CANDIDATE_CYCLES, MIN_CONFIRMED_CYCLES, WINDOW_SIZE
@@ -271,6 +278,32 @@ def readiness_snapshot(
         "ok": required_ok,
         "status": status,
         "release": {"version": str(app_version or "unknown")[:32], "contract": str(release_contract or "unknown")[:64]},
+        "build": runtime_build_metadata(),
+        "contracts": {
+            "api": API_CONTRACT_VERSION,
+            "telegram_auth": TELEGRAM_AUTH_CONTRACT,
+        },
+        "runtimes": {
+            "mini_app": {
+                "id": MINI_APP_RUNTIME,
+                "architecture": "layered_legacy",
+                "consolidated": False,
+            },
+            "voice_frontend": {
+                "id": VOICE_RUNTIME,
+                "single_runtime": False,
+            },
+        },
+        "identity": {
+            "resolver_authority": "server",
+            "telegram_ai_auth_required": True,
+            "client_canonical_user_authority": False,
+        },
+        "entitlements": {
+            "authority": "server_entitlement_service",
+            "configured": entitlement_snapshot["configured"],
+            "client_authority": False,
+        },
         "storage": {
             "configured_mode": str(getattr(settings, "storage_backend", "auto") or "auto")[:32],
             "active_adapter": storage_class[:64],
