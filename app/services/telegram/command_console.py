@@ -161,6 +161,22 @@ class CommandConsoleController:
             action=data.removeprefix("bco:premium:");action="confirm" if action=="unlink:confirm" else action;await self._handle_premium(action,chat_id,user_id,username,message_id);return True
         if data.startswith("bco:m:"):return await self._handle_mission(data,chat_id,message_id)
         action=data.removeprefix("bco:") or "home";await self._show(chat_id,await self._view_for(action,chat_id,user_id),message_id);return True
+    async def maybe_handle(self,raw):
+        if not self.enabled or not isinstance(raw,Mapping):return False
+        callback=_callback(raw);adapted=raw
+        if callback:
+            data=str(callback.get("data") or "").strip()
+            if data.startswith(CALLBACK_PREFIX):
+                message=callback.get("message") or {};message=message if isinstance(message,Mapping) else {};sender=_sender(callback);chat_id,user_id,_=_private_identity(message,sender)
+                if chat_id is None or user_id is None:
+                    callback_id=str(callback.get("id") or "").strip()
+                    if callback_id:
+                        try:await self.tg.answer_callback_query(callback_id,"COMMAND CONSOLE доступна в личном чате с ботом.",show_alert=True)
+                        except Exception:pass
+                    return True
+                if data.startswith("bco:p:"):
+                    adapted_raw=dict(raw);adapted_callback=dict(callback);adapted_callback["data"]="bco:premium:"+data.removeprefix("bco:p:");adapted_raw["callback_query"]=adapted_callback;adapted=adapted_raw
+        return await self.handle_update(adapted)
     async def handle_update(self,raw):
         if not self.enabled or not isinstance(raw,Mapping):return False
         cb=_callback(raw)
