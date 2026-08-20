@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import yaml
+
 from app.observability.readiness import readiness_snapshot
 from app.release import (
     API_CONTRACT_VERSION,
@@ -169,6 +171,12 @@ def test_readiness_exposes_separate_release_build_and_runtime_truth(monkeypatch)
 
 def test_render_workflow_requires_exact_build_and_protected_surface_smokes():
     workflow = Path(".github/workflows/render-production-deploy.yml").read_text(encoding="utf-8")
+    parsed = yaml.safe_load(workflow)
+
+    assert isinstance(parsed, dict)
+    assert parsed["permissions"] == {"contents": "read", "statuses": "write"}
+    assert set(parsed["jobs"]) == {"deploy-production", "publish-production-status"}
+    assert parsed["jobs"]["publish-production-status"]["needs"] == "deploy-production"
 
     for marker in (
         "statuses: write",
