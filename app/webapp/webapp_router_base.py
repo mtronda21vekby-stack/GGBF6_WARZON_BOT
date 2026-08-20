@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
@@ -16,6 +17,13 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from app.webapp.security import verify_init_data
+from app.webapp.security_boundary import (
+    enforce_usage,
+    mark_usage_reserved,
+    new_request_id,
+    resolve_trusted_telegram_context,
+    safe_http_exception,
+)
 
 log = logging.getLogger("webapp")
 router = APIRouter()
@@ -34,6 +42,7 @@ APP_BRAIN = None
 APP_PROFILES = None
 APP_STORE = None
 APP_SETTINGS = None
+APP_USAGE_GUARD = None
 
 
 def _truncate(value: Any, limit: int) -> str:
@@ -132,15 +141,16 @@ def _render_index_html(request: Request | None = None) -> HTMLResponse:
     return HTMLResponse(content=html, headers=_cache_headers("html", etag=etag))
 
 
-def bind_runtime(*, brain=None, profiles=None, store=None, settings=None):
-    global APP_BRAIN, APP_PROFILES, APP_STORE, APP_SETTINGS
+def bind_runtime(*, brain=None, profiles=None, store=None, settings=None, usage_guard=None):
+    global APP_BRAIN, APP_PROFILES, APP_STORE, APP_SETTINGS, APP_USAGE_GUARD
     APP_BRAIN = brain
     APP_PROFILES = profiles
     APP_STORE = store
     APP_SETTINGS = settings
+    APP_USAGE_GUARD = usage_guard
     log.info(
-        "bind_runtime ok: brain=%s profiles=%s store=%s settings=%s",
-        bool(brain), bool(profiles), bool(store), bool(settings),
+        "bind_runtime ok: brain=%s profiles=%s store=%s settings=%s usage_guard=%s",
+        bool(brain), bool(profiles), bool(store), bool(settings), bool(usage_guard),
     )
 
 
@@ -245,27 +255,51 @@ def _trusted_server_context(meta: dict) -> tuple[dict, list[dict], int | None]:
     return profile, _safe_history(history), identity
 
 
+async def _trusted_request_context(init_data: str, request_id: str):
+    return await asyncio.to_thread(
+        resolve_trusted_telegram_context,
+        init_data=init_data,
+        verifier=verify_init_data,
+        profiles=APP_PROFILES,
+        store=APP_STORE,
+        request_id=request_id,
+    )
+
+
+def _ai_runtime() -> tuple[Any, Any]:
+    brain = APP_BRAIN
+    settings = APP_SETTINGS
+    ai_key = str(getattr(settings, "openai_api_key", "") or "").strip() if settings else ""
+    ai_enabled = bool(getattr(settings, "ai_enabled", True)) if settings else True
+    if not (ai_enabled and ai_key and brain and callable(getattr(brain, "reply", None))):
+        return None, None
+    return brain, brain.reply
+
+
 @router.post("/webapp/api/conversation-history")
 async def webapp_conversation_history(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ):
-    init_data = str(x_telegram_init_data or "").strip()
-    trusted, meta = verify_init_data(init_data)
-    if not trusted:
-        raise HTTPException(status_code=401, detail="trusted_telegram_context_required")
-    _, history, identity = _trusted_server_context(dict(meta or {}))
-    if identity is None:
-        raise HTTPException(status_code=401, detail="telegram_identity_missing")
+    request_id = new_request_id()
+    context = await _trusted_request_context(
+        str(x_telegram_init_data or "").strip(),
+        request_id,
+    )
+    history = context.history[-20:]
     return JSONResponse(
         {
             "ok": True,
             "trusted": True,
             "authority": "shared_server_conversation_store",
-            "history": history[-20:],
-            "count": len(history[-20:]),
+            "history": history,
+            "count": len(history),
             "build": _build_id(),
+            "request_id": request_id,
         },
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "X-Request-ID": request_id,
+        },
     )
 
 
@@ -275,70 +309,81 @@ async def webapp_api_ask(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
     x_bco_version: str | None = Header(default=None, alias="X-BCO-Version"),
 ):
-    text = (body.text or "").strip()
+    request_id = new_request_id()
+    text = str(body.text or "").strip()
     if not text:
-        return {"ok": False, "error": "empty_text", "build": _build_id()}
-
-    init_data = (x_telegram_init_data or body.initData or "").strip()
-    trusted, meta = verify_init_data(init_data)
-    meta = dict(meta or {})
-
-    if trusted:
-        profile, history, identity = _trusted_server_context(meta)
-        meta["trusted"] = True
-        meta["identity"] = identity
-    else:
-        profile = _safe_profile(body.profile)
-        history = _safe_history(body.history)
-        meta = {"untrusted": True, "trusted": False}
-
-    log.info(
-        "webapp_api_ask build=%s v=%s trusted=%s text_len=%d",
-        _build_id(), _truncate(x_bco_version or "", 64), trusted, len(text),
-    )
-
-    reply_text = None
-    try:
-        brain = APP_BRAIN
-        settings = APP_SETTINGS
-        ai_key = (getattr(settings, "openai_api_key", "") or "").strip() if settings else ""
-        ai_enabled = bool(getattr(settings, "ai_enabled", True)) if settings else True
-        ai_on = bool(ai_enabled and ai_key and brain and hasattr(brain, "reply"))
-
-        if ai_on:
-            fn = brain.reply
-            if inspect.iscoroutinefunction(fn):
-                reply_text = await fn(text=text, profile=profile, history=history)
-            else:
-                output = fn(text=text, profile=profile, history=history)
-                reply_text = await output if inspect.isawaitable(output) else output
-        else:
-            meta["ai"] = {
-                "enabled": ai_enabled,
-                "has_key": bool(ai_key),
-                "has_brain": bool(brain),
-                "reason": "ai_off",
-            }
-    except Exception as exc:
-        log.exception("webapp_api_ask failed: %s", type(exc).__name__)
-        reply_text = "🧠 AI временно недоступен. Повтори запрос через несколько секунд."
-
-    if not reply_text:
-        reply_text = (
-            "🤝 BLACK CROWN OPS: AI сейчас выключен.\n"
-            "Проверь OPENAI_API_KEY, AI_ENABLED и OPENAI_MODEL."
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "empty_text",
+                "request_id": request_id,
+                "build": _build_id(),
+            },
+            status_code=400,
+            headers={"Cache-Control": "no-store", "X-Request-ID": request_id},
         )
 
-    return {
-        "ok": True,
-        "reply": str(reply_text),
-        "meta": {
-            **meta,
-            "bco_version": x_bco_version or "",
-            "webapp_build": _build_id(),
+    init_data = str(x_telegram_init_data or body.initData or "").strip()
+    context = await _trusted_request_context(init_data, request_id)
+    brain, fn = _ai_runtime()
+    if brain is None or fn is None:
+        raise safe_http_exception(503, "ai_unavailable", request_id)
+
+    enforce_usage(APP_USAGE_GUARD, context.chat_id, "ai", request_id)
+    profile = dict(context.profile)
+    if getattr(brain, "usage_guard", None) is APP_USAGE_GUARD:
+        profile = mark_usage_reserved(profile, "ai")
+    history = context.history
+
+    log.info(
+        "webapp_api_ask request_id=%s build=%s v=%s trusted=true text_len=%d",
+        request_id,
+        _build_id(),
+        _truncate(x_bco_version or "", 64),
+        len(text),
+    )
+
+    try:
+        if inspect.iscoroutinefunction(fn):
+            reply_text = await fn(text=text, profile=profile, history=history)
+        else:
+            output = await asyncio.to_thread(
+                fn,
+                text=text,
+                profile=profile,
+                history=history,
+            )
+            reply_text = await output if inspect.isawaitable(output) else output
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error(
+            "webapp_api_ask failed request_id=%s error=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        raise safe_http_exception(503, "generation_unavailable", request_id)
+
+    if not str(reply_text or "").strip():
+        raise safe_http_exception(503, "generation_unavailable", request_id)
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "reply": str(reply_text),
+            "meta": {
+                **context.meta,
+                "bco_version": str(x_bco_version or "")[:64],
+                "webapp_build": _build_id(),
+            },
+            "request_id": request_id,
+            "build": _build_id(),
         },
-        "build": _build_id(),
-    }
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "X-Request-ID": request_id,
+        },
+    )
 
 
 class GameEventBody(BaseModel):

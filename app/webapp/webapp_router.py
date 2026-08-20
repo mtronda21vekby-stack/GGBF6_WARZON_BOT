@@ -7,7 +7,6 @@ import inspect
 import json
 import logging
 import time
-import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -41,14 +40,22 @@ def bind_runtime(
     settings=None,
     transcription=None,
     voice=None,
+    usage_guard=None,
 ):
-    _base.bind_runtime(brain=brain, profiles=profiles, store=store, settings=settings)
+    _base.bind_runtime(
+        brain=brain,
+        profiles=profiles,
+        store=store,
+        settings=settings,
+        usage_guard=usage_guard,
+    )
     _voice.bind_runtime(
         brain=brain,
         profiles=profiles,
         store=store,
         transcription=transcription,
         voice=voice,
+        usage_guard=usage_guard,
     )
 
 
@@ -99,37 +106,51 @@ async def webapp_api_ask_stream(
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
     x_bco_version: str | None = Header(default=None, alias="X-BCO-Version"),
 ):
-    """Stream one Intelligence Core answer as newline-delimited JSON.
+    """Stream one trusted Intelligence Core answer as newline-delimited JSON."""
 
-    The trusted identity/profile boundary is identical to `/webapp/api/ask`.
-    The final event is authoritative; partial events are presentation-only and
-    may be coalesced by the client.
-    """
+    request_id = _base.new_request_id()
     text = str(body.text or "").strip()
     build = _base._build_id()
     if not text:
         async def empty_stream() -> AsyncIterator[bytes]:
-            yield _ndjson({"type": "error", "error": "empty_text", "build": build})
+            yield _ndjson(
+                {
+                    "type": "error",
+                    "ok": False,
+                    "error": "empty_text",
+                    "request_id": request_id,
+                    "build": build,
+                }
+            )
+
         return StreamingResponse(
             empty_stream(),
             media_type="application/x-ndjson",
-            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+            headers={
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+                "X-Request-ID": request_id,
+            },
             status_code=400,
         )
 
     init_data = str(x_telegram_init_data or body.initData or "").strip()
-    trusted, raw_meta = _base.verify_init_data(init_data)
-    meta = dict(raw_meta or {})
-    if trusted:
-        profile, history, identity = _base._trusted_server_context(meta)
-        meta["trusted"] = True
-        meta["identity"] = identity
-    else:
-        profile = _base._safe_profile(body.profile)
-        history = _base._safe_history(body.history)
-        meta = {"untrusted": True, "trusted": False}
+    context = await _base._trusted_request_context(init_data, request_id)
+    brain, fn = _base._ai_runtime()
+    if brain is None or fn is None:
+        raise _base.safe_http_exception(503, "ai_unavailable", request_id)
 
-    request_id = uuid.uuid4().hex[:12]
+    _base.enforce_usage(
+        _base.APP_USAGE_GUARD,
+        context.chat_id,
+        "ai",
+        request_id,
+    )
+    profile = dict(context.profile)
+    if getattr(brain, "usage_guard", None) is _base.APP_USAGE_GUARD:
+        profile = _base.mark_usage_reserved(profile, "ai")
+    history = context.history
+
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=32)
     loop = asyncio.get_running_loop()
     sequence = 0
@@ -151,19 +172,10 @@ async def webapp_api_ask_stream(
             pass
 
     async def generate() -> str:
-        brain = _base.APP_BRAIN
         settings = _base.APP_SETTINGS
-        ai_key = str(getattr(settings, "openai_api_key", "") or "").strip() if settings else ""
-        ai_enabled = bool(getattr(settings, "ai_enabled", True)) if settings else True
-        stream_enabled = bool(getattr(settings, "webapp_live_stream_enabled", True)) if settings else True
-        ai_on = bool(ai_enabled and ai_key and brain and hasattr(brain, "reply"))
-        if not ai_on:
-            return (
-                "🧠 AI сейчас недоступен. Проверь серверную конфигурацию "
-                "OPENAI_API_KEY, AI_ENABLED и OPENAI_MODEL."
-            )
-
-        fn = brain.reply
+        stream_enabled = bool(
+            getattr(settings, "webapp_live_stream_enabled", True)
+        ) if settings else True
         kwargs: dict[str, Any] = {
             "text": text,
             "profile": profile,
@@ -196,7 +208,7 @@ async def webapp_api_ask_stream(
                 "type": "meta",
                 "ok": True,
                 "request_id": request_id,
-                "trusted": bool(trusted),
+                "trusted": True,
                 "build": build,
                 "bco_version": str(x_bco_version or "")[:64],
             }
@@ -229,30 +241,35 @@ async def webapp_api_ask_stream(
                     queue.task_done()
 
             reply = await task
+            if not str(reply or "").strip():
+                raise RuntimeError("empty_generation")
             yield _ndjson(
                 {
                     "type": "final",
                     "ok": True,
                     "request_id": request_id,
                     "reply": str(reply),
-                    "trusted": bool(trusted),
+                    "trusted": True,
                     "elapsed_ms": int((time.monotonic() - started) * 1000),
                     "build": build,
-                    "meta": meta,
+                    "meta": context.meta,
                 }
             )
         except asyncio.CancelledError:
             task.cancel()
             raise
         except Exception as exc:
-            log.exception("webapp live generation failed request_id=%s error=%s", request_id, type(exc).__name__)
+            log.error(
+                "webapp live generation failed request_id=%s error=%s",
+                request_id,
+                type(exc).__name__,
+            )
             yield _ndjson(
                 {
                     "type": "error",
                     "ok": False,
                     "request_id": request_id,
                     "error": "generation_unavailable",
-                    "error_class": type(exc).__name__,
                     "build": build,
                 }
             )
@@ -268,5 +285,6 @@ async def webapp_api_ask_stream(
             "X-Accel-Buffering": "no",
             "X-Content-Type-Options": "nosniff",
             "X-BCO-Stream": "live-intelligence-v18",
+            "X-Request-ID": request_id,
         },
     )

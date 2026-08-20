@@ -177,6 +177,7 @@ def create_app() -> FastAPI:
                 settings=settings,
                 transcription=transcription_backend,
                 voice=voice_service,
+                usage_guard=usage_guard,
             )
             log.info("Mini App runtime bind: OK")
         except Exception as exc:

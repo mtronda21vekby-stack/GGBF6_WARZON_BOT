@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from typing import Any
 from app.services.operator_intelligence.context import OperatorContextService
 from app.services.player_memory.service import PlayerMemoryService
 
+
+log = logging.getLogger("bco.conversation")
 
 PartialCallback = Callable[[str, dict[str, Any]], None]
 
@@ -30,6 +33,13 @@ def _rate_limit_text(seconds: int) -> str:
     return (
         "⏳ Слишком много AI-запросов подряд. "
         f"Подожди примерно {wait} сек. и отправь следующий запрос."
+    )
+
+
+def _guard_unavailable_text() -> str:
+    return (
+        "⚠️ Защита AI-операций временно недоступна. "
+        "Повтори запрос через несколько секунд."
     )
 
 
@@ -110,17 +120,30 @@ class ConversationService:
             except Exception:
                 chat_id = None
 
-        # Enforce cost limits at the canonical AI generation boundary. This
-        # protects both Telegram and verified Mini App calls and deliberately
-        # happens before Mini App working-memory writes.
-        if trusted and chat_id is not None and self.usage_guard is not None:
+        # Enforce cost limits at the canonical AI generation boundary. A
+        # verified HTTP surface may reserve the same shared guard immediately
+        # before dispatch; the internal marker prevents double charging.
+        raw_reserved = profile.get("_usage_guard_reserved")
+        reserved = {
+            str(item).strip().lower()
+            for item in raw_reserved
+            if str(item).strip()
+        } if isinstance(raw_reserved, (list, tuple, set)) else set()
+        if trusted and chat_id is not None and self.usage_guard is not None and "ai" not in reserved:
             try:
                 decision = self.usage_guard.check(chat_id, "ai")
-                if not bool(getattr(decision, "allowed", True)):
+                if not bool(getattr(decision, "allowed", False)):
                     return _rate_limit_text(int(getattr(decision, "retry_after_s", 1) or 1))
-            except Exception:
-                # Guard failures must not take the coaching service down.
-                pass
+            except Exception as exc:
+                log.error(
+                    "AI usage guard failed error=%s",
+                    type(exc).__name__,
+                )
+                return _guard_unavailable_text()
+
+        if "_usage_guard_reserved" in profile:
+            profile = dict(profile)
+            profile.pop("_usage_guard_reserved", None)
 
         # Telegram Router inserts current user text before calling the brain.
         # Mini App server context does not. This flag distinguishes the paths.

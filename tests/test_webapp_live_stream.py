@@ -44,6 +44,15 @@ class ServerStore:
         return [{"role": "assistant", "content": "server history"}]
 
 
+class AllowGuard:
+    def __init__(self):
+        self.calls: list[tuple[int, str]] = []
+
+    def check(self, subject, category):
+        self.calls.append((int(subject), str(category)))
+        return SimpleNamespace(allowed=True, retry_after_s=0, scope="subject")
+
+
 def _app() -> FastAPI:
     app = FastAPI()
     app.include_router(live_router.router)
@@ -65,45 +74,42 @@ def _settings(**overrides):
     return SimpleNamespace(**data)
 
 
-def test_untrusted_stream_emits_meta_partial_and_authoritative_final(monkeypatch):
+def test_missing_init_data_cannot_stream_or_reach_generation(monkeypatch):
     brain = StreamingBrain()
+    guard = AllowGuard()
     monkeypatch.setattr(live_router._base, "APP_BRAIN", brain)
     monkeypatch.setattr(live_router._base, "APP_SETTINGS", _settings())
-    monkeypatch.setattr(live_router._base, "APP_PROFILES", None)
-    monkeypatch.setattr(live_router._base, "APP_STORE", None)
+    monkeypatch.setattr(live_router._base, "APP_PROFILES", ServerProfiles())
+    monkeypatch.setattr(live_router._base, "APP_STORE", ServerStore())
+    monkeypatch.setattr(live_router._base, "APP_USAGE_GUARD", guard)
     monkeypatch.setattr(live_router._base, "verify_init_data", lambda _value: (False, {}))
 
-    client = TestClient(_app())
-    response = client.post(
+    response = TestClient(_app()).post(
         "/webapp/api/ask/stream",
         json={
             "text": "Почему поздно ротирую?",
             "profile": {"game": "Warzone", "platform": "Xbox", "admin": True},
-            "history": [{"role": "user", "content": "context"}],
+            "history": [{"role": "user", "content": "untrusted context"}],
             "initData": "",
         },
         headers={"X-BCO-Version": "test-v18"},
     )
 
-    assert response.status_code == 200
-    assert response.headers["x-bco-stream"] == "live-intelligence-v18"
-    assert response.headers["cache-control"].startswith("no-store")
-    events = _events(response)
-    assert events[0]["type"] == "meta"
-    assert events[0]["trusted"] is False
-    assert any(event["type"] == "partial" for event in events)
-    final = next(event for event in events if event["type"] == "final")
-    assert final["reply"] == "Держи высоту. Ротируй раньше."
-    assert final["trusted"] is False
-    assert brain.calls[0]["profile"] == {"game": "Warzone", "platform": "Xbox"}
+    assert response.status_code == 401
+    assert response.json()["detail"]["error"] == "telegram_auth_required"
+    assert response.json()["detail"]["request_id"]
+    assert brain.calls == []
+    assert guard.calls == []
 
 
 def test_trusted_stream_ignores_client_profile_and_uses_server_context(monkeypatch):
     brain = StreamingBrain()
+    guard = AllowGuard()
     monkeypatch.setattr(live_router._base, "APP_BRAIN", brain)
     monkeypatch.setattr(live_router._base, "APP_SETTINGS", _settings())
     monkeypatch.setattr(live_router._base, "APP_PROFILES", ServerProfiles())
     monkeypatch.setattr(live_router._base, "APP_STORE", ServerStore())
+    monkeypatch.setattr(live_router._base, "APP_USAGE_GUARD", guard)
     monkeypatch.setattr(
         live_router._base,
         "verify_init_data",
@@ -121,10 +127,18 @@ def test_trusted_stream_ignores_client_profile_and_uses_server_context(monkeypat
     )
 
     assert response.status_code == 200
-    final = next(event for event in _events(response) if event["type"] == "final")
+    assert response.headers["x-bco-stream"] == "live-intelligence-v18"
+    assert response.headers["cache-control"].startswith("no-store")
+    events = _events(response)
+    assert events[0]["type"] == "meta"
+    assert events[0]["trusted"] is True
+    assert any(event["type"] == "partial" for event in events)
+    final = next(event for event in events if event["type"] == "final")
+    assert final["reply"] == "Держи высоту. Ротируй раньше."
     assert final["trusted"] is True
     assert brain.calls[0]["profile"]["game"] == "SERVER_WARZONE"
     assert brain.calls[0]["history"] == [{"role": "assistant", "content": "server history"}]
+    assert guard.calls == [(123, "ai")]
 
 
 def test_runtime_gate_can_roll_back_entire_v18_overlay(monkeypatch):
@@ -152,5 +166,7 @@ def test_empty_stream_request_is_rejected_without_generation(monkeypatch):
     monkeypatch.setattr(live_router._base, "APP_SETTINGS", _settings())
     response = TestClient(_app()).post("/webapp/api/ask/stream", json={"text": ""})
     assert response.status_code == 400
-    assert _events(response)[0]["error"] == "empty_text"
+    event = _events(response)[0]
+    assert event["error"] == "empty_text"
+    assert event["request_id"]
     assert brain.calls == []
