@@ -21,7 +21,7 @@ def test_boot_coordinator_loads_stable_base_then_runtime_gated_v18_layer():
     assert "/webapp/bco.live.js" in source
     assert "/webapp/api/runtime" in source
     assert re.search(r'method\s*:\s*"POST"', source)
-    assert re.search(r"flags\.v18_overlay\s*===\s*false", source)
+    assert re.search(r"f\.v18_overlay\s*===\s*false", source)
     assert "__BCO_RUNTIME_FLAGS__" in source
 
 
