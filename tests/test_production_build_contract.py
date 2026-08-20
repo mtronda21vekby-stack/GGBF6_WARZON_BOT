@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from app.observability.readiness import readiness_snapshot
@@ -164,3 +165,27 @@ def test_readiness_exposes_separate_release_build_and_runtime_truth(monkeypatch)
     assert "never-expose-openai-secret" not in rendered
     assert "never-expose-supabase-secret" not in rendered
     assert "private-project.supabase.co" not in rendered
+
+
+def test_render_workflow_requires_exact_build_and_protected_surface_smokes():
+    workflow = Path(".github/workflows/render-production-deploy.yml").read_text(encoding="utf-8")
+
+    for marker in (
+        "statuses: write",
+        "EXPECTED_SHA: ${{ github.sha }}",
+        'build.get("git_commit") != expected_sha',
+        'build.get("source") != "render"',
+        'details.get("status") != "ready"',
+        'recovery.get("primary_available") is not True',
+        'recovery.get("last_probe_ok") is not True',
+        'request_json("/webapp/health")',
+        '"/webapp/app.js"',
+        '"/webapp/bco.voice-v65.js"',
+        'require_anonymous_denial("/webapp/api/ask"',
+        'require_anonymous_denial("/webapp/api/ask/stream"',
+        'require_anonymous_denial("/webapp/api/voice-speak"',
+        '"/webapp/api/voice-transcribe"',
+        '"/integrations/site/telegram/status"',
+        '"context": "bco/render-production"',
+    ):
+        assert marker in workflow
