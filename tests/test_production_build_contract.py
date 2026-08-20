@@ -3,8 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
+from app.observability.production_verify import (
+    ProductionExpectations,
+    require_anonymous_denial,
+    validate_details,
+)
 from app.observability.readiness import readiness_snapshot
 from app.release import (
     API_CONTRACT_VERSION,
@@ -76,6 +82,18 @@ def _settings():
     )
 
 
+def _ready_snapshot(monkeypatch):
+    monkeypatch.setenv("RENDER_GIT_COMMIT", FULL_RENDER_SHA)
+    monkeypatch.setenv("RENDER_GIT_BRANCH", "main")
+    return readiness_snapshot(
+        _settings(),
+        ReadyStore(),
+        app_version=APP_VERSION,
+        release_contract=RELEASE_CONTRACT,
+        entitlement_service=ReadyEntitlements(),
+    )
+
+
 def test_runtime_build_metadata_prefers_exact_render_commit():
     metadata = runtime_build_metadata(
         {
@@ -118,16 +136,7 @@ def test_runtime_build_metadata_rejects_short_or_untrusted_values():
 
 
 def test_readiness_exposes_separate_release_build_and_runtime_truth(monkeypatch):
-    monkeypatch.setenv("RENDER_GIT_COMMIT", FULL_RENDER_SHA)
-    monkeypatch.setenv("RENDER_GIT_BRANCH", "main")
-
-    snapshot = readiness_snapshot(
-        _settings(),
-        ReadyStore(),
-        app_version=APP_VERSION,
-        release_contract=RELEASE_CONTRACT,
-        entitlement_service=ReadyEntitlements(),
-    )
+    snapshot = _ready_snapshot(monkeypatch)
 
     # Backward-compatible product release object stays stable.
     assert snapshot["release"] == {
@@ -169,8 +178,47 @@ def test_readiness_exposes_separate_release_build_and_runtime_truth(monkeypatch)
     assert "private-project.supabase.co" not in rendered
 
 
-def test_render_workflow_requires_exact_build_and_protected_surface_smokes():
+def test_production_verifier_accepts_exact_build_and_rejects_stale_sha(monkeypatch):
+    snapshot = _ready_snapshot(monkeypatch)
+    expected = ProductionExpectations(
+        base_url="https://production.example",
+        git_sha=FULL_RENDER_SHA,
+    )
+
+    recovery = validate_details(snapshot, expected)
+    assert recovery["primary_available"] is True
+
+    stale = ProductionExpectations(
+        base_url="https://production.example",
+        git_sha=FULL_GITHUB_SHA,
+    )
+    with pytest.raises(AssertionError, match="stale_build"):
+        validate_details(snapshot, stale)
+
+
+def test_production_verifier_requires_safe_request_scoped_auth_error():
+    safe = {
+        "detail": {
+            "code": "telegram_auth_required",
+            "request_id": "req-production-probe",
+        }
+    }
+    require_anonymous_denial("/webapp/api/ask", 401, safe, "")
+
+    with pytest.raises(AssertionError, match="anonymous_endpoint_not_denied"):
+        require_anonymous_denial("/webapp/api/ask", 200, {"ok": True}, "model output")
+    with pytest.raises(AssertionError, match="unsafe_auth_error_contract"):
+        require_anonymous_denial(
+            "/webapp/api/ask",
+            401,
+            {"detail": {"code": "telegram_auth_required"}},
+            "",
+        )
+
+
+def test_render_workflow_supports_hook_or_auto_deploy_without_weakening_evidence():
     workflow = Path(".github/workflows/render-production-deploy.yml").read_text(encoding="utf-8")
+    verifier = Path("app/observability/production_verify.py").read_text(encoding="utf-8")
     parsed = yaml.safe_load(workflow)
 
     assert isinstance(parsed, dict)
@@ -180,20 +228,28 @@ def test_render_workflow_requires_exact_build_and_protected_surface_smokes():
 
     for marker in (
         "statuses: write",
-        "EXPECTED_SHA: ${{ github.sha }}",
-        'build.get("git_commit") != expected_sha',
+        "mode=render_auto_deploy",
+        "mode=deploy_hook",
+        "waiting for Render auto-deploy to publish the exact GitHub SHA",
+        "python -m app.observability.production_verify",
+        '"context": "bco/render-production"',
+    ):
+        assert marker in workflow
+    assert "Production cannot be guaranteed to follow main" not in workflow
+
+    for marker in (
+        'build.get("git_commit") != expected.git_sha',
         'build.get("source") != "render"',
         'details.get("status") != "ready"',
         'recovery.get("primary_available") is not True',
         'recovery.get("last_probe_ok") is not True',
-        'request_json("/webapp/health")',
+        'client.json("/webapp/health")',
         '"/webapp/app.js"',
         '"/webapp/bco.voice-v65.js"',
-        'require_anonymous_denial("/webapp/api/ask"',
-        'require_anonymous_denial("/webapp/api/ask/stream"',
-        'require_anonymous_denial("/webapp/api/voice-speak"',
+        '("/webapp/api/ask", anonymous_payload)',
+        '("/webapp/api/ask/stream", anonymous_payload)',
+        '("/webapp/api/voice-speak", {"text": "auth probe"})',
         '"/webapp/api/voice-transcribe"',
-        '"/integrations/site/telegram/status"',
-        '"context": "bco/render-production"',
+        'client.json("/integrations/site/telegram/status")',
     ):
-        assert marker in workflow
+        assert marker in verifier
