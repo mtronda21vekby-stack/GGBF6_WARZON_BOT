@@ -8,17 +8,17 @@ from typing import Any, Mapping
 from app.i18n import normalize_locale
 
 _RU_BUTTONS = {
-    "🧠 AI BRIEF":"🧠 AI СВОДКА","🎯 TRAINING":"🎯 ТРЕНИРОВКА","🎮 WORLD":"🎮 ИГРА","🎬 VOD LAB":"🎬 VOD РАЗБОР",
-    "🧟 ZOMBIES":"🧟 ЗОМБИ","📌 OPERATOR":"📌 ОПЕРАТОР","💎 PREMIUM":"💎 ПРЕМИУМ","⚙️ SYSTEM":"⚙️ СИСТЕМА",
-    "🛰 COMMAND CENTER":"🛰 ЦЕНТР УПРАВЛЕНИЯ","↻ REFRESH":"↻ ОБНОВИТЬ","✕ CLOSE":"✕ ЗАКРЫТЬ","‹ COMMAND CONSOLE":"‹ КОНСОЛЬ",
+    "🧠 AI BRIEF":"🧠 AI СВОДКА","🧠 CROWN ИИ":"🧠 AI СВОДКА","🎯 TRAINING":"🎯 ТРЕНИРОВКА","🎮 WORLD":"🎮 ИГРА","🎮 ИГРОВОЙ МИР":"🎮 ИГРА","🎬 VOD LAB":"🎬 VOD РАЗБОР","🎬 VOD ЛАБ":"🎬 VOD РАЗБОР",
+    "🧟 ZOMBIES":"🧟 ЗОМБИ","📌 OPERATOR":"📌 ОПЕРАТОР","💎 PREMIUM":"💎 ПРЕМИУМ","⚙️ SYSTEM":"⚙️ СИСТЕМА","⚙️ СИСТЕМА":"⚙️ СИСТЕМА",
+    "🛰 COMMAND CENTER":"🛰 ЦЕНТР УПРАВЛЕНИЯ","🛰 КОМАНДНЫЙ ЦЕНТР":"🛰 ЦЕНТР УПРАВЛЕНИЯ","↻ REFRESH":"↻ ОБНОВИТЬ","✕ CLOSE":"✕ ЗАКРЫТЬ","‹ COMMAND CONSOLE":"‹ КОНСОЛЬ",
     "⌂ HOME":"⌂ ГЛАВНАЯ","😈 BRAIN MODE":"😈 РЕЖИМ ИИ","🎙 VOICE":"🎙 ГОЛОС","📌 PROFILE":"📌 ПРОФИЛЬ",
     "📊 REFRESH STATUS":"📊 ОБНОВИТЬ СТАТУС","AIM":"ТОЧНОСТЬ","MOVEMENT":"ДВИЖЕНИЕ","POSITION":"ПОЗИЦИЯ",
     "CONTROLLER":"КОНТРОЛЛЕР","TEAMMATE":"ТИММЕЙТ","COACH":"КОУЧ","‹ SYSTEM":"‹ СИСТЕМА",
 }
 _EN_BUTTONS = {
-    "🧠 AI СВОДКА":"🧠 AI BRIEF","🎯 ТРЕНИРОВКА":"🎯 TRAINING","🎮 ИГРА":"🎮 WORLD","🎬 VOD РАЗБОР":"🎬 VOD LAB",
-    "🧟 ЗОМБИ":"🧟 ZOMBIES","📌 ОПЕРАТОР":"📌 OPERATOR","💎 ПРЕМИУМ":"💎 PREMIUM","⚙️ СИСТЕМА":"⚙️ SYSTEM",
-    "🛰 ЦЕНТР УПРАВЛЕНИЯ":"🛰 COMMAND CENTER","↻ ОБНОВИТЬ":"↻ REFRESH","✕ ЗАКРЫТЬ":"✕ CLOSE","‹ КОНСОЛЬ":"‹ COMMAND CONSOLE",
+    "🧠 AI СВОДКА":"🧠 AI BRIEF","🧠 CROWN ИИ":"🧠 AI BRIEF","🎯 ТРЕНИРОВКА":"🎯 TRAINING","🎮 ИГРА":"🎮 WORLD","🎮 ИГРОВОЙ МИР":"🎮 WORLD","🎬 VOD РАЗБОР":"🎬 VOD LAB","🎬 VOD ЛАБ":"🎬 VOD LAB",
+    "🧟 ЗОМБИ":"🧟 ZOMBIES","📌 ОПЕРАТОР":"📌 OPERATOR","💎 ПРЕМИУМ":"💎 PREMIUM","💎 PREMIUM":"💎 PREMIUM","⚙️ СИСТЕМА":"⚙️ SYSTEM",
+    "🛰 ЦЕНТР УПРАВЛЕНИЯ":"🛰 COMMAND CENTER","🛰 КОМАНДНЫЙ ЦЕНТР":"🛰 COMMAND CENTER","↻ ОБНОВИТЬ":"↻ REFRESH","✕ ЗАКРЫТЬ":"✕ CLOSE","‹ КОНСОЛЬ":"‹ COMMAND CONSOLE",
     "⌂ ГЛАВНАЯ":"⌂ HOME","😈 РЕЖИМ ИИ":"😈 BRAIN MODE","🎙 ГОЛОС":"🎙 VOICE","📌 ПРОФИЛЬ":"📌 PROFILE",
     "📊 ОБНОВИТЬ СТАТУС":"📊 REFRESH STATUS","ТОЧНОСТЬ":"AIM","ДВИЖЕНИЕ":"MOVEMENT","ПОЗИЦИЯ":"POSITION",
     "КОНТРОЛЛЕР":"CONTROLLER","ТИММЕЙТ":"TEAMMATE","КОУЧ":"COACH","‹ СИСТЕМА":"‹ SYSTEM",
@@ -32,6 +32,8 @@ _RU_TEXT = {
     "TRAINING PROTOCOL":"ТРЕНИРОВОЧНЫЙ ПРОТОКОЛ","Current focus:":"Текущий фокус:","VOD INTELLIGENCE LAB":"ЛАБОРАТОРИЯ VOD-АНАЛИЗА","World context:":"Контекст игры:",
 }
 _EN_TEXT = {
+    "КОМАНДНАЯ КОНСОЛЬ":"COMMAND CONSOLE","ОПЕРАТОР //":"OPERATOR //","СВЯЗЬ // В СЕТИ":"LINK // ONLINE","ТЕКУЩИЙ КОНТЕКСТ:":"CURRENT CONTEXT:","• МИР —":"• WORLD —","• ПЛАТФОРМА —":"• PLATFORM —","• ЯДРО —":"• CORE —","• РОЛЬ —":"• ROLE —",
+    "Выбери модуль. Бот и Mini App используют один профиль оператора.":"Choose a module. Bot and Mini App use one operator profile.",
     "Выбери модуль. Навигация работает внутри одной консоли — без серой клавиатуры и лишних сообщений.":"Choose a module. Navigation stays inside one console — no giant reply keyboard or message clutter.",
     "Изменение применяется сразу к AI, тренировкам, VOD и памяти игрока.":"Changes apply immediately to AI, training, VOD and player memory.",
     "NORMAL — быстрые ответы.":"NORMAL — fast useful intelligence.","PRO — причинный разбор и trade-offs.":"PRO — deeper analysis and trade-offs.","DEMON — максимальная дисциплина и глубина без выдуманных фактов.":"DEMON — maximum legitimate depth without invented facts.",
