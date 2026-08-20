@@ -13,8 +13,8 @@ def test_russian_command_console_buttons_are_localized():
     assert "🛰 ЦЕНТР УПРАВЛЕНИЯ" in labels or all("COMMAND CENTER" not in x for x in labels)
     assert "↻ ОБНОВИТЬ" in labels
     assert "✕ ЗАКРЫТЬ" in labels
-    assert "CURRENT LOADOUT" not in view.text
-    assert "ТЕКУЩАЯ КОНФИГУРАЦИЯ" in view.text
+    assert "CURRENT CONTEXT:" not in view.text
+    assert "ТЕКУЩИЙ КОНТЕКСТ:" in view.text
 
 
 def test_english_command_console_has_no_russian_navigation():
