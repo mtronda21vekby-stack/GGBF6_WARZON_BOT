@@ -15,7 +15,7 @@ from app.services.storage.factory import (
 from app.services.storage.memory import InMemoryStore
 
 
-MIGRATION = Path("migrations/011_canonical_lifecycle_runtime.sql")
+MIGRATION = Path("migrations/012_canonical_lifecycle_runtime.sql")
 OWNER = "11111111-1111-1111-1111-111111111111"
 
 
