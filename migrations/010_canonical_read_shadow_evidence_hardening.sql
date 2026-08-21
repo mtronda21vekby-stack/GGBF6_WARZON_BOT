@@ -3,6 +3,9 @@
 -- Additive status-only migration. Legacy reads remain authoritative. This does
 -- not enable canonical primary reads, change product ownership, merge accounts,
 -- transfer entitlements, or rewrite player state.
+--
+-- Existing v1 view columns retain their exact names and order. New evidence
+-- columns are appended so CREATE OR REPLACE remains non-destructive.
 
 create or replace view public.black_crown_canonical_read_runtime_status
 with (security_invoker = true)
@@ -17,10 +20,10 @@ with flag as (
 ),
 ownership as (
   select
-    count(*) filter (where state = 'resolved')::bigint as resolved_count,
-    count(*) filter (where state = 'unresolved')::bigint as unresolved_count,
-    count(*) filter (where state = 'conflict')::bigint as conflict_count,
-    count(*) filter (where state = 'merge_pending')::bigint as merge_pending_count
+    count(*) filter (where state = 'resolved')::bigint as resolved_mappings,
+    count(*) filter (where state = 'unresolved')::bigint as unresolved_mappings,
+    count(*) filter (where state = 'conflict')::bigint as conflict_mappings,
+    count(*) filter (where state = 'merge_pending')::bigint as merge_pending_mappings
   from public.black_crown_ownership_migration_state
 ),
 shadow_coverage as (
@@ -67,6 +70,7 @@ shadow_coverage as (
 ),
 status as (
   select
+    -- Preserve the exact v1 column order through merge_pending_mappings.
     'bco-canonical-read-shadow-v2'::text as schema_version,
     coalesce(flag.enabled, false) as shadow_read_enabled,
     flag.reason as shadow_read_reason,
@@ -76,10 +80,11 @@ status as (
       from public.black_crown_ownership_runtime_flags as runtime
       where runtime.flag_key = 'canonical_dual_write'
     ), false) as dual_write_enabled,
-    ownership.resolved_count,
-    ownership.unresolved_count,
-    ownership.conflict_count,
-    ownership.merge_pending_count,
+    ownership.resolved_mappings,
+    ownership.unresolved_mappings,
+    ownership.conflict_mappings,
+    ownership.merge_pending_mappings,
+    -- Additive v2 evidence begins here.
     shadow_coverage.coverage,
     shadow_coverage.shadow_surface_coverage_ready
   from flag
@@ -91,16 +96,16 @@ select
   (
     status.shadow_read_enabled
     and status.dual_write_enabled
-    and status.conflict_count = 0
-    and status.merge_pending_count = 0
+    and status.conflict_mappings = 0
+    and status.merge_pending_mappings = 0
     and status.shadow_surface_coverage_ready
   ) as promotion_ready,
   array_remove(
     array[
       case when not status.shadow_read_enabled then 'shadow_disabled' end,
       case when not status.dual_write_enabled then 'dual_write_disabled' end,
-      case when status.conflict_count > 0 then 'identity_conflict' end,
-      case when status.merge_pending_count > 0 then 'merge_pending' end,
+      case when status.conflict_mappings > 0 then 'identity_conflict' end,
+      case when status.merge_pending_mappings > 0 then 'merge_pending' end,
       case when not status.shadow_surface_coverage_ready then 'coverage_incomplete' end
     ]::text[],
     null
