@@ -92,7 +92,7 @@ Account unlink remains separate and does not delete Player Brain data.
 ## Deployment compatibility
 
 The runtime calls the new lifecycle RPCs. During the narrow deployment window
-before migration 011 is installed, only the official PostgREST missing-function
+before migration 012 is installed, only the official PostgREST missing-function
 response (`404` with `PGRST202`) can use the previous exact legacy operation.
 Column/request-shape errors such as `PGRST204` remain fail-closed.
 
