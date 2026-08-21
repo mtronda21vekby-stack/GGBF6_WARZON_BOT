@@ -172,13 +172,10 @@ begin
   into v_scope
   from public.black_crown_resolve_lifecycle_scope(p_telegram_user_id);
 
-  v_canonical_scope := bool_and(
-    array[
-      coalesce(v_scope.lifecycle_enabled, false),
-      v_scope.resolution_state = 'resolved',
-      v_scope.black_crown_user_id is not null
-    ]
-  );
+  v_canonical_scope :=
+    coalesce(v_scope.lifecycle_enabled, false)
+    and v_scope.resolution_state = 'resolved'
+    and v_scope.black_crown_user_id is not null;
 
   if v_canonical_scope then
     delete from public.bco_messages
@@ -220,13 +217,10 @@ begin
   into v_scope
   from public.black_crown_resolve_lifecycle_scope(p_telegram_user_id);
 
-  v_canonical_scope := bool_and(
-    array[
-      coalesce(v_scope.lifecycle_enabled, false),
-      v_scope.resolution_state = 'resolved',
-      v_scope.black_crown_user_id is not null
-    ]
-  );
+  v_canonical_scope :=
+    coalesce(v_scope.lifecycle_enabled, false)
+    and v_scope.resolution_state = 'resolved'
+    and v_scope.black_crown_user_id is not null;
 
   if v_canonical_scope then
     delete from public.bco_players
@@ -269,13 +263,10 @@ begin
   into v_scope
   from public.black_crown_resolve_lifecycle_scope(p_telegram_user_id);
 
-  v_canonical_scope := bool_and(
-    array[
-      coalesce(v_scope.lifecycle_enabled, false),
-      v_scope.resolution_state = 'resolved',
-      v_scope.black_crown_user_id is not null
-    ]
-  );
+  v_canonical_scope :=
+    coalesce(v_scope.lifecycle_enabled, false)
+    and v_scope.resolution_state = 'resolved'
+    and v_scope.black_crown_user_id is not null;
 
   if v_canonical_scope then
     delete from public.bco_messages
