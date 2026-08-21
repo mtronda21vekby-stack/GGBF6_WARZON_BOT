@@ -39,7 +39,7 @@ def _short(value: Any, fallback: str = "—", limit: int = 40) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _bool_state(value: Any, *, yes: str = "ON", no: str = "OFF") -> str:
+def _state(value: Any, *, yes: str = "ON", no: str = "OFF") -> str:
     return yes if value is True else no
 
 
@@ -52,15 +52,15 @@ def configured_admin_ids() -> frozenset[int]:
         )
         if part
     )
-    out: set[int] = set()
+    result: set[int] = set()
     for token in raw.replace(";", ",").split(","):
         try:
             value = int(token.strip())
         except Exception:
             continue
         if value > 0:
-            out.add(value)
-    return frozenset(out)
+            result.add(value)
+    return frozenset(result)
 
 
 def is_admin_user(user_id: int | None) -> bool:
@@ -71,17 +71,19 @@ def _buttons(locale: str, active: str) -> dict[str, Any]:
     ru = locale != "en"
     labels = {
         "overview": "◈ ОБЗОР" if ru else "◈ OVERVIEW",
-        "users": "👥 USERS",
+        "users": "👥 ПОЛЬЗОВАТЕЛИ" if ru else "👥 USERS",
         "activity": "▤ АКТИВНОСТЬ" if ru else "▤ ACTIVITY",
-        "identity": "◎ IDENTITY",
+        "identity": "◎ АККАУНТЫ" if ru else "◎ IDENTITY",
         "intel": "⌁ CROWN INTEL",
-        "system": "⚙ SYSTEM",
+        "system": "⚙ СИСТЕМА" if ru else "⚙ SYSTEM",
         "refresh": "↻ ОБНОВИТЬ" if ru else "↻ REFRESH",
         "close": "✕ ЗАКРЫТЬ" if ru else "✕ CLOSE",
     }
+
     def button(key: str) -> dict[str, str]:
-        prefix = "● " if active == key else ""
-        return {"text": prefix + labels[key], "callback_data": ADMIN_PREFIX + key}
+        selected = "● " if active == key else ""
+        return {"text": selected + labels[key], "callback_data": ADMIN_PREFIX + key}
+
     return {
         "inline_keyboard": [
             [button("overview"), button("users")],
@@ -100,112 +102,116 @@ def render_admin_view(
     system: Mapping[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     ru = locale != "en"
-    d = _mapping(dashboard)
-    users = _mapping(d.get("users"))
-    activity = _mapping(d.get("activity"))
-    identity = _mapping(d.get("identity"))
-    premium = _mapping(d.get("premium"))
-    intel = _mapping(d.get("intel"))
-    sys = _mapping(system)
+    data = _mapping(dashboard)
+    users = _mapping(data.get("users"))
+    activity = _mapping(data.get("activity"))
+    identity = _mapping(data.get("identity"))
+    premium = _mapping(data.get("premium"))
+    intel = _mapping(data.get("intel"))
+    system_data = _mapping(system)
     header = "BLACK CROWN // ADMIN COMMAND CENTER"
-    source = _short(d.get("schema"), "legacy")
+    source = _short(data.get("schema"), "legacy")
 
     if view == "users":
         text = (
             f"{header}\n\n"
             f"{'ПОЛЬЗОВАТЕЛИ' if ru else 'USERS'}\n"
-            f"Unified known — {_int(users.get('unified_known'))}\n"
-            f"Telegram tracked — {_int(users.get('tracked_telegram'))}\n"
-            f"Canonical accounts — {_int(users.get('canonical_accounts'))}\n\n"
+            f"{'Уникальные известные' if ru else 'Unified known'} — {_int(users.get('unified_known'))}\n"
+            f"{'Telegram отслеживается' if ru else 'Telegram tracked'} — {_int(users.get('tracked_telegram'))}\n"
+            f"{'Canonical аккаунты' if ru else 'Canonical accounts'} — {_int(users.get('canonical_accounts'))}\n\n"
             f"DAU / 24h — {_int(users.get('active_24h'))}\n"
             f"WAU / 7d — {_int(users.get('active_7d'))}\n"
             f"MAU / 30d — {_int(users.get('active_30d'))}\n"
             f"{'Новые 24ч' if ru else 'New 24h'} — {_int(users.get('new_24h'))}\n"
             f"{'Новые 7д' if ru else 'New 7d'} — {_int(users.get('new_7d'))}\n\n"
+            f"{'Mini App пользователи 24ч' if ru else 'Mini App users 24h'} — {_int(activity.get('today_miniapp_users'))}\n"
+            f"{'Mini App пользователи 7д' if ru else 'Mini App users 7d'} — {_int(activity.get('week_miniapp_users'))}\n"
             f"Premium active — {_int(premium.get('active_accounts'))}\n\n"
-            f"{'Без персональных ID. Один canonical account считается один раз.' if ru else 'No personal IDs. One canonical account is counted once.'}"
+            f"{'Персональные ID не выводятся. Один canonical account считается один раз.' if ru else 'No personal IDs are exposed. One canonical account is counted once.'}"
         )
     elif view == "activity":
         coverage = _int(activity.get("daily_coverage_days"))
         text = (
             f"{header}\n\n"
             f"{'АКТИВНОСТЬ' if ru else 'ACTIVITY'}\n"
-            f"Today updates — {_int(activity.get('today_updates'))}\n"
-            f"Today messages — {_int(activity.get('today_messages'))}\n"
-            f"Today voice — {_int(activity.get('today_voice'))}\n"
-            f"Today Mini App — {_int(activity.get('today_miniapp'))}\n\n"
-            f"7d updates — {_int(activity.get('week_updates'))}\n"
-            f"7d messages — {_int(activity.get('week_messages'))}\n"
-            f"7d voice — {_int(activity.get('week_voice'))}\n"
-            f"7d Mini App — {_int(activity.get('week_miniapp'))}\n\n"
+            f"{'Сегодня: события' if ru else 'Today updates'} — {_int(activity.get('today_updates'))}\n"
+            f"{'Сегодня: сообщения' if ru else 'Today messages'} — {_int(activity.get('today_messages'))}\n"
+            f"{'Сегодня: голос' if ru else 'Today voice'} — {_int(activity.get('today_voice'))}\n"
+            f"{'Сегодня: Mini App события' if ru else 'Today Mini App events'} — {_int(activity.get('today_miniapp'))}\n"
+            f"{'Сегодня: Mini App users' if ru else 'Today Mini App users'} — {_int(activity.get('today_miniapp_users'))}\n\n"
+            f"{'7д: события' if ru else '7d updates'} — {_int(activity.get('week_updates'))}\n"
+            f"{'7д: сообщения' if ru else '7d messages'} — {_int(activity.get('week_messages'))}\n"
+            f"{'7д: голос' if ru else '7d voice'} — {_int(activity.get('week_voice'))}\n"
+            f"{'7д: Mini App события' if ru else '7d Mini App events'} — {_int(activity.get('week_miniapp'))}\n"
+            f"{'7д: Mini App users' if ru else '7d Mini App users'} — {_int(activity.get('week_miniapp_users'))}\n\n"
             f"Lifetime updates — {_int(activity.get('total_updates'))}\n"
             f"Lifetime messages — {_int(activity.get('total_messages'))}\n"
             f"Lifetime voice — {_int(activity.get('total_voice'))}\n"
             f"Lifetime Mini App — {_int(activity.get('total_miniapp'))}\n\n"
-            f"Daily ledger coverage — {coverage} {'дн.' if ru else 'days'}"
+            f"{'Точное дневное покрытие' if ru else 'Exact daily coverage'} — {coverage} {'дн.' if ru else 'days'}"
         )
     elif view == "identity":
         text = (
             f"{header}\n\n"
             "CROWN IDENTITY CORE\n"
-            f"Accounts — {_int(identity.get('accounts'))}\n"
-            f"Active identities — {_int(identity.get('identities'))}\n"
+            f"{'Аккаунты' if ru else 'Accounts'} — {_int(identity.get('accounts'))}\n"
+            f"{'Активные identities' if ru else 'Active identities'} — {_int(identity.get('identities'))}\n"
             f"Resolved — {_int(identity.get('resolved'))}\n"
             f"Unresolved — {_int(identity.get('unresolved'))}\n"
             f"Conflict — {_int(identity.get('conflict'))}\n"
             f"Merge pending — {_int(identity.get('merge_pending'))}\n\n"
-            f"Canonical dual-write — {_bool_state(identity.get('dual_write'))}\n"
-            f"Canonical shadow-read — {_bool_state(identity.get('shadow_read'))}\n"
-            f"Client owner authority — OFF\n"
-            f"Silent merge — FORBIDDEN"
+            f"Canonical dual-write — {_state(identity.get('dual_write'))}\n"
+            f"Canonical shadow-read — {_state(identity.get('shadow_read'))}\n"
+            "Client owner authority — OFF\n"
+            "Silent merge — FORBIDDEN"
         )
     elif view == "intel":
         text = (
             f"{header}\n\n"
             "CROWN INTEL\n"
-            f"Official snapshots — {_int(intel.get('snapshots'))}\n"
-            f"Verified changes — {_int(intel.get('changes'))}\n"
-            f"Latest snapshot — {_short(intel.get('latest_snapshot_at'))}\n"
-            f"Latest change — {_short(intel.get('latest_change_at'))}\n\n"
-            f"{'Источник: только server-side aggregate; содержимое игроков не выводится.' if ru else 'Source: server-side aggregate only; no player content is exposed.'}"
+            f"{'Официальные snapshots' if ru else 'Official snapshots'} — {_int(intel.get('snapshots'))}\n"
+            f"{'Проверенные изменения' if ru else 'Verified changes'} — {_int(intel.get('changes'))}\n"
+            f"{'Последний snapshot' if ru else 'Latest snapshot'} — {_short(intel.get('latest_snapshot_at'))}\n"
+            f"{'Последнее изменение' if ru else 'Latest change'} — {_short(intel.get('latest_change_at'))}\n\n"
+            f"{'Только серверные агрегаты; содержимое игроков не выводится.' if ru else 'Server aggregates only; no player content is exposed.'}"
         )
     elif view == "system":
-        build = _mapping(sys.get("build"))
-        recovery = _mapping(sys.get("recovery"))
+        build = _mapping(system_data.get("build"))
+        recovery = _mapping(system_data.get("recovery"))
         text = (
             f"{header}\n\n"
-            "SYSTEM / RELEASE\n"
+            f"{'СИСТЕМА / РЕЛИЗ' if ru else 'SYSTEM / RELEASE'}\n"
             f"Product — {APP_VERSION}\n"
             f"Release — {RELEASE_CONTRACT}\n"
             f"Build — {_short(build.get('git_commit_short'))}\n"
-            f"Build exact — {_bool_state(build.get('exact'), yes='YES', no='NO')}\n"
+            f"Build exact — {_state(build.get('exact'), yes='YES', no='NO')}\n"
             f"API — {API_CONTRACT_VERSION}\n"
             f"Telegram auth — {TELEGRAM_AUTH_CONTRACT}\n"
             f"Mini App — {MINI_APP_RUNTIME}\n"
             f"Voice — {VOICE_RUNTIME}\n\n"
-            f"Storage primary — {_bool_state(recovery.get('primary_available'), yes='READY', no='DOWN')}\n"
-            f"Probe — {_bool_state(recovery.get('last_probe_ok'), yes='OK', no='FAIL')}\n"
+            f"Storage primary — {_state(recovery.get('primary_available'), yes='READY', no='DOWN')}\n"
+            f"Probe — {_state(recovery.get('last_probe_ok'), yes='OK', no='FAIL')}\n"
             f"Outbox pending — {_int(recovery.get('outbox_pending'))}\n"
             f"Admin telemetry — {source}"
         )
     else:
+        view = "overview"
         text = (
             f"{header}\n\n"
-            f"{'LIVE OVERVIEW' if not ru else 'ОПЕРАТИВНАЯ СВОДКА'}\n"
-            f"Unified users — {_int(users.get('unified_known'))}\n"
+            f"{'ОПЕРАТИВНАЯ СВОДКА' if ru else 'LIVE OVERVIEW'}\n"
+            f"{'Уникальные пользователи' if ru else 'Unified users'} — {_int(users.get('unified_known'))}\n"
             f"Active 24h — {_int(users.get('active_24h'))}\n"
             f"Active 7d — {_int(users.get('active_7d'))}\n"
             f"Active 30d — {_int(users.get('active_30d'))}\n"
-            f"New 24h — {_int(users.get('new_24h'))}\n\n"
-            f"Today messages — {_int(activity.get('today_messages'))}\n"
-            f"Today voice — {_int(activity.get('today_voice'))}\n"
-            f"Today Mini App — {_int(activity.get('today_miniapp'))}\n\n"
+            f"{'Новые 24ч' if ru else 'New 24h'} — {_int(users.get('new_24h'))}\n\n"
+            f"{'Сообщения сегодня' if ru else 'Messages today'} — {_int(activity.get('today_messages'))}\n"
+            f"{'Голос сегодня' if ru else 'Voice today'} — {_int(activity.get('today_voice'))}\n"
+            f"{'Mini App users сегодня' if ru else 'Mini App users today'} — {_int(activity.get('today_miniapp_users'))}\n\n"
             f"Identity unresolved — {_int(identity.get('unresolved'))}\n"
             f"Identity conflicts — {_int(identity.get('conflict')) + _int(identity.get('merge_pending'))}\n"
             f"CROWN INTEL snapshots — {_int(intel.get('snapshots'))}\n\n"
-            f"{'Telegram member count ≠ реальные пользователи BLACK CROWN.' if ru else 'Telegram member count ≠ real BLACK CROWN users.'}"
+            f"{'Число участников в шапке Telegram ≠ реальные пользователи BLACK CROWN.' if ru else 'Telegram member count ≠ real BLACK CROWN users.'}"
         )
-        view = "overview"
     return text, _buttons(locale, view)
 
 
