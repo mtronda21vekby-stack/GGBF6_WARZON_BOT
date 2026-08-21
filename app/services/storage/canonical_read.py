@@ -30,6 +30,11 @@ class CanonicalReadRouter:
     schema compatibility, zero identity conflicts and complete projection for
     the requested table. Any missing evidence fails closed to the exact legacy
     subject rather than returning a partial canonical history.
+
+    Successful owner resolutions are never cached across reads. This prevents
+    a controlled relink from leaving a window where an old canonical owner can
+    still be read. Only unresolved/conflict/error results use the bounded
+    negative cache; a verified identity refresh invalidates that cache.
     """
 
     SCHEMA_VERSION = "bco-canonical-read-v1"
@@ -48,6 +53,8 @@ class CanonicalReadRouter:
         self._rows = rows
         self.capability_enabled = bool(capability_enabled)
         self.flag_cache_ttl_s = max(1.0, float(flag_cache_ttl_s or 15.0))
+        # This TTL applies only to negative resolutions. A resolved owner is
+        # always re-read from the server-owned identity table.
         self.identity_cache_ttl_s = max(1.0, float(identity_cache_ttl_s or 120.0))
         self._lock = threading.RLock()
         self._control_cache: dict[str, Any] = self._empty_control(
@@ -277,13 +284,21 @@ class CanonicalReadRouter:
                 type(exc).__name__,
             )
 
-        cache_ttl = (
-            min(self.identity_cache_ttl_s, self.flag_cache_ttl_s)
-            if resolution.state == "error"
-            else self.identity_cache_ttl_s
-        )
         with self._lock:
-            self._owner_cache[subject] = (now + cache_ttl, resolution)
+            if resolution.state == "resolved":
+                # Never reuse an owner UUID after this read. A later controlled
+                # relink must be visible on the very next canonical operation.
+                self._owner_cache.pop(subject, None)
+            else:
+                cache_ttl = (
+                    min(self.identity_cache_ttl_s, self.flag_cache_ttl_s)
+                    if resolution.state == "error"
+                    else self.identity_cache_ttl_s
+                )
+                self._owner_cache[subject] = (
+                    now + cache_ttl,
+                    resolution,
+                )
         return resolution
 
     def prime_telegram_identity(
@@ -301,15 +316,10 @@ class CanonicalReadRouter:
             return
         if account_status not in {"active", "provisional"}:
             return
+        # Verified identity resolution invalidates a prior negative cache but
+        # does not cache the resolved owner UUID.
         with self._lock:
-            self._owner_cache[int(telegram_user_id)] = (
-                time.monotonic() + self.identity_cache_ttl_s,
-                CanonicalOwnerResolution(
-                    state="resolved",
-                    black_crown_user_id=owner,
-                    candidate_count=1,
-                ),
-            )
+            self._owner_cache.pop(int(telegram_user_id), None)
 
     def _legacy_rows(
         self,
@@ -500,7 +510,7 @@ class CanonicalReadRouter:
                 table: dict(counter)
                 for table, counter in sorted(self._by_table.items())
             }
-            owner_cache_entries = len(self._owner_cache)
+            negative_cache_entries = len(self._owner_cache)
 
         control_state = str(control.get("state") or "unavailable")[:64]
         effective_enabled = bool(control.get("effective_enabled", False))
@@ -562,6 +572,7 @@ class CanonicalReadRouter:
             "identity_conflict_fallbacks": int(
                 totals.get("legacy_fallback_identity_conflict", 0)
             ),
-            "owner_cache_entries": owner_cache_entries,
+            "owner_cache_entries": 0,
+            "negative_resolution_cache_entries": negative_cache_entries,
             "by_table": by_table,
         }
