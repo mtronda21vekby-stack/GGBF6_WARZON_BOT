@@ -19,27 +19,37 @@ A storage caller supplies only the verified Telegram subject already accepted by
 
 The server-only flow is:
 
-1. read the service-role `canonical_dual_read` flag;
-2. resolve the Telegram provider subject through `black_crown_resolve_read_owner`;
-3. require exactly one eligible canonical account;
-4. query product data by `black_crown_user_id`;
-5. fall back to the exact legacy subject when canonical evidence is insufficient.
+1. read the service-role ownership runtime status;
+2. require runtime schema `bco-canonical-owner-v3` and read schema `bco-canonical-read-v1`;
+3. require `canonical_dual_read=true`;
+4. require zero `conflict` and zero `merge_pending` mappings;
+5. require complete canonical projection for the requested table;
+6. resolve the Telegram provider subject through `black_crown_resolve_read_owner`;
+7. require exactly one eligible canonical account;
+8. query product data by `black_crown_user_id`;
+9. fall back to the exact legacy subject when any evidence is insufficient.
 
 `black_crown_resolve_read_owner` is read-only. It does not create an account, create an identity, merge accounts, transfer Premium or persist a raw provider subject.
+
+A successful owner UUID is **never cached across reads**. Every successful canonical operation re-resolves the current server-owned identity mapping. Only unresolved, conflict and error results use a bounded negative cache, and any verified identity refresh invalidates that negative cache.
 
 ## Fail-closed fallback matrix
 
 | Condition | Read behavior | Telemetry |
 |---|---|---|
 | Application capability disabled | legacy key | `capability_disabled` |
+| Runtime/read schema mismatch | legacy key | `schema_mismatch` |
 | Database flag absent or disabled | legacy key | stable control state only |
-| Flag lookup error | legacy key | exception class only |
+| Status lookup error | legacy key | exception class only |
+| Any identity conflict or merge-pending state | legacy key | `mapping_conflict` |
+| Requested table has legacy-only rows | legacy key | `coverage_incomplete` |
+| Requested table coverage is unavailable | legacy key | `coverage_missing` |
 | No eligible canonical identity | legacy key | `identity_unresolved` |
 | More than one canonical candidate | legacy key | `identity_conflict` |
 | Canonical query error | legacy key | `canonical_query_error` |
 | Canonical query returns no rows | legacy key | `canonical_miss` |
 | Singleton surface returns multiple rows | legacy key | `canonical_ambiguous` |
-| Exactly one owner and valid result | canonical owner | `canonical_hit` |
+| All gates pass and result is valid | canonical owner | `canonical_hit` |
 
 No canonical owner UUID, Telegram subject, profile payload, transcript, history content or database operator reason is emitted in logs or `/health/details` telemetry.
 
@@ -58,6 +68,8 @@ Canonical-first routing is implemented for:
 - storage statistics/counts.
 
 Collection surfaces can aggregate rows projected to one canonical account. Singleton surfaces such as profile/summary/derived intelligence refuse to choose between multiple canonical rows and fall back to the current legacy subject instead of silently merging data.
+
+The global projection gate is deliberately conservative. A table is eligible only when `legacy_only_rows=0` and `canonical_rows=total_rows`. This prevents a canonical query from returning a plausible but incomplete history.
 
 ## Destructive lifecycle boundary
 
@@ -87,7 +99,7 @@ Fresh verification after Phase 2B:
 - profiles: 1/2 projected;
 - activity: 1/2 projected.
 
-The unresolved historical subject remains legacy-only. Phase 2C does not manufacture an account to improve a percentage.
+The unresolved historical subject remains legacy-only. Phase 2C does not manufacture an account to improve a percentage. Under the parity gate, profile and activity canonical reads remain blocked while those tables contain legacy-only rows.
 
 ## Transactional GAME validation
 
@@ -117,19 +129,21 @@ Post-rollback verification proved zero residue:
 
 ## Privacy-safe readiness
 
-`/health/details` reports:
+`/health/details` reports canonical read diagnostics under `storage.canonical_read` while preserving the existing exact `identity` object contract.
+
+It reports:
 
 - read schema version;
 - application capability state;
 - database flag state;
 - active mode: `legacy` or `canonical_first`;
-- flag update timestamp;
+- stable control-state code and flag update timestamp;
 - last control error class;
 - canonical hit/miss/ambiguity/query-error counters;
 - fallback counters;
-- per-table outcome counts.
+- sanitized per-table outcome counts.
 
-It does not expose the service-role flag reason, owner UUIDs, provider subjects or row contents.
+It does not expose the service-role flag reason, owner UUIDs, provider subjects, row contents or credentials.
 
 ## Rollout and rollback
 
