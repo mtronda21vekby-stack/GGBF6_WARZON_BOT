@@ -49,6 +49,10 @@ def test_migration_is_staged_additive_and_server_authoritative():
     assert "'canonical_lifecycle', false, 'phase_2d_staged_disabled'" in sql
     assert "black_crown_eligible_identity_candidates" in sql
     assert "cardinality(v_candidates)" in sql
+    assert "telegram_user_ids bigint[]" in sql
+    assert "identity.black_crown_user_id = v_owner" in sql
+    assert "identity.provider = 'telegram'" in sql
+    assert "identity.provider_subject ~ '^[1-9][0-9]{0,17}$'" in sql
     assert "p_telegram_user_id" in sql
     assert "p_black_crown_user_id" not in sql
 
@@ -77,15 +81,24 @@ def test_lifecycle_scope_is_canonical_only_after_explicit_enablement():
         "and v_scope.black_crown_user_id is not null"
     )
     assert sql.count(canonical_gate) == 3
-    assert sql.count("or chat_id = p_telegram_user_id") >= 7
+
+    # Canonical mode covers both projected rows and legacy-only rows for every
+    # server-owned Telegram identity already attached to the resolved account.
+    assert sql.count("or chat_id = any(v_scope.telegram_user_ids)") >= 9
+    assert (
+        "where black_crown_user_id = v_scope.black_crown_user_id "
+        "or telegram_user_id = any(v_scope.telegram_user_ids)"
+    ) in sql
+
+    # Disabled, unresolved and conflict paths stay exact-subject only.
     assert sql.count("where chat_id = p_telegram_user_id") >= 7
-    assert "where black_crown_user_id = v_scope.black_crown_user_id or telegram_user_id = p_telegram_user_id" in sql
     assert "where telegram_user_id = p_telegram_user_id" in sql
 
     for marker in (
         "'canonical_scope_applied', v_canonical_scope",
         "'legacy_fallback_applied', not v_canonical_scope",
         "'resolution_state', v_scope.resolution_state",
+        "'linked_telegram_subject_count', cardinality(v_scope.telegram_user_ids)",
     ):
         assert sql.count(marker) == 3
 
