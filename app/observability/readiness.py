@@ -58,6 +58,59 @@ def readiness_snapshot(
         except Exception:
             recovery = {"status": "unavailable"}
 
+    canonical_read_snapshot: dict[str, Any] = {
+        "schema_version": "bco-canonical-read-v1",
+        "capability_enabled": False,
+        "database_flag_enabled": False,
+        "mode": "legacy",
+        "flag_reason": "adapter_unavailable",
+        "flag_updated_at": None,
+        "last_control_error": "",
+        "canonical_hits": 0,
+        "canonical_misses": 0,
+        "canonical_ambiguous": 0,
+        "canonical_query_errors": 0,
+        "legacy_fallbacks": 0,
+        "identity_unresolved_fallbacks": 0,
+        "identity_conflict_fallbacks": 0,
+        "owner_cache_entries": 0,
+        "by_table": {},
+    }
+    canonical_readiness = getattr(store, "canonical_read_status", None)
+    if callable(canonical_readiness):
+        try:
+            raw = dict(canonical_readiness() or {})
+            safe_by_table: dict[str, dict[str, int]] = {}
+            raw_by_table = raw.get("by_table")
+            if isinstance(raw_by_table, dict):
+                for table, outcomes in list(raw_by_table.items())[:32]:
+                    if not isinstance(outcomes, dict):
+                        continue
+                    safe_by_table[str(table)[:64]] = {
+                        str(outcome)[:64]: int(count or 0)
+                        for outcome, count in list(outcomes.items())[:32]
+                    }
+            canonical_read_snapshot = {
+                "schema_version": str(raw.get("schema_version") or "bco-canonical-read-v1")[:64],
+                "capability_enabled": bool(raw.get("capability_enabled", False)),
+                "database_flag_enabled": bool(raw.get("database_flag_enabled", False)),
+                "mode": str(raw.get("mode") or "legacy")[:32],
+                "flag_reason": str(raw.get("flag_reason") or "")[:512],
+                "flag_updated_at": str(raw.get("flag_updated_at") or "")[:64] or None,
+                "last_control_error": str(raw.get("last_control_error") or "")[:64],
+                "canonical_hits": int(raw.get("canonical_hits") or 0),
+                "canonical_misses": int(raw.get("canonical_misses") or 0),
+                "canonical_ambiguous": int(raw.get("canonical_ambiguous") or 0),
+                "canonical_query_errors": int(raw.get("canonical_query_errors") or 0),
+                "legacy_fallbacks": int(raw.get("legacy_fallbacks") or 0),
+                "identity_unresolved_fallbacks": int(raw.get("identity_unresolved_fallbacks") or 0),
+                "identity_conflict_fallbacks": int(raw.get("identity_conflict_fallbacks") or 0),
+                "owner_cache_entries": int(raw.get("owner_cache_entries") or 0),
+                "by_table": safe_by_table,
+            }
+        except Exception as exc:
+            canonical_read_snapshot["last_control_error"] = type(exc).__name__
+
     guard_snapshot: dict[str, Any] = {}
     if usage_guard is not None and callable(getattr(usage_guard, "snapshot", None)):
         try:
@@ -213,9 +266,13 @@ def readiness_snapshot(
         "persistence": "existing_progression_training_episode_store",
     }
 
+    canonical_first_reads = canonical_read_snapshot["mode"] == "canonical_first"
     features = {
         "ai": ai_enabled and ai_configured,
         "persistent_memory_configured": supabase_secret and supabase_url,
+        "canonical_owner_read_capability": canonical_read_snapshot["capability_enabled"],
+        "canonical_owner_first_reads": canonical_first_reads,
+        "canonical_owner_legacy_fallback": True,
         "live_knowledge": bool(getattr(settings, "live_knowledge_enabled", True)),
         "vod": bool(getattr(settings, "vod_enabled", True)),
         "voice": voice_enabled,
@@ -296,6 +353,9 @@ def readiness_snapshot(
         },
         "identity": {
             "resolver_authority": "server",
+            "product_owner_key": "black_crown_user_id",
+            "canonical_read_mode": canonical_read_snapshot["mode"],
+            "canonical_read_client_authority": False,
             "telegram_ai_auth_required": True,
             "client_canonical_user_authority": False,
         },
@@ -310,6 +370,7 @@ def readiness_snapshot(
             "persistent_configured": features["persistent_memory_configured"],
             "resilient_fallback": "Resilient" in storage_class,
             "recovery": recovery,
+            "canonical_read": canonical_read_snapshot,
         },
         "voice_runtime": voice_snapshot,
         "live_intelligence": live_intelligence_snapshot,
