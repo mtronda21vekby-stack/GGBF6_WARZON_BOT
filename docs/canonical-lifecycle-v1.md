@@ -92,12 +92,13 @@ Account unlink remains separate and does not delete Player Brain data.
 ## Deployment compatibility
 
 The runtime calls the new lifecycle RPCs. During the narrow deployment window
-before migration 010 is installed, only a confirmed PostgREST missing-function
-response (`404` with `PGRST202`/`PGRST204`) can use the previous exact legacy
-operation.
+before migration 010 is installed, only the official PostgREST missing-function
+response (`404` with `PGRST202`) can use the previous exact legacy operation.
+Column/request-shape errors such as `PGRST204` remain fail-closed.
 
-Authentication, authorization, transport and server failures never downgrade
-to a direct legacy delete. They propagate to the existing resilient outbox.
+Authentication, authorization, malformed requests, transport and server
+failures never downgrade to a direct legacy delete. They propagate to the
+existing resilient outbox.
 
 ## Privacy-safe readiness
 
