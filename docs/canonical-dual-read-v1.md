@@ -89,6 +89,32 @@ Fresh verification after Phase 2B:
 
 The unresolved historical subject remains legacy-only. Phase 2C does not manufacture an account to improve a percentage.
 
+## Transactional GAME validation
+
+Migration 009 was executed against GAME inside `BEGIN ... ROLLBACK` before opening the PR.
+
+The dry-run proved:
+
+- runtime schema advanced transactionally to `bco-canonical-owner-v3`;
+- canonical read schema reported `bco-canonical-read-v1`;
+- `canonical_dual_read` could be enabled and restored independently;
+- `canonical_dual_write` remained enabled;
+- all 11 expected dual-write triggers remained installed;
+- an existing active Telegram identity resolved to exactly one owner;
+- a missing identity resolved to `unresolved` with zero candidates;
+- browser EXECUTE grants on the read resolver were zero;
+- no raw provider subject or owner UUID was returned as audit evidence;
+- product row counts remained 2 profiles, 172 messages, 5 episodes, 3 progression events, 1 training session, 2 activity rows and 0 entitlements.
+
+Post-rollback verification proved zero residue:
+
+- no `canonical_dual_read` flag row;
+- no `black_crown_resolve_read_owner` function;
+- runtime status restored to `bco-canonical-owner-v2`;
+- no Phase 2C columns remained in the status view;
+- `canonical_dual_write` remained enabled;
+- all product row counts were unchanged.
+
 ## Privacy-safe readiness
 
 `/health/details` reports:
