@@ -160,17 +160,34 @@ def test_readiness_exposes_separate_release_build_and_runtime_truth(monkeypatch)
             "single_runtime": False,
         },
     }
-    assert snapshot["identity"] == {
+
+    # Existing identity fields remain stable; Phase 2C adds only additive,
+    # privacy-safe ownership/read-mode metadata.
+    identity = snapshot["identity"]
+    assert {
+        key: identity[key]
+        for key in (
+            "resolver_authority",
+            "telegram_ai_auth_required",
+            "client_canonical_user_authority",
+        )
+    } == {
         "resolver_authority": "server",
         "telegram_ai_auth_required": True,
         "client_canonical_user_authority": False,
     }
+    assert identity["product_owner_key"] == "black_crown_user_id"
+    assert identity["canonical_read_mode"] == "legacy"
+    assert identity["canonical_read_client_authority"] is False
+
     assert snapshot["entitlements"] == {
         "authority": "server_entitlement_service",
         "configured": True,
         "client_authority": False,
     }
     assert snapshot["storage"]["recovery"]["primary_available"] is True
+    assert snapshot["storage"]["canonical_read"]["mode"] == "legacy"
+    assert snapshot["features"]["canonical_owner_legacy_fallback"] is True
 
     rendered = repr(snapshot)
     assert "never-expose-openai-secret" not in rendered
