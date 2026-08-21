@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -26,6 +26,11 @@ class CanonicalReadShadowStore:
     The wrapper never changes the value returned to product code. Legacy reads
     remain authoritative while sampled canonical reads are compared and emitted
     as content-free telemetry. Shadow failures are isolated from the live read.
+
+    Resolved owner UUIDs are never cached across reads. This prevents a
+    controlled account relink from leaving a window where shadow comparison
+    reads a previous canonical owner. Only unresolved/conflict outcomes use a
+    small bounded cache, and a verified identity refresh invalidates it.
     """
 
     def __init__(
@@ -42,6 +47,8 @@ class CanonicalReadShadowStore:
         self.primary = primary
         self.enabled = bool(enabled)
         self.sample_rate = max(0.0, min(1.0, float(sample_rate or 0.0)))
+        # Retained for configuration compatibility and as an upper bound for
+        # negative caching. Successful owner resolutions are never cached.
         self.identity_cache_ttl_s = max(1.0, float(identity_cache_ttl_s or 120.0))
         self.identity_negative_cache_ttl_s = max(
             0.5,
@@ -55,7 +62,10 @@ class CanonicalReadShadowStore:
             min(int(identity_cache_max_entries or 10_000), 100_000),
         )
         self.telemetry = telemetry or quality_telemetry
-        self._identity_cache: OrderedDict[int, tuple[float, tuple[str, ...]]] = OrderedDict()
+        self._identity_cache: OrderedDict[
+            int,
+            tuple[float, tuple[str, ...]],
+        ] = OrderedDict()
         self._identity_cache_lock = threading.RLock()
         self.telemetry.configure_canonical_read_shadow(
             enabled=self.enabled,
@@ -74,8 +84,14 @@ class CanonicalReadShadowStore:
         return {
             "enabled": self.enabled,
             "sample_rate": self.sample_rate,
+            # Compatibility field: entries are negative resolutions only.
             "identity_cache_entries": self._identity_cache_size(),
+            "negative_identity_cache_entries": self._identity_cache_size(),
             "identity_cache_max_entries": self.identity_cache_max_entries,
+            "identity_negative_cache_ttl_s": (
+                self.identity_negative_cache_ttl_s
+            ),
+            "resolved_identity_cache_enabled": False,
             "returns_legacy": True,
             "canonical_primary_enabled": False,
         }
@@ -83,6 +99,20 @@ class CanonicalReadShadowStore:
     def _identity_cache_size(self) -> int:
         with self._identity_cache_lock:
             return len(self._identity_cache)
+
+    def invalidate_identity_cache(self, telegram_user_id: int) -> None:
+        with self._identity_cache_lock:
+            self._identity_cache.pop(int(telegram_user_id), None)
+
+    def resolve_telegram_identity(self, telegram_user_id: int) -> dict[str, Any]:
+        resolver = getattr(self.primary, "resolve_telegram_identity", None)
+        if not callable(resolver):
+            return {}
+        result = resolver(int(telegram_user_id))
+        # A verified resolver call may have created, activated or relinked an
+        # identity. Any prior unresolved/conflict shadow cache is now stale.
+        self.invalidate_identity_cache(int(telegram_user_id))
+        return dict(result) if isinstance(result, dict) else {}
 
     @staticmethod
     def _cardinality(value: Any) -> int:
@@ -176,13 +206,15 @@ class CanonicalReadShadowStore:
         *,
         now: float,
     ) -> None:
-        ttl = (
-            self.identity_cache_ttl_s
-            if len(candidates) == 1
-            else self.identity_negative_cache_ttl_s
-        )
         with self._identity_cache_lock:
-            self._identity_cache[int(chat_id)] = (now + ttl, candidates)
+            if len(candidates) == 1:
+                # A successful owner is never retained beyond the current read.
+                self._identity_cache.pop(int(chat_id), None)
+                return
+            self._identity_cache[int(chat_id)] = (
+                now + self.identity_negative_cache_ttl_s,
+                candidates,
+            )
             self._identity_cache.move_to_end(int(chat_id))
             while len(self._identity_cache) > self.identity_cache_max_entries:
                 self._identity_cache.popitem(last=False)
