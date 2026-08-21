@@ -66,6 +66,7 @@ jobs:
           strategy_ui=Path('app/webapp/static/bco.strategy.js').read_text()
           orch_ui=Path('app/webapp/static/bco.orchestrator.js').read_text()
           i18n=Path('app/i18n.py').read_text(); web_i18n=Path('app/webapp/static/bco.i18n.js').read_text(); router=Path('app/core/router.py').read_text(); analytics=Path('app/services/analytics/admin_usage.py').read_text(); brain_patch=Path('app/services/brain/locale_patch.py').read_text()
+          admin_console=Path('app/services/telegram/admin_console.py').read_text(); admin_migration=Path('migrations/011_admin_command_center.sql').read_text()
           voice_ui=Path('app/ui/crown_voice_console.py').read_text(); console=Path('app/services/telegram/command_console.py').read_text(); voice_backend=Path('app/services/voice/openai_backend.py').read_text(); bridge=Path('app/services/entitlements/site_bridge.py').read_text(); crown_intel=Path('app/services/brain/crown_intel_runtime.py').read_text(); ledger=Path('app/services/brain/crown_intel_ledger.py').read_text(); engine=Path('app/services/brain/engine.py').read_text(); live=Path('app/services/brain/live_official.py').read_text(); migration=Path('migrations/004_crown_intel_v43_ledger.sql').read_text()
           aaa=Path('app/ui/aaa_console.py').read_text(); aaa_surface=Path('app/services/telegram/aaa_surface.py').read_text(); alert_delivery=Path('app/services/brain/crown_alert_delivery.py').read_text(); war_room=Path('app/webapp/static/bco.war-room.js').read_text(); app_js=Path('app/webapp/static/app.js').read_text()
           console_contract=''.join(console.split())
@@ -79,7 +80,9 @@ jobs:
           assert 'initDataUnsafe?.user?.language_code' in web_i18n
           assert 'document.documentElement.lang = locale' in web_i18n
           assert '/lang_en' in router and '/lang_ru' in router and '/lang_auto' in router
-          assert 'BCO_ADMIN_TELEGRAM_USER_ID' in router and '/adminstats' in router
+          assert 'AdminConsoleController' in router
+          for marker in ('BCO_ADMIN_TELEGRAM_USER_ID','/adminstats','bco:admin:','configured_admin_ids','is_admin_user','ADMIN COMMAND CENTER'): assert marker in admin_console
+          for marker in ('bco_user_activity_daily','bco_admin_dashboard_v1','enable row level security','service_role'): assert marker in admin_migration.lower()
           assert 'server-side Supabase activity ledger' in analytics
           assert 'Respond in English' in brain_patch and 'Respond in Russian' in brain_patch
           for marker in ('CROWN VOICE // LIVE CONTROL','♀ FEMALE','♂ MALE','ON-DEMAND','bco:set:voiceid:female','bco:set:voiceid:male'): assert marker in voice_ui

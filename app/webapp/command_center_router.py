@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -10,6 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.services.after_action import CrownAfterActionService
+from app.services.analytics.admin_usage import AdminUsageAnalytics
 from app.services.analytics.command_center import CommandCenterService
 from app.services.crown_session import CrownSessionService
 from app.services.session_briefing import SessionBriefingService
@@ -73,6 +75,29 @@ def _trusted_identity(init_data: str) -> int:
     return chat_id
 
 
+def _record_miniapp_activity(chat_id: int, user_id: int) -> None:
+    """Record only a server-verified Mini App session signal.
+
+    The browser never supplies analytics identity authority: chat/user IDs come
+    from verified Telegram initData and the canonical owner is projected in
+    Supabase by the server-side ownership trigger.
+    """
+    language = ""
+    if APP_PROFILES is not None:
+        try:
+            profile = dict(APP_PROFILES.get(int(chat_id)) or {})
+            language = str(profile.get("language") or profile.get("language_override") or "")[:16]
+        except Exception:
+            language = ""
+    AdminUsageAnalytics(APP_STORE).record(
+        user_id=int(user_id),
+        chat_id=int(chat_id),
+        language=language,
+        surface="telegram_miniapp",
+        is_miniapp=True,
+    )
+
+
 async def _require_premium(init_data: str, *, feature: str) -> tuple[int, int]:
     chat_id, user_id, _ = _trusted_meta(init_data)
     if APP_ENTITLEMENTS is None:
@@ -114,6 +139,10 @@ def _snapshot_response(init_data: str):
 @router.get("/webapp/api/crown-session")
 async def crown_session_get(x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data")):
     chat_id, user_id, _ = _trusted_meta(x_telegram_init_data or "")
+    try:
+        await asyncio.to_thread(_record_miniapp_activity, chat_id, user_id)
+    except Exception as exc:
+        log.warning("Mini App activity telemetry failed error=%s", type(exc).__name__)
     data = await CrownSessionService(store=APP_STORE, profiles=APP_PROFILES, entitlements=APP_ENTITLEMENTS).snapshot(chat_id=chat_id, telegram_user_id=user_id)
     return _no_store({"ok": True, "trusted": True, "data": data})
 

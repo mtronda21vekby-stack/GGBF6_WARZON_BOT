@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import os
 from typing import Any
 
 from app.core import router_base as _base
 from app.core.router_base import *  # noqa: F401,F403 - compatibility export
 from app.i18n import resolve_locale, telegram_message, telegram_user, tr
 from app.services.analytics.admin_usage import AdminUsageAnalytics
+from app.services.telegram.admin_console import AdminConsoleController
 from app.services.telegram.live_response import TelegramLiveResponse
 
 log = logging.getLogger("router.live")
@@ -78,8 +78,18 @@ class Router(_base.Router):
         if user_id is None or user_id <= 0: return
         msg = telegram_message(update)
         voice = bool(msg.get("voice") or msg.get("audio") or msg.get("video_note") or str(msg.get("_bco_input_mode") or "").startswith("voice"))
+        # Callback data is navigation telemetry, not a user message. The old
+        # bool(text) contract counted every inline-button tap as a message.
+        message_text = str(msg.get("text") or msg.get("caption") or "").strip()
         try:
-            AdminUsageAnalytics(self.store).record(user_id=user_id, chat_id=chat_id, language=locale, surface="telegram_voice" if voice else "telegram", is_message=bool(text), is_voice=voice)
+            AdminUsageAnalytics(self.store).record(
+                user_id=user_id,
+                chat_id=chat_id,
+                language=locale,
+                surface="telegram_voice" if voice else "telegram",
+                is_message=bool(message_text),
+                is_voice=voice,
+            )
         except Exception as exc:
             log.warning("usage analytics record failed error=%s", type(exc).__name__)
 
@@ -93,6 +103,10 @@ class Router(_base.Router):
             profile, locale, user_id = self._locale_profile(int(chat_id), raw, text)
             self._record_activity(user_id=user_id, chat_id=int(chat_id), locale=locale, update=raw, text=text)
 
+            admin = AdminConsoleController(tg=self.tg, store=self.store, profiles=self.profiles, settings=self.settings)
+            if await admin.maybe_handle(raw):
+                return
+
             if text in {"/lang", "/language", "bco:language"}:
                 await self._send_main(int(chat_id), tr(locale, "Язык BLACK CROWN OPS: Русский.\nПереключить: /lang_en\nАвтоопределение: /lang_auto", "BLACK CROWN OPS language: English.\nSwitch: /lang_ru\nAuto-detect: /lang_auto"))
                 return
@@ -102,15 +116,6 @@ class Router(_base.Router):
                 except Exception: pass
                 chosen = patch.get("language") or locale
                 await self._send_main(int(chat_id), tr(chosen, "✅ Вся экосистема переключена на русский.", "✅ The ecosystem is now switched to English."))
-                return
-
-            if text in {"/adminstats", "/admin_stats"}:
-                configured = str(os.getenv("BCO_ADMIN_TELEGRAM_USER_ID") or "").strip()
-                if not configured or str(user_id or "") != configured:
-                    await self._send_main(int(chat_id), tr(locale, "⛔ Команда доступна только владельцу BLACK CROWN OPS.", "⛔ This command is restricted to the BLACK CROWN OPS owner."))
-                    return
-                summary = AdminUsageAnalytics(self.store).summary()
-                await self._send_main(int(chat_id), AdminUsageAnalytics.render(summary, locale))
                 return
 
         await super().handle_update(raw)
