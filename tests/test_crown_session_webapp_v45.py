@@ -39,3 +39,13 @@ def test_server_exposes_trusted_crown_session_endpoint():
     assert '@router.get("/webapp/api/crown-session")' in router
     assert "CrownSessionService" in router
     assert "_trusted_meta" in router
+
+
+def test_crown_session_records_miniapp_activity_only_after_trusted_identity():
+    router = read("app/webapp/command_center_router.py")
+    endpoint = router.split('@router.get("/webapp/api/crown-session")', 1)[1].split('@router.post("/webapp/api/crown-session/prepare")', 1)[0]
+    assert "_trusted_meta" in endpoint
+    assert "_record_miniapp_activity" in endpoint
+    assert endpoint.index("_trusted_meta") < endpoint.index("_record_miniapp_activity")
+    assert 'surface="telegram_miniapp"' in router
+    assert "is_miniapp=True" in router
