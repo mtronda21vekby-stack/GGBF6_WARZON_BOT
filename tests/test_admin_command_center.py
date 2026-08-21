@@ -41,7 +41,7 @@ class FakeStore:
 DASHBOARD = {
     "schema": "bco-admin-dashboard-v1",
     "users": {"tracked_telegram": 7, "unified_known": 5, "canonical_accounts": 5, "active_24h": 3, "active_7d": 4, "active_30d": 5, "new_24h": 1, "new_7d": 2},
-    "activity": {"today_updates": 20, "today_messages": 9, "today_voice": 2, "today_miniapp": 4, "week_updates": 90, "week_messages": 50, "week_voice": 10, "week_miniapp": 15, "total_updates": 120, "total_messages": 70, "total_voice": 13, "total_miniapp": 18, "daily_coverage_days": 4},
+    "activity": {"today_updates": 20, "today_messages": 9, "today_voice": 2, "today_miniapp": 4, "today_miniapp_users": 2, "week_updates": 90, "week_messages": 50, "week_voice": 10, "week_miniapp": 15, "week_miniapp_users": 3, "total_updates": 120, "total_messages": 70, "total_voice": 13, "total_miniapp": 18, "daily_coverage_days": 4},
     "identity": {"accounts": 5, "identities": 6, "resolved": 3, "unresolved": 2, "conflict": 0, "merge_pending": 0, "dual_write": True, "shadow_read": True},
     "premium": {"active_accounts": 1},
     "intel": {"snapshots": 3, "changes": 1, "latest_snapshot_at": "2026-08-20T12:00:00Z", "latest_change_at": "2026-08-20T13:00:00Z"},
@@ -50,9 +50,10 @@ DASHBOARD = {
 
 def test_render_admin_dashboard_has_no_personal_ids():
     text, markup = render_admin_view(DASHBOARD, view="overview", locale="ru", system={"build": {"git_commit_short": "abc123", "exact": True}, "recovery": {"primary_available": True, "last_probe_ok": True, "outbox_pending": 0}})
-    assert "Unified users — 5" in text
+    assert "Уникальные пользователи — 5" in text
     assert "Active 24h — 3" in text
-    assert "Telegram member count ≠" in text
+    assert "Mini App users сегодня — 2" in text
+    assert "Число участников в шапке Telegram ≠" in text
     assert "telegram_user_id" not in text
     assert "black_crown_user_id" not in text
     callbacks = [button["callback_data"] for row in markup["inline_keyboard"] for button in row]
@@ -69,6 +70,12 @@ def test_admin_identity_view_exposes_counts_not_subjects():
     assert "Canonical shadow-read — ON" in text
     assert "Client owner authority — OFF" in text
     assert "provider_subject" not in text
+
+
+def test_admin_users_view_distinguishes_miniapp_users_from_events():
+    text, _ = render_admin_view(DASHBOARD, view="users", locale="ru")
+    assert "Mini App пользователи 24ч — 2" in text
+    assert "Mini App пользователи 7д — 3" in text
 
 
 def test_admin_authority_fails_closed(monkeypatch):
@@ -115,6 +122,7 @@ def test_admin_migration_is_server_only_and_additive():
     sql = Path("migrations/010_admin_command_center.sql").read_text(encoding="utf-8").lower()
     assert "create table if not exists public.bco_user_activity_daily" in sql
     assert "bco_admin_dashboard_v1" in sql
+    assert "today_miniapp_users" in sql and "week_miniapp_users" in sql
     assert "grant execute on function public.bco_admin_dashboard_v1() to service_role" in sql
     assert "revoke all on function public.bco_admin_dashboard_v1() from public, anon, authenticated" in sql
     assert "drop table" not in sql
