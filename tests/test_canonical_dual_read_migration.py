@@ -90,6 +90,9 @@ def test_application_read_path_never_accepts_caller_owner_authority():
     assert "identity_conflict" in router
     assert "canonical_ambiguous" in router
     assert "canonical_query_error" in router
+    assert "coverage_incomplete" in router
+    assert "mapping_conflict" in router
+    assert "schema_mismatch" in router
 
     # Public storage methods continue to receive the legacy trusted Telegram
     # subject only. No method accepts a caller canonical ID argument.
@@ -111,13 +114,19 @@ def test_health_details_exposes_only_privacy_safe_read_metrics():
         '"canonical_owner_read_capability"',
         '"canonical_owner_first_reads"',
         '"canonical_owner_legacy_fallback"',
-        '"canonical_read_client_authority": False',
         '"canonical_read": canonical_read_snapshot',
     ):
         assert marker in readiness
+
+    identity_block = readiness.split('"identity": {', 1)[1].split("},", 1)[0]
+    assert '"product_owner_key"' not in identity_block
+    assert '"canonical_read_mode"' not in identity_block
+    assert '"canonical_read_client_authority"' not in identity_block
 
     assert '"black_crown_user_id":' not in router.split("def snapshot", 1)[1]
     assert '"control_state"' in router
     assert '"canonical_hits"' in router
     assert '"legacy_fallbacks"' in router
+    assert '"coverage_ready_tables"' in router
+    assert '"coverage_blocked_tables"' in router
     assert "rows[0].get(\"reason\")" not in router
