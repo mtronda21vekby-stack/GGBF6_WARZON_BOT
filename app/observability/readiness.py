@@ -58,6 +58,51 @@ def readiness_snapshot(
         except Exception:
             recovery = {"status": "unavailable"}
 
+    lifecycle_snapshot: dict[str, Any] = {
+        "schema": "bco-canonical-lifecycle-v1",
+        "enabled": False,
+        "mode": "legacy_subject",
+        "reason": "adapter_unavailable",
+        "updated_at": None,
+        "dual_write_enabled": False,
+        "shadow_read_enabled": False,
+        "resolved_mappings": 0,
+        "unresolved_mappings": 0,
+        "conflict_mappings": 0,
+        "merge_pending_mappings": 0,
+        "legacy_fallback_available": True,
+        "account_deletion_enabled": False,
+        "identity_deletion_enabled": False,
+        "entitlement_deletion_enabled": False,
+    }
+    lifecycle_readiness = getattr(store, "canonical_lifecycle_status", None)
+    if callable(lifecycle_readiness):
+        try:
+            raw = dict(lifecycle_readiness() or {})
+            lifecycle_snapshot = {
+                "schema": str(raw.get("schema") or "bco-canonical-lifecycle-v1")[:64],
+                "enabled": bool(raw.get("enabled", False)),
+                "mode": str(raw.get("mode") or "legacy_subject")[:32],
+                "reason": str(raw.get("reason") or "")[:128],
+                "updated_at": str(raw.get("updated_at") or "")[:64] or None,
+                "dual_write_enabled": bool(raw.get("dual_write_enabled", False)),
+                "shadow_read_enabled": bool(raw.get("shadow_read_enabled", False)),
+                "resolved_mappings": int(raw.get("resolved_mappings") or 0),
+                "unresolved_mappings": int(raw.get("unresolved_mappings") or 0),
+                "conflict_mappings": int(raw.get("conflict_mappings") or 0),
+                "merge_pending_mappings": int(raw.get("merge_pending_mappings") or 0),
+                "legacy_fallback_available": bool(raw.get("legacy_fallback_available", True)),
+                "account_deletion_enabled": bool(raw.get("account_deletion_enabled", False)),
+                "identity_deletion_enabled": bool(raw.get("identity_deletion_enabled", False)),
+                "entitlement_deletion_enabled": bool(raw.get("entitlement_deletion_enabled", False)),
+            }
+            control_error = str(raw.get("control_error") or "")[:64]
+            if control_error:
+                lifecycle_snapshot["control_error"] = control_error
+        except Exception as exc:
+            lifecycle_snapshot["reason"] = "readiness_unavailable"
+            lifecycle_snapshot["control_error"] = type(exc).__name__[:64]
+
     guard_snapshot: dict[str, Any] = {}
     if usage_guard is not None and callable(getattr(usage_guard, "snapshot", None)):
         try:
@@ -216,6 +261,12 @@ def readiness_snapshot(
     features = {
         "ai": ai_enabled and ai_configured,
         "persistent_memory_configured": supabase_secret and supabase_url,
+        "canonical_lifecycle_contract": callable(lifecycle_readiness),
+        "canonical_lifecycle_enabled": lifecycle_snapshot["enabled"],
+        "canonical_lifecycle_legacy_fallback": lifecycle_snapshot["legacy_fallback_available"],
+        "canonical_lifecycle_preserves_account": not lifecycle_snapshot["account_deletion_enabled"],
+        "canonical_lifecycle_preserves_identity": not lifecycle_snapshot["identity_deletion_enabled"],
+        "canonical_lifecycle_preserves_entitlement": not lifecycle_snapshot["entitlement_deletion_enabled"],
         "live_knowledge": bool(getattr(settings, "live_knowledge_enabled", True)),
         "vod": bool(getattr(settings, "vod_enabled", True)),
         "voice": voice_enabled,
@@ -310,6 +361,7 @@ def readiness_snapshot(
             "persistent_configured": features["persistent_memory_configured"],
             "resilient_fallback": "Resilient" in storage_class,
             "recovery": recovery,
+            "canonical_lifecycle": lifecycle_snapshot,
         },
         "voice_runtime": voice_snapshot,
         "live_intelligence": live_intelligence_snapshot,
