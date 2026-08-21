@@ -123,6 +123,7 @@ def test_canonical_message_hit_uses_server_resolved_owner_only():
     assert snapshot["legacy_fallbacks"] == 0
     assert snapshot["control_state"] == "database_enabled"
     assert "bco_messages" in snapshot["coverage_ready_tables"]
+    assert snapshot["owner_cache_entries"] == 0
     assert OWNER not in repr(snapshot)
     assert sum(request.url.path.endswith("/bco_messages") for request in seen) == 1
 
@@ -330,6 +331,7 @@ def test_unresolved_identity_falls_back_without_querying_another_owner():
         store.close()
 
     assert snapshot["identity_unresolved_fallbacks"] == 1
+    assert snapshot["negative_resolution_cache_entries"] == 1
     assert all(OWNER not in str(request.url) for request in seen)
 
 
@@ -402,6 +404,7 @@ def test_ambiguous_singleton_never_silently_merges_profiles():
     assert profile_queries == 2
     assert snapshot["canonical_ambiguous"] == 1
     assert snapshot["legacy_fallbacks"] == 1
+    assert snapshot["owner_cache_entries"] == 0
 
 
 def test_canonical_query_failure_is_fail_closed_to_legacy():
@@ -429,13 +432,26 @@ def test_canonical_query_failure_is_fail_closed_to_legacy():
 
     assert snapshot["canonical_query_errors"] == 1
     assert snapshot["legacy_fallbacks"] == 1
+    assert snapshot["owner_cache_entries"] == 0
 
 
-def test_server_identity_resolution_primes_owner_cache():
+def test_verified_identity_refresh_invalidates_negative_cache_and_rechecks_owner():
     calls = Counter()
+    owner_resolution_calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal owner_resolution_calls
         calls[request.url.path] += 1
+        if request.url.path.endswith("/rpc/black_crown_resolve_read_owner"):
+            owner_resolution_calls += 1
+            if owner_resolution_calls == 1:
+                return _owner_response(
+                    request,
+                    state="unresolved",
+                    owner=None,
+                    candidate_count=0,
+                )
+            return _owner_response(request)
         if request.url.path.endswith("/rpc/black_crown_resolve_telegram_identity"):
             return httpx.Response(
                 200,
@@ -459,14 +475,44 @@ def test_server_identity_resolution_primes_owner_cache():
 
     store = _store(handler)
     try:
+        assert store._canonical_reads._owner_resolution(12).state == "unresolved"
         assert store.resolve_telegram_identity(12)["black_crown_user_id"] == OWNER
         assert store.get_summary(12) == "shared"
+        snapshot = store._canonical_reads.snapshot(refresh_flag=False)
     finally:
         store.close()
 
-    assert not any(
-        path.endswith("/rpc/black_crown_resolve_read_owner") for path in calls
-    )
+    assert owner_resolution_calls == 2
+    assert snapshot["owner_cache_entries"] == 0
+    assert snapshot["negative_resolution_cache_entries"] == 0
+
+
+def test_each_successful_canonical_read_rechecks_current_owner():
+    owner_resolution_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal owner_resolution_calls
+        if request.url.path.endswith("/black_crown_ownership_runtime_status"):
+            return _control_response(request)
+        if request.url.path.endswith("/rpc/black_crown_resolve_read_owner"):
+            owner_resolution_calls += 1
+            return _owner_response(request)
+        if request.url.path.endswith("/bco_players"):
+            return httpx.Response(
+                200,
+                request=request,
+                json=[{"summary": "shared"}],
+            )
+        raise AssertionError(request.url)
+
+    store = _store(handler)
+    try:
+        assert store.get_summary(13) == "shared"
+        assert store.get_summary(13) == "shared"
+    finally:
+        store.close()
+
+    assert owner_resolution_calls == 2
 
 
 def test_readiness_exposes_privacy_safe_canonical_read_state():
