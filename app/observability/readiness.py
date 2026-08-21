@@ -355,8 +355,6 @@ def readiness_snapshot(
             "resolver_authority": "server",
             "telegram_ai_auth_required": True,
             "client_canonical_user_authority": False,
-            "product_owner_key": "black_crown_user_id",
-            "canonical_read_client_authority": False,
         },
         "entitlements": {
             "authority": "server_entitlement_service",
