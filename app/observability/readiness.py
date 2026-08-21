@@ -353,9 +353,6 @@ def readiness_snapshot(
         },
         "identity": {
             "resolver_authority": "server",
-            "product_owner_key": "black_crown_user_id",
-            "canonical_read_mode": canonical_read_snapshot["mode"],
-            "canonical_read_client_authority": False,
             "telegram_ai_auth_required": True,
             "client_canonical_user_authority": False,
         },
