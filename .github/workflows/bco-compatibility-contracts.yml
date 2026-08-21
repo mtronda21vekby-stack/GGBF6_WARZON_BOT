@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: v30-v36 static compatibility boundaries
         shell: bash
@@ -115,7 +115,7 @@ jobs:
       PRODUCTION_URL: https://ggbf6-warzon-bot.onrender.com
     steps:
       - name: Checkout release contract
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify accumulated v30-v36 production boundaries
         shell: bash
