@@ -23,6 +23,7 @@ The browser and Mini App cannot submit:
 
 - `black_crown_user_id`;
 - lifecycle scope;
+- linked Telegram subjects;
 - conflict resolution;
 - Premium state;
 - an account merge decision.
@@ -33,8 +34,16 @@ Canonical lifecycle scope is allowed only when all three conditions hold:
 2. the Telegram provider subject resolves to exactly one eligible account;
 3. the resolved owner is non-null.
 
-Otherwise the operation uses the exact legacy Telegram subject. A conflict is
-never widened into an account-wide deletion.
+When those conditions hold, GAME derives every eligible numeric Telegram
+identity already owned by that same canonical account. Canonical lifecycle
+operations cover both:
+
+- rows carrying the canonical `black_crown_user_id` projection;
+- historical legacy-only rows belonging to any of those server-owned Telegram
+  identities, even when their owner projection is still null.
+
+Otherwise the operation uses the exact requested legacy Telegram subject. A
+conflict is never widened into an account-wide deletion.
 
 ## Operations
 
@@ -42,9 +51,10 @@ never widened into an account-wide deletion.
 
 `black_crown_clear_conversation(telegram_user_id)` deletes only messages.
 
-- flag disabled/unresolved/conflict: exact `chat_id` rows;
-- enabled and resolved: every message owned by the canonical account plus any
-  remaining exact legacy-subject row.
+- flag disabled/unresolved/conflict: exact requested `chat_id` rows;
+- enabled and resolved: every message owned by the canonical account plus
+  legacy-only message rows for all eligible Telegram identities owned by that
+  account.
 
 ### Reset profile
 
@@ -52,13 +62,15 @@ never widened into an account-wide deletion.
 behavior of removing the player row, which includes profile, summary and
 derived intelligence stored on that row.
 
-- flag disabled/unresolved/conflict: exact `chat_id` row;
+- flag disabled/unresolved/conflict: exact requested `chat_id` row;
 - enabled and resolved: every player row owned by the canonical account plus
-  any remaining exact legacy-subject row.
+  legacy-only player rows for all eligible Telegram identities owned by that
+  account.
 
 ### Purge product data
 
-`black_crown_purge_product_data(telegram_user_id)` covers:
+`black_crown_purge_product_data(telegram_user_id)` applies the same resolved
+canonical-plus-linked-subject scope to:
 
 - messages;
 - recurring mistakes and idempotency receipts;
@@ -97,7 +109,23 @@ to a direct legacy delete. They propagate to the existing resilient outbox.
 - whether legacy fallback is available;
 - explicit false values for account, identity and entitlement deletion.
 
-It contains no owner UUID, Telegram subject, profile, history or secret.
+Lifecycle operation results may expose only the count of linked Telegram
+subjects in scope. They never expose the subjects themselves.
+
+The readiness surface contains no owner UUID, Telegram subject, profile,
+history or secret.
+
+## Validation evidence
+
+Transactional GAME tests cover both projected and legacy-only data:
+
+- disabled mode remains exact-subject only;
+- enabled mode covers two Telegram identities attached to one canonical
+  account;
+- a dedicated test seeded 16 rows with `black_crown_user_id IS NULL` across
+  eight product surfaces and removed all 16 through one canonical purge;
+- account and identity authority rows remained intact;
+- every test transaction was rolled back with zero synthetic residue.
 
 ## Rollback
 
