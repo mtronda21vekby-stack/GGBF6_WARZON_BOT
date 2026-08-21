@@ -119,7 +119,7 @@ def test_non_admin_callback_never_reveals_dashboard(monkeypatch):
 
 
 def test_admin_migration_is_server_only_and_additive():
-    sql = Path("migrations/010_admin_command_center.sql").read_text(encoding="utf-8").lower()
+    sql = Path("migrations/011_admin_command_center.sql").read_text(encoding="utf-8").lower()
     assert "create table if not exists public.bco_user_activity_daily" in sql
     assert "bco_admin_dashboard_v1" in sql
     assert "today_miniapp_users" in sql and "week_miniapp_users" in sql
