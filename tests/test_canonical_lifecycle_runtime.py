@@ -241,6 +241,33 @@ def test_confirmed_missing_rpc_uses_only_staged_legacy_compatibility(
         assert seen[1].url.params.get("black_crown_user_id") is None
 
 
+def test_non_function_postgrest_error_never_downgrades_to_legacy_delete():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            404,
+            request=request,
+            json={
+                "code": "PGRST204",
+                "message": "Could not find a request column",
+            },
+        )
+
+    store = _store(handler)
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            store.clear(92)
+    finally:
+        store.close()
+
+    assert len(seen) == 1
+    assert seen[0].url.path.endswith(
+        "/rpc/black_crown_clear_conversation"
+    )
+
+
 def test_policy_or_server_failure_never_downgrades_to_direct_legacy_delete():
     seen: list[httpx.Request] = []
 
