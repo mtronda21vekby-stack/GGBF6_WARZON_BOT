@@ -4,8 +4,8 @@
 -- not enable canonical primary reads, change product ownership, merge accounts,
 -- transfer entitlements, or rewrite player state.
 --
--- Existing v1 view columns retain their exact names and order. New evidence
--- columns are appended so CREATE OR REPLACE remains non-destructive.
+-- Existing v1 view columns retain their exact names, types and order. New
+-- evidence columns are appended so CREATE OR REPLACE remains non-destructive.
 
 create or replace view public.black_crown_canonical_read_runtime_status
 with (security_invoker = true)
@@ -20,10 +20,10 @@ with flag as (
 ),
 ownership as (
   select
-    count(*) filter (where state = 'resolved')::bigint as resolved_mappings,
-    count(*) filter (where state = 'unresolved')::bigint as unresolved_mappings,
-    count(*) filter (where state = 'conflict')::bigint as conflict_mappings,
-    count(*) filter (where state = 'merge_pending')::bigint as merge_pending_mappings
+    count(*) filter (where state = 'resolved')::integer as resolved_mappings,
+    count(*) filter (where state = 'unresolved')::integer as unresolved_mappings,
+    count(*) filter (where state = 'conflict')::integer as conflict_mappings,
+    count(*) filter (where state = 'merge_pending')::integer as merge_pending_mappings
   from public.black_crown_ownership_migration_state
 ),
 shadow_coverage as (
