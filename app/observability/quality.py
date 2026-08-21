@@ -32,6 +32,10 @@ class QualityTelemetry:
 
     _canonical_read_shadow_enabled: bool = False
     _canonical_read_shadow_sample_rate: float = 0.0
+    _canonical_read_database_enabled: bool | None = None
+    _canonical_read_control_reason: str = ""
+    _canonical_read_control_checked_at: str = ""
+    _canonical_read_control_errors: int = 0
     _canonical_read_events: int = 0
     _canonical_read_comparisons: int = 0
     _canonical_read_latency_ms: int = 0
@@ -84,6 +88,31 @@ class QualityTelemetry:
                 0.0,
                 min(1.0, float(sample_rate or 0.0)),
             )
+
+    def configure_canonical_read_control(
+        self,
+        *,
+        database_enabled: bool | None,
+        reason: str = "",
+        checked_at: str = "",
+        error: str = "",
+    ) -> None:
+        """Record only sanitized operational control state.
+
+        Raw identity values, provider subjects and player payloads are never
+        accepted by this boundary.
+        """
+
+        with self._lock:
+            self._canonical_read_database_enabled = (
+                database_enabled
+                if isinstance(database_enabled, bool)
+                else None
+            )
+            self._canonical_read_control_reason = str(reason or "")[:128]
+            self._canonical_read_control_checked_at = str(checked_at or "")[:64]
+            if error:
+                self._canonical_read_control_errors += 1
 
     def record_canonical_read(
         self,
@@ -145,7 +174,15 @@ class QualityTelemetry:
                 "canonical_read_shadow": {
                     "enabled": self._canonical_read_shadow_enabled,
                     "sample_rate": self._canonical_read_shadow_sample_rate,
+                    "database_enabled": self._canonical_read_database_enabled,
+                    "control_reason": self._canonical_read_control_reason,
+                    "control_checked_at": (
+                        self._canonical_read_control_checked_at or None
+                    ),
+                    "control_errors": self._canonical_read_control_errors,
+                    "read_authority": "legacy",
                     "returns_legacy": True,
+                    "canonical_returned_to_callers": False,
                     "canonical_primary_enabled": False,
                     "events": canonical_events,
                     "comparisons": canonical_comparisons,
