@@ -163,9 +163,10 @@ class CanonicalReadShadowControlStore:
                     "select": (
                         "schema_version,shadow_read_enabled,"
                         "shadow_read_updated_at,dual_write_enabled,"
-                        "resolved_count,unresolved_count,conflict_count,"
-                        "merge_pending_count,shadow_surface_coverage_ready,"
-                        "promotion_ready,promotion_blockers"
+                        "resolved_mappings,unresolved_mappings,"
+                        "conflict_mappings,merge_pending_mappings,"
+                        "shadow_surface_coverage_ready,promotion_ready,"
+                        "promotion_blockers"
                     ),
                     "limit": "1",
                 },
@@ -179,16 +180,16 @@ class CanonicalReadShadowControlStore:
             )
             dual_write_enabled = bool(row.get("dual_write_enabled", False))
             resolved_count = self._safe_nonnegative_int(
-                row.get("resolved_count")
+                row.get("resolved_mappings")
             )
             unresolved_count = self._safe_nonnegative_int(
-                row.get("unresolved_count")
+                row.get("unresolved_mappings")
             )
             conflict_count = self._safe_nonnegative_int(
-                row.get("conflict_count")
+                row.get("conflict_mappings")
             )
             merge_pending_count = self._safe_nonnegative_int(
-                row.get("merge_pending_count")
+                row.get("merge_pending_mappings")
             )
             coverage_ready = bool(
                 row.get("shadow_surface_coverage_ready", False)
