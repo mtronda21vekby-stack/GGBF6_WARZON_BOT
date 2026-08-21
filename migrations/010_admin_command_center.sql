@@ -121,10 +121,12 @@ as $function$
       'today_messages', (select coalesce(sum(message_count),0) from public.bco_user_activity_daily where activity_date = current_date),
       'today_voice', (select coalesce(sum(voice_count),0) from public.bco_user_activity_daily where activity_date = current_date),
       'today_miniapp', (select coalesce(sum(miniapp_count),0) from public.bco_user_activity_daily where activity_date = current_date),
+      'today_miniapp_users', (select count(distinct coalesce(black_crown_user_id::text, 'tg:' || telegram_user_id::text)) from public.bco_user_activity_daily where activity_date = current_date and miniapp_count > 0),
       'week_updates', (select coalesce(sum(update_count),0) from public.bco_user_activity_daily where activity_date >= current_date - 6),
       'week_messages', (select coalesce(sum(message_count),0) from public.bco_user_activity_daily where activity_date >= current_date - 6),
       'week_voice', (select coalesce(sum(voice_count),0) from public.bco_user_activity_daily where activity_date >= current_date - 6),
       'week_miniapp', (select coalesce(sum(miniapp_count),0) from public.bco_user_activity_daily where activity_date >= current_date - 6),
+      'week_miniapp_users', (select count(distinct coalesce(black_crown_user_id::text, 'tg:' || telegram_user_id::text)) from public.bco_user_activity_daily where activity_date >= current_date - 6 and miniapp_count > 0),
       'daily_ledger_started_at', (select min(activity_date) from public.bco_user_activity_daily),
       'daily_coverage_days', (select count(distinct activity_date) from public.bco_user_activity_daily)
     ),
