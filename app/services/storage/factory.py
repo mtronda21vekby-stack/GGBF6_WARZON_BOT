@@ -37,7 +37,7 @@ class PersistentSupabaseStore(SupabaseStore):
     bearer header for backward compatibility.
     """
 
-    _MISSING_RPC_CODES = {"PGRST202", "PGRST204"}
+    _MISSING_RPC_CODE = "PGRST202"
 
     def _headers(self, extra: Mapping[str, str] | None = None) -> dict[str, str]:
         headers = {
@@ -62,23 +62,22 @@ class PersistentSupabaseStore(SupabaseStore):
         response = exc.response
         if response.status_code != 404:
             return False
-        code = ""
-        message = ""
         try:
             payload = response.json()
-            if isinstance(payload, dict):
-                code = str(payload.get("code") or "")
-                message = str(payload.get("message") or "")
         except Exception:
-            message = response.text or ""
-        return code in cls._MISSING_RPC_CODES or "could not find the function" in message.casefold()
+            return False
+        return (
+            isinstance(payload, dict)
+            and str(payload.get("code") or "") == cls._MISSING_RPC_CODE
+        )
 
     def _canonical_lifecycle_rpc(self, rpc_name: str, chat_id: int) -> bool:
         """Run one server-owned lifecycle RPC.
 
-        Only a confirmed missing-RPC response may use the pre-migration legacy
-        path. Authentication, policy, transport and server errors propagate to
-        the resilient outbox rather than silently weakening canonical scope.
+        Only the official PostgREST missing-function code may use the
+        pre-migration legacy path. Authentication, policy, request-shape,
+        transport and server errors propagate to the resilient outbox rather
+        than silently weakening canonical scope.
         """
 
         try:
