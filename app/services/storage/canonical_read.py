@@ -47,7 +47,7 @@ class CanonicalReadRouter:
         self._flag_cache: dict[str, Any] = {
             "expires_at": 0.0,
             "enabled": False,
-            "reason": "not_loaded",
+            "state": "not_loaded",
             "updated_at": "",
             "last_error": "",
         }
@@ -64,7 +64,9 @@ class CanonicalReadRouter:
 
     @staticmethod
     def _content_range_count(response: Any, fallback_rows: list[dict]) -> int:
-        content_range = str(getattr(response, "headers", {}).get("content-range", "") or "")
+        content_range = str(
+            getattr(response, "headers", {}).get("content-range", "") or ""
+        )
         if "/" in content_range:
             tail = content_range.rsplit("/", 1)[-1]
             if tail.isdigit():
@@ -72,6 +74,7 @@ class CanonicalReadRouter:
         return len(fallback_rows)
 
     def _flag_state(self, *, refresh: bool = False) -> tuple[bool, str, str, str]:
+        """Return only privacy-safe control state, never the operator reason."""
         if not self.capability_enabled:
             return False, "capability_disabled", "", ""
 
@@ -81,13 +84,13 @@ class CanonicalReadRouter:
         if not refresh and now < float(cached.get("expires_at") or 0.0):
             return (
                 bool(cached.get("enabled", False)),
-                str(cached.get("reason") or "flag_disabled"),
+                str(cached.get("state") or "database_disabled"),
                 str(cached.get("updated_at") or ""),
                 str(cached.get("last_error") or ""),
             )
 
         enabled = False
-        reason = "flag_missing"
+        state = "flag_missing"
         updated_at = ""
         last_error = ""
         try:
@@ -96,29 +99,29 @@ class CanonicalReadRouter:
                 "black_crown_ownership_runtime_flags",
                 params={
                     "flag_key": "eq.canonical_dual_read",
-                    "select": "enabled,reason,updated_at",
+                    "select": "enabled,updated_at",
                     "limit": "1",
                 },
             )
             rows = self._rows(response)
             if rows:
                 enabled = bool(rows[0].get("enabled", False))
-                reason = str(rows[0].get("reason") or "flag_disabled")[:512]
+                state = "database_enabled" if enabled else "database_disabled"
                 updated_at = str(rows[0].get("updated_at") or "")[:64]
         except Exception as exc:
             last_error = type(exc).__name__
-            reason = "flag_lookup_failed"
+            state = "flag_lookup_failed"
             log.warning("canonical read flag lookup failed error=%s", last_error)
 
         with self._lock:
             self._flag_cache = {
                 "expires_at": now + self.flag_cache_ttl_s,
                 "enabled": enabled,
-                "reason": reason,
+                "state": state,
                 "updated_at": updated_at,
                 "last_error": last_error,
             }
-        return enabled, reason, updated_at, last_error
+        return enabled, state, updated_at, last_error
 
     def _owner_resolution(self, telegram_user_id: int) -> CanonicalOwnerResolution:
         subject = int(telegram_user_id)
@@ -151,17 +154,19 @@ class CanonicalReadRouter:
                     state=state,
                     candidate_count=candidate_count,
                 )
-            else:
-                resolution = CanonicalOwnerResolution(state="error")
         except Exception as exc:
-            log.warning("canonical read owner lookup failed error=%s", type(exc).__name__)
-            resolution = CanonicalOwnerResolution(state="error")
-
-        with self._lock:
-            self._owner_cache[subject] = (
-                now + self.identity_cache_ttl_s,
-                resolution,
+            log.warning(
+                "canonical read owner lookup failed error=%s",
+                type(exc).__name__,
             )
+
+        cache_ttl = (
+            min(self.identity_cache_ttl_s, self.flag_cache_ttl_s)
+            if resolution.state == "error"
+            else self.identity_cache_ttl_s
+        )
+        with self._lock:
+            self._owner_cache[subject] = (now + cache_ttl, resolution)
         return resolution
 
     def prime_telegram_identity(
@@ -212,9 +217,9 @@ class CanonicalReadRouter:
         legacy_column: str = "chat_id",
         singleton: bool = False,
     ) -> list[dict]:
-        enabled, flag_reason, _, flag_error = self._flag_state()
+        enabled, control_state, _, control_error = self._flag_state()
         if not enabled:
-            reason = "flag_error" if flag_error else flag_reason
+            reason = "flag_error" if control_error else control_state
             return self._legacy_rows(
                 table,
                 telegram_user_id,
@@ -293,7 +298,7 @@ class CanonicalReadRouter:
         select_column: str = "id",
         legacy_column: str = "chat_id",
     ) -> int:
-        enabled, flag_reason, _, flag_error = self._flag_state()
+        enabled, control_state, _, control_error = self._flag_state()
         resolution = (
             self._owner_resolution(telegram_user_id)
             if enabled
@@ -332,8 +337,8 @@ class CanonicalReadRouter:
 
         legacy_reason = (
             "flag_error"
-            if flag_error
-            else flag_reason
+            if control_error
+            else control_state
             if not enabled
             else "canonical_count_fallback"
         )
@@ -351,7 +356,7 @@ class CanonicalReadRouter:
         return self._content_range_count(response, self._rows(response))
 
     def snapshot(self, *, refresh_flag: bool = True) -> dict[str, Any]:
-        enabled, reason, updated_at, last_error = self._flag_state(
+        enabled, control_state, updated_at, last_error = self._flag_state(
             refresh=refresh_flag
         )
         with self._lock:
@@ -367,7 +372,7 @@ class CanonicalReadRouter:
             "capability_enabled": self.capability_enabled,
             "database_flag_enabled": enabled,
             "mode": "canonical_first" if enabled else "legacy",
-            "flag_reason": reason[:512],
+            "control_state": control_state[:64],
             "flag_updated_at": updated_at[:64] or None,
             "last_control_error": last_error[:64],
             "canonical_hits": int(totals.get("canonical_hit", 0)),
@@ -375,6 +380,15 @@ class CanonicalReadRouter:
             "canonical_ambiguous": int(totals.get("canonical_ambiguous", 0)),
             "canonical_query_errors": int(
                 totals.get("canonical_query_error", 0)
+            ),
+            "canonical_count_hits": int(
+                totals.get("canonical_count_hit", 0)
+            ),
+            "canonical_count_misses": int(
+                totals.get("canonical_count_miss", 0)
+            ),
+            "canonical_count_errors": int(
+                totals.get("canonical_count_error", 0)
             ),
             "legacy_fallbacks": int(
                 sum(
