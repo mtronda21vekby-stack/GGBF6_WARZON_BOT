@@ -29,6 +29,11 @@ class InMemoryStore:
         self._training: dict[int, list[dict]] = defaultdict(list)
         self._progression: dict[int, list[dict]] = defaultdict(list)
 
+    # Canonical identity ---------------------------------------------
+    def resolve_telegram_identity(self, telegram_user_id: int) -> dict[str, Any]:
+        # The in-process fallback never manufactures canonical accounts.
+        return {}
+
     # Working memory -------------------------------------------------
     def add(self, chat_id: int, role: str, content: Any) -> None:
         cid = int(chat_id)

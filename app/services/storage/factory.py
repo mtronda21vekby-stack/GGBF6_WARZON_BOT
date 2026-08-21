@@ -2,14 +2,29 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Mapping
 
+from app.services.storage.canonical_shadow import CanonicalReadShadowStore
+from app.services.storage.canonical_shadow_control import (
+    CanonicalReadShadowControlStore,
+)
 from app.services.storage.memory import InMemoryStore
 from app.services.storage.resilient import ResilientStore
 from app.services.storage.supabase import SupabaseStore
 
 
 log = logging.getLogger("bco.storage")
+
+
+def _env_on(name: str, default: str = "1") -> bool:
+    return os.getenv(name, default).strip().casefold() not in {
+        "0",
+        "false",
+        "off",
+        "no",
+        "",
+    }
 
 
 class PersistentSupabaseStore(SupabaseStore):
@@ -51,6 +66,34 @@ class PersistentResilientStore(ResilientStore):
     def purge_player(self, chat_id: int) -> None:
         self._write("purge_player", chat_id)
 
+    def resolve_telegram_identity(self, telegram_user_id: int) -> dict[str, Any]:
+        """Expose the server resolver through the resilient storage boundary."""
+
+        return dict(
+            self._read("resolve_telegram_identity", int(telegram_user_id))
+            or {}
+        )
+
+    def canonical_read_shadow_status(self) -> dict[str, Any]:
+        status = getattr(self.primary, "canonical_read_shadow_status", None)
+        if not callable(status):
+            return {
+                "schema": "bco-canonical-read-shadow-v1",
+                "enabled": False,
+                "returns_legacy": True,
+                "canonical_primary_enabled": False,
+            }
+        try:
+            return dict(status() or {})
+        except Exception as exc:
+            return {
+                "schema": "bco-canonical-read-shadow-v1",
+                "enabled": False,
+                "returns_legacy": True,
+                "canonical_primary_enabled": False,
+                "control_error": type(exc).__name__[:64],
+            }
+
 
 def build_store(settings: Any):
     """Build optional persistent storage with in-process recovery fallback."""
@@ -78,19 +121,58 @@ def build_store(settings: Any):
         return memory
 
     try:
-        primary = PersistentSupabaseStore(
+        persistent = PersistentSupabaseStore(
             url=url,
             service_role_key=key,
             memory_max_turns=getattr(settings, "memory_max_turns", 20),
             schema=str(getattr(settings, "supabase_schema", "public") or "public"),
             timeout_s=float(getattr(settings, "storage_timeout_s", 8.0) or 8.0),
         )
+        shadow_enabled = _env_on("CANONICAL_READ_SHADOW_ENABLED")
+        shadow_sample_rate = float(
+            os.getenv("CANONICAL_READ_SHADOW_SAMPLE_RATE", "0.10")
+            or "0.10"
+        )
+        shadow_identity_ttl_s = float(
+            os.getenv("CANONICAL_READ_SHADOW_IDENTITY_TTL_S", "120")
+            or "120"
+        )
+        shadow_negative_ttl_s = float(
+            os.getenv("CANONICAL_READ_SHADOW_NEGATIVE_TTL_S", "5")
+            or "5"
+        )
+        shadow_cache_max_entries = int(
+            os.getenv("CANONICAL_READ_SHADOW_CACHE_MAX_ENTRIES", "10000")
+            or "10000"
+        )
+        shadow_flag_ttl_s = float(
+            os.getenv("CANONICAL_READ_SHADOW_FLAG_TTL_S", "30")
+            or "30"
+        )
+        shadow = CanonicalReadShadowStore(
+            persistent,
+            enabled=shadow_enabled,
+            sample_rate=shadow_sample_rate,
+            identity_cache_ttl_s=shadow_identity_ttl_s,
+            identity_negative_cache_ttl_s=shadow_negative_ttl_s,
+            identity_cache_max_entries=shadow_cache_max_entries,
+        )
+        primary = CanonicalReadShadowControlStore(
+            shadow,
+            flag_ttl_s=shadow_flag_ttl_s,
+        )
         outbox_max = int(getattr(settings, "storage_outbox_max", 500) or 500)
         replay_batch = int(getattr(settings, "storage_replay_batch", 50) or 50)
         credential_kind = "secret" if key.startswith("sb_secret_") else "legacy_or_unknown"
         log.info(
-            "storage backend=supabase credential=%s resilient_fallback=memory outbox_max=%d replay_batch=%d",
-            credential_kind, outbox_max, replay_batch,
+            "storage backend=supabase credential=%s resilient_fallback=memory "
+            "outbox_max=%d replay_batch=%d canonical_shadow_local=%s "
+            "canonical_shadow_sample=%.3f",
+            credential_kind,
+            outbox_max,
+            replay_batch,
+            shadow_enabled,
+            max(0.0, min(1.0, shadow_sample_rate)),
         )
         return PersistentResilientStore(
             primary=primary,
