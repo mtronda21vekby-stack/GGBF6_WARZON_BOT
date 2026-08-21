@@ -25,9 +25,15 @@ class CanonicalReadRouter:
     The caller supplies only the verified Telegram subject already used by the
     legacy storage API. Canonical identity is resolved through a service-role
     RPC; browser/profile supplied owner IDs never enter this boundary.
+
+    Canonical reads are permitted only when the server status contract proves
+    schema compatibility, zero identity conflicts and complete projection for
+    the requested table. Any missing evidence fails closed to the exact legacy
+    subject rather than returning a partial canonical history.
     """
 
     SCHEMA_VERSION = "bco-canonical-read-v1"
+    RUNTIME_SCHEMA = "bco-canonical-owner-v3"
 
     def __init__(
         self,
@@ -44,16 +50,33 @@ class CanonicalReadRouter:
         self.flag_cache_ttl_s = max(1.0, float(flag_cache_ttl_s or 15.0))
         self.identity_cache_ttl_s = max(1.0, float(identity_cache_ttl_s or 120.0))
         self._lock = threading.RLock()
-        self._flag_cache: dict[str, Any] = {
-            "expires_at": 0.0,
-            "enabled": False,
-            "state": "not_loaded",
-            "updated_at": "",
-            "last_error": "",
-        }
+        self._control_cache: dict[str, Any] = self._empty_control(
+            state="not_loaded"
+        )
         self._owner_cache: dict[int, tuple[float, CanonicalOwnerResolution]] = {}
         self._totals: Counter[str] = Counter()
         self._by_table: dict[str, Counter[str]] = defaultdict(Counter)
+
+    @classmethod
+    def _empty_control(
+        cls,
+        *,
+        state: str,
+        last_error: str = "",
+    ) -> dict[str, Any]:
+        return {
+            "expires_at": 0.0,
+            "database_flag_enabled": False,
+            "effective_enabled": False,
+            "state": str(state or "unavailable")[:64],
+            "updated_at": "",
+            "last_error": str(last_error or "")[:64],
+            "runtime_schema": "",
+            "read_schema": "",
+            "coverage": {},
+            "mapping_conflicts": 0,
+            "merge_pending": 0,
+        }
 
     def _record(self, table: str, outcome: str) -> None:
         safe_table = str(table or "unknown")[:64]
@@ -73,55 +96,147 @@ class CanonicalReadRouter:
                 return int(tail)
         return len(fallback_rows)
 
-    def _flag_state(self, *, refresh: bool = False) -> tuple[bool, str, str, str]:
-        """Return only privacy-safe control state, never the operator reason."""
+    @staticmethod
+    def _safe_nonnegative_int(value: Any) -> int:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def _control_state(self, *, refresh: bool = False) -> dict[str, Any]:
+        """Read privacy-safe server control state; never expose flag reason."""
         if not self.capability_enabled:
-            return False, "capability_disabled", "", ""
+            return self._empty_control(state="capability_disabled")
 
         now = time.monotonic()
         with self._lock:
-            cached = dict(self._flag_cache)
+            cached = dict(self._control_cache)
         if not refresh and now < float(cached.get("expires_at") or 0.0):
-            return (
-                bool(cached.get("enabled", False)),
-                str(cached.get("state") or "database_disabled"),
-                str(cached.get("updated_at") or ""),
-                str(cached.get("last_error") or ""),
-            )
+            return cached
 
-        enabled = False
-        state = "flag_missing"
-        updated_at = ""
-        last_error = ""
+        control = self._empty_control(state="status_missing")
         try:
             response = self._request(
                 "GET",
-                "black_crown_ownership_runtime_flags",
+                "black_crown_ownership_runtime_status",
                 params={
-                    "flag_key": "eq.canonical_dual_read",
-                    "select": "enabled,updated_at",
+                    "select": (
+                        "schema_version,canonical_dual_read_enabled,"
+                        "canonical_dual_read_updated_at,canonical_read_schema,"
+                        "coverage,mapping_state"
+                    ),
                     "limit": "1",
                 },
             )
             rows = self._rows(response)
             if rows:
-                enabled = bool(rows[0].get("enabled", False))
-                state = "database_enabled" if enabled else "database_disabled"
-                updated_at = str(rows[0].get("updated_at") or "")[:64]
-        except Exception as exc:
-            last_error = type(exc).__name__
-            state = "flag_lookup_failed"
-            log.warning("canonical read flag lookup failed error=%s", last_error)
+                raw = dict(rows[0])
+                database_flag_enabled = bool(
+                    raw.get("canonical_dual_read_enabled", False)
+                )
+                runtime_schema = str(raw.get("schema_version") or "")[:64]
+                read_schema = str(raw.get("canonical_read_schema") or "")[:64]
+                updated_at = str(
+                    raw.get("canonical_dual_read_updated_at") or ""
+                )[:64]
 
+                coverage: dict[str, dict[str, int]] = {}
+                raw_coverage = raw.get("coverage")
+                if isinstance(raw_coverage, dict):
+                    for table, values in list(raw_coverage.items())[:64]:
+                        if not isinstance(values, dict):
+                            continue
+                        coverage[str(table)[:64]] = {
+                            "total_rows": self._safe_nonnegative_int(
+                                values.get("total_rows")
+                            ),
+                            "canonical_rows": self._safe_nonnegative_int(
+                                values.get("canonical_rows")
+                            ),
+                            "legacy_only_rows": self._safe_nonnegative_int(
+                                values.get("legacy_only_rows")
+                            ),
+                        }
+
+                raw_mapping = raw.get("mapping_state")
+                mapping = raw_mapping if isinstance(raw_mapping, dict) else {}
+                mapping_conflicts = self._safe_nonnegative_int(
+                    mapping.get("conflict")
+                )
+                merge_pending = self._safe_nonnegative_int(
+                    mapping.get("merge_pending")
+                )
+
+                schema_ok = (
+                    runtime_schema == self.RUNTIME_SCHEMA
+                    and read_schema == self.SCHEMA_VERSION
+                )
+                mapping_ok = mapping_conflicts == 0 and merge_pending == 0
+                effective_enabled = (
+                    database_flag_enabled and schema_ok and mapping_ok
+                )
+
+                if not schema_ok:
+                    state = "schema_mismatch"
+                elif not mapping_ok:
+                    state = "mapping_conflict"
+                elif database_flag_enabled:
+                    state = "database_enabled"
+                else:
+                    state = "database_disabled"
+
+                control = {
+                    "expires_at": now + self.flag_cache_ttl_s,
+                    "database_flag_enabled": database_flag_enabled,
+                    "effective_enabled": effective_enabled,
+                    "state": state,
+                    "updated_at": updated_at,
+                    "last_error": "",
+                    "runtime_schema": runtime_schema,
+                    "read_schema": read_schema,
+                    "coverage": coverage,
+                    "mapping_conflicts": mapping_conflicts,
+                    "merge_pending": merge_pending,
+                }
+        except Exception as exc:
+            error_class = type(exc).__name__
+            control = self._empty_control(
+                state="status_lookup_failed",
+                last_error=error_class,
+            )
+            control["expires_at"] = now + self.flag_cache_ttl_s
+            log.warning(
+                "canonical read status lookup failed error=%s",
+                error_class,
+            )
+
+        if not control.get("expires_at"):
+            control["expires_at"] = now + self.flag_cache_ttl_s
         with self._lock:
-            self._flag_cache = {
-                "expires_at": now + self.flag_cache_ttl_s,
-                "enabled": enabled,
-                "state": state,
-                "updated_at": updated_at,
-                "last_error": last_error,
-            }
-        return enabled, state, updated_at, last_error
+            self._control_cache = dict(control)
+        return dict(control)
+
+    def _table_parity(
+        self,
+        control: Mapping[str, Any],
+        table: str,
+    ) -> tuple[bool, str]:
+        raw_coverage = control.get("coverage")
+        coverage = raw_coverage if isinstance(raw_coverage, dict) else {}
+        values = coverage.get(str(table))
+        if not isinstance(values, dict):
+            return False, "coverage_missing"
+
+        total_rows = self._safe_nonnegative_int(values.get("total_rows"))
+        canonical_rows = self._safe_nonnegative_int(
+            values.get("canonical_rows")
+        )
+        legacy_only_rows = self._safe_nonnegative_int(
+            values.get("legacy_only_rows")
+        )
+        if legacy_only_rows != 0 or canonical_rows != total_rows:
+            return False, "coverage_incomplete"
+        return True, "coverage_complete"
 
     def _owner_resolution(self, telegram_user_id: int) -> CanonicalOwnerResolution:
         subject = int(telegram_user_id)
@@ -142,7 +257,9 @@ class CanonicalReadRouter:
             raw = dict(rows[0]) if rows else {}
             state = str(raw.get("resolution_state") or "unresolved")
             owner = str(raw.get("black_crown_user_id") or "")
-            candidate_count = max(0, int(raw.get("candidate_count") or 0))
+            candidate_count = self._safe_nonnegative_int(
+                raw.get("candidate_count")
+            )
             if state == "resolved" and owner and candidate_count == 1:
                 resolution = CanonicalOwnerResolution(
                     state="resolved",
@@ -217,15 +334,24 @@ class CanonicalReadRouter:
         legacy_column: str = "chat_id",
         singleton: bool = False,
     ) -> list[dict]:
-        enabled, control_state, _, control_error = self._flag_state()
-        if not enabled:
-            reason = "flag_error" if control_error else control_state
+        control = self._control_state()
+        if not bool(control.get("effective_enabled", False)):
             return self._legacy_rows(
                 table,
                 telegram_user_id,
                 params,
                 legacy_column=legacy_column,
-                reason=reason,
+                reason=str(control.get("state") or "control_unavailable"),
+            )
+
+        parity_ok, parity_state = self._table_parity(control, table)
+        if not parity_ok:
+            return self._legacy_rows(
+                table,
+                telegram_user_id,
+                params,
+                legacy_column=legacy_column,
+                reason=parity_state,
             )
 
         resolution = self._owner_resolution(telegram_user_id)
@@ -298,14 +424,16 @@ class CanonicalReadRouter:
         select_column: str = "id",
         legacy_column: str = "chat_id",
     ) -> int:
-        enabled, control_state, _, control_error = self._flag_state()
+        control = self._control_state()
+        effective_enabled = bool(control.get("effective_enabled", False))
+        parity_ok, parity_state = self._table_parity(control, table)
         resolution = (
             self._owner_resolution(telegram_user_id)
-            if enabled
+            if effective_enabled and parity_ok
             else CanonicalOwnerResolution(state="disabled")
         )
 
-        if enabled and resolution.state == "resolved":
+        if effective_enabled and parity_ok and resolution.state == "resolved":
             try:
                 response = self._request(
                     "GET",
@@ -332,17 +460,18 @@ class CanonicalReadRouter:
                     str(table or "unknown")[:64],
                     type(exc).__name__,
                 )
-        elif enabled:
+        elif effective_enabled and parity_ok:
             self._record(table, f"canonical_count_{resolution.state}")
 
-        legacy_reason = (
-            "flag_error"
-            if control_error
-            else control_state
-            if not enabled
-            else "canonical_count_fallback"
-        )
-        self._record(table, f"legacy_count_{legacy_reason}")
+        if not effective_enabled:
+            fallback_reason = str(
+                control.get("state") or "control_unavailable"
+            )
+        elif not parity_ok:
+            fallback_reason = parity_state
+        else:
+            fallback_reason = "canonical_count_fallback"
+        self._record(table, f"legacy_count_{fallback_reason}")
         response = self._request(
             "GET",
             table,
@@ -356,9 +485,15 @@ class CanonicalReadRouter:
         return self._content_range_count(response, self._rows(response))
 
     def snapshot(self, *, refresh_flag: bool = True) -> dict[str, Any]:
-        enabled, control_state, updated_at, last_error = self._flag_state(
-            refresh=refresh_flag
-        )
+        control = self._control_state(refresh=refresh_flag)
+        raw_coverage = control.get("coverage")
+        coverage = raw_coverage if isinstance(raw_coverage, dict) else {}
+        ready_tables: list[str] = []
+        blocked_tables: list[str] = []
+        for table in sorted(coverage)[:64]:
+            parity_ok, _ = self._table_parity(control, table)
+            (ready_tables if parity_ok else blocked_tables).append(table[:64])
+
         with self._lock:
             totals = dict(self._totals)
             by_table = {
@@ -367,14 +502,33 @@ class CanonicalReadRouter:
             }
             owner_cache_entries = len(self._owner_cache)
 
+        control_state = str(control.get("state") or "unavailable")[:64]
+        effective_enabled = bool(control.get("effective_enabled", False))
         return {
             "schema_version": self.SCHEMA_VERSION,
+            "runtime_schema": str(control.get("runtime_schema") or "")[:64],
             "capability_enabled": self.capability_enabled,
-            "database_flag_enabled": enabled,
-            "mode": "canonical_first" if enabled else "legacy",
-            "control_state": control_state[:64],
-            "flag_updated_at": updated_at[:64] or None,
-            "last_control_error": last_error[:64],
+            "database_flag_enabled": bool(
+                control.get("database_flag_enabled", False)
+            ),
+            "effective_enabled": effective_enabled,
+            "mode": "canonical_first" if effective_enabled else "legacy",
+            "control_state": control_state,
+            # Compatibility alias consumed by the current readiness serializer;
+            # this is a stable code, never the database operator reason.
+            "flag_reason": control_state,
+            "flag_updated_at": str(control.get("updated_at") or "")[:64] or None,
+            "last_control_error": str(
+                control.get("last_error") or ""
+            )[:64],
+            "mapping_conflicts": self._safe_nonnegative_int(
+                control.get("mapping_conflicts")
+            ),
+            "merge_pending": self._safe_nonnegative_int(
+                control.get("merge_pending")
+            ),
+            "coverage_ready_tables": ready_tables,
+            "coverage_blocked_tables": blocked_tables,
             "canonical_hits": int(totals.get("canonical_hit", 0)),
             "canonical_misses": int(totals.get("canonical_miss", 0)),
             "canonical_ambiguous": int(totals.get("canonical_ambiguous", 0)),
@@ -397,6 +551,10 @@ class CanonicalReadRouter:
                     if outcome.startswith("legacy_fallback_")
                     or outcome.startswith("legacy_count_")
                 )
+            ),
+            "coverage_incomplete_fallbacks": int(
+                totals.get("legacy_fallback_coverage_incomplete", 0)
+                + totals.get("legacy_count_coverage_incomplete", 0)
             ),
             "identity_unresolved_fallbacks": int(
                 totals.get("legacy_fallback_identity_unresolved", 0)
