@@ -4,7 +4,18 @@ from __future__ import annotations
 import threading
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
+
+
+_CANONICAL_PROMOTION_BLOCKERS = {
+    "shadow_disabled",
+    "dual_write_disabled",
+    "identity_conflict",
+    "merge_pending",
+    "coverage_incomplete",
+    "schema_mismatch",
+    "control_error",
+}
 
 
 @dataclass
@@ -36,6 +47,11 @@ class QualityTelemetry:
     _canonical_read_control_reason: str = ""
     _canonical_read_control_checked_at: str = ""
     _canonical_read_control_errors: int = 0
+    _canonical_read_promotion_ready: bool = False
+    _canonical_read_coverage_ready: bool = False
+    _canonical_read_promotion_blockers: tuple[str, ...] = ()
+    _canonical_read_conflict_count: int = 0
+    _canonical_read_merge_pending_count: int = 0
     _canonical_read_events: int = 0
     _canonical_read_comparisons: int = 0
     _canonical_read_latency_ms: int = 0
@@ -89,6 +105,16 @@ class QualityTelemetry:
                 min(1.0, float(sample_rate or 0.0)),
             )
 
+    @staticmethod
+    def _sanitize_promotion_blockers(
+        blockers: Iterable[Any] | None,
+    ) -> tuple[str, ...]:
+        safe = {
+            str(item or "").strip().casefold()
+            for item in (blockers or ())
+        }
+        return tuple(sorted(safe & _CANONICAL_PROMOTION_BLOCKERS))
+
     def configure_canonical_read_control(
         self,
         *,
@@ -96,11 +122,17 @@ class QualityTelemetry:
         reason: str = "",
         checked_at: str = "",
         error: str = "",
+        promotion_ready: bool = False,
+        coverage_ready: bool = False,
+        promotion_blockers: Iterable[Any] | None = None,
+        conflict_count: int = 0,
+        merge_pending_count: int = 0,
     ) -> None:
         """Record only sanitized operational control state.
 
-        Raw identity values, provider subjects and player payloads are never
-        accepted by this boundary.
+        Raw identity values, provider subjects, database operator notes and
+        player payloads are never accepted by this boundary. `reason` is a
+        stable application state code, not the free-form database flag reason.
         """
 
         with self._lock:
@@ -111,6 +143,19 @@ class QualityTelemetry:
             )
             self._canonical_read_control_reason = str(reason or "")[:128]
             self._canonical_read_control_checked_at = str(checked_at or "")[:64]
+            self._canonical_read_promotion_ready = bool(promotion_ready)
+            self._canonical_read_coverage_ready = bool(coverage_ready)
+            self._canonical_read_promotion_blockers = (
+                self._sanitize_promotion_blockers(promotion_blockers)
+            )
+            self._canonical_read_conflict_count = max(
+                0,
+                int(conflict_count or 0),
+            )
+            self._canonical_read_merge_pending_count = max(
+                0,
+                int(merge_pending_count or 0),
+            )
             if error:
                 self._canonical_read_control_errors += 1
 
@@ -180,6 +225,15 @@ class QualityTelemetry:
                         self._canonical_read_control_checked_at or None
                     ),
                     "control_errors": self._canonical_read_control_errors,
+                    "promotion_ready": self._canonical_read_promotion_ready,
+                    "promotion_blockers": list(
+                        self._canonical_read_promotion_blockers
+                    ),
+                    "coverage_ready": self._canonical_read_coverage_ready,
+                    "identity_conflicts": self._canonical_read_conflict_count,
+                    "merge_pending": (
+                        self._canonical_read_merge_pending_count
+                    ),
                     "read_authority": "legacy",
                     "returns_legacy": True,
                     "canonical_returned_to_callers": False,
