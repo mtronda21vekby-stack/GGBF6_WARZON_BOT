@@ -180,16 +180,19 @@ class CanonicalReadShadowControlStore:
             )
             dual_write_enabled = bool(row.get("dual_write_enabled", False))
             resolved_count = self._safe_nonnegative_int(
-                row.get("resolved_mappings")
+                row.get("resolved_mappings", row.get("resolved_count"))
             )
             unresolved_count = self._safe_nonnegative_int(
-                row.get("unresolved_mappings")
+                row.get("unresolved_mappings", row.get("unresolved_count"))
             )
             conflict_count = self._safe_nonnegative_int(
-                row.get("conflict_mappings")
+                row.get("conflict_mappings", row.get("conflict_count"))
             )
             merge_pending_count = self._safe_nonnegative_int(
-                row.get("merge_pending_mappings")
+                row.get(
+                    "merge_pending_mappings",
+                    row.get("merge_pending_count"),
+                )
             )
             coverage_ready = bool(
                 row.get("shadow_surface_coverage_ready", False)
