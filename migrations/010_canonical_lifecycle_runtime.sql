@@ -110,7 +110,8 @@ create or replace function public.black_crown_resolve_lifecycle_scope(
 returns table (
   lifecycle_enabled boolean,
   resolution_state text,
-  black_crown_user_id uuid
+  black_crown_user_id uuid,
+  telegram_user_ids bigint[]
 )
 language plpgsql
 security definer
@@ -118,12 +119,16 @@ set search_path = public, pg_temp
 as $function$
 declare
   v_candidates uuid[] := array[]::uuid[];
+  v_owner uuid;
+  v_linked_subjects bigint[] := array[]::bigint[];
 begin
   if p_telegram_user_id is null or p_telegram_user_id <= 0 then
     raise exception using
       errcode = '22023',
       message = 'valid Telegram user ID is required';
   end if;
+
+  telegram_user_ids := array[p_telegram_user_id]::bigint[];
 
   select coalesce(flags.enabled, false)
   into lifecycle_enabled
@@ -141,10 +146,40 @@ begin
     when 1 then 'resolved'
     else 'conflict'
   end;
-  black_crown_user_id := case
-    when cardinality(v_candidates) = 1 then v_candidates[1]
-    else null
-  end;
+
+  if cardinality(v_candidates) = 1 then
+    v_owner := v_candidates[1];
+    black_crown_user_id := v_owner;
+
+    select coalesce(
+      array_agg(
+        distinct identity.provider_subject::bigint
+        order by identity.provider_subject::bigint
+      ),
+      array[]::bigint[]
+    )
+    into v_linked_subjects
+    from public.black_crown_identities as identity
+    join public.black_crown_accounts as account
+      on account.black_crown_user_id = identity.black_crown_user_id
+    where identity.black_crown_user_id = v_owner
+      and identity.provider = 'telegram'
+      and identity.status in ('active', 'provisional')
+      and account.account_status in ('active', 'provisional')
+      and identity.provider_subject ~ '^[1-9][0-9]{0,17}$';
+
+    select coalesce(
+      array_agg(distinct subject order by subject),
+      array[p_telegram_user_id]::bigint[]
+    )
+    into telegram_user_ids
+    from unnest(
+      coalesce(v_linked_subjects, array[]::bigint[])
+      || array[p_telegram_user_id]::bigint[]
+    ) as linked(subject);
+  else
+    black_crown_user_id := null;
+  end if;
 
   return next;
 end;
@@ -180,7 +215,7 @@ begin
   if v_canonical_scope then
     delete from public.bco_messages
     where black_crown_user_id = v_scope.black_crown_user_id
-       or chat_id = p_telegram_user_id;
+       or chat_id = any(v_scope.telegram_user_ids);
   else
     delete from public.bco_messages
     where chat_id = p_telegram_user_id;
@@ -195,6 +230,7 @@ begin
     'resolution_state', v_scope.resolution_state,
     'canonical_scope_applied', v_canonical_scope,
     'legacy_fallback_applied', not v_canonical_scope,
+    'linked_telegram_subject_count', cardinality(v_scope.telegram_user_ids),
     'deleted_rows', v_deleted
   );
 end;
@@ -225,7 +261,7 @@ begin
   if v_canonical_scope then
     delete from public.bco_players
     where black_crown_user_id = v_scope.black_crown_user_id
-       or chat_id = p_telegram_user_id;
+       or chat_id = any(v_scope.telegram_user_ids);
   else
     delete from public.bco_players
     where chat_id = p_telegram_user_id;
@@ -240,6 +276,7 @@ begin
     'resolution_state', v_scope.resolution_state,
     'canonical_scope_applied', v_canonical_scope,
     'legacy_fallback_applied', not v_canonical_scope,
+    'linked_telegram_subject_count', cardinality(v_scope.telegram_user_ids),
     'deleted_rows', v_deleted
   );
 end;
@@ -271,7 +308,7 @@ begin
   if v_canonical_scope then
     delete from public.bco_messages
     where black_crown_user_id = v_scope.black_crown_user_id
-       or chat_id = p_telegram_user_id;
+       or chat_id = any(v_scope.telegram_user_ids);
   else
     delete from public.bco_messages where chat_id = p_telegram_user_id;
   end if;
@@ -281,7 +318,7 @@ begin
   if v_canonical_scope then
     delete from public.bco_player_mistakes
     where black_crown_user_id = v_scope.black_crown_user_id
-       or chat_id = p_telegram_user_id;
+       or chat_id = any(v_scope.telegram_user_ids);
   else
     delete from public.bco_player_mistakes where chat_id = p_telegram_user_id;
   end if;
@@ -291,7 +328,7 @@ begin
   if v_canonical_scope then
     delete from public.bco_mistake_receipts
     where black_crown_user_id = v_scope.black_crown_user_id
-       or chat_id = p_telegram_user_id;
+       or chat_id = any(v_scope.telegram_user_ids);
   else
     delete from public.bco_mistake_receipts where chat_id = p_telegram_user_id;
   end if;
@@ -301,7 +338,7 @@ begin
   if v_canonical_scope then
     delete from public.bco_episodes
     where black_crown_user_id = v_scope.black_crown_user_id
-       or chat_id = p_telegram_user_id;
+       or chat_id = any(v_scope.telegram_user_ids);
   else
     delete from public.bco_episodes where chat_id = p_telegram_user_id;
   end if;
@@ -311,7 +348,7 @@ begin
   if v_canonical_scope then
     delete from public.bco_training_sessions
     where black_crown_user_id = v_scope.black_crown_user_id
-       or chat_id = p_telegram_user_id;
+       or chat_id = any(v_scope.telegram_user_ids);
   else
     delete from public.bco_training_sessions where chat_id = p_telegram_user_id;
   end if;
@@ -321,7 +358,7 @@ begin
   if v_canonical_scope then
     delete from public.bco_progression_events
     where black_crown_user_id = v_scope.black_crown_user_id
-       or chat_id = p_telegram_user_id;
+       or chat_id = any(v_scope.telegram_user_ids);
   else
     delete from public.bco_progression_events where chat_id = p_telegram_user_id;
   end if;
@@ -331,7 +368,7 @@ begin
   if v_canonical_scope then
     delete from public.bco_user_activity
     where black_crown_user_id = v_scope.black_crown_user_id
-       or telegram_user_id = p_telegram_user_id;
+       or telegram_user_id = any(v_scope.telegram_user_ids);
   else
     delete from public.bco_user_activity
     where telegram_user_id = p_telegram_user_id;
@@ -342,7 +379,7 @@ begin
   if v_canonical_scope then
     delete from public.bco_players
     where black_crown_user_id = v_scope.black_crown_user_id
-       or chat_id = p_telegram_user_id;
+       or chat_id = any(v_scope.telegram_user_ids);
   else
     delete from public.bco_players where chat_id = p_telegram_user_id;
   end if;
@@ -357,6 +394,7 @@ begin
     'resolution_state', v_scope.resolution_state,
     'canonical_scope_applied', v_canonical_scope,
     'legacy_fallback_applied', not v_canonical_scope,
+    'linked_telegram_subject_count', cardinality(v_scope.telegram_user_ids),
     'deleted_rows', v_deleted_rows,
     'account_preserved', true,
     'identities_preserved', true,
@@ -425,10 +463,10 @@ grant select on table public.black_crown_lifecycle_runtime_status
   to service_role;
 
 comment on function public.black_crown_clear_conversation(bigint) is
-  'Clears conversation data in exact legacy scope or one server-resolved canonical account scope.';
+  'Clears conversation data in exact legacy scope or every server-owned Telegram subject of one resolved canonical account.';
 comment on function public.black_crown_reset_player_profile(bigint) is
-  'Resets profile/summary/derived state in exact legacy scope or one server-resolved canonical account scope.';
+  'Resets profile/summary/derived state in exact legacy scope or every server-owned Telegram subject of one resolved canonical account.';
 comment on function public.black_crown_purge_product_data(bigint) is
-  'Purges BLACK CROWN product data while preserving account, identity, links and entitlements.';
+  'Purges BLACK CROWN product data across one resolved canonical account while preserving account, identity, links and entitlements.';
 comment on view public.black_crown_lifecycle_runtime_status is
   'Privacy-safe service-role lifecycle control and migration readiness status.';
