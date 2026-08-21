@@ -520,8 +520,13 @@ def test_readiness_exposes_privacy_safe_canonical_read_state():
     snapshot = readiness_snapshot(Settings(), ReadyStore())
     canonical = snapshot["storage"]["canonical_read"]
     assert canonical["mode"] == "canonical_first"
+    assert canonical["schema_version"] == "bco-canonical-read-v1"
     assert canonical["canonical_hits"] == 3
     assert snapshot["features"]["canonical_owner_first_reads"] is True
-    assert snapshot["identity"]["product_owner_key"] == "black_crown_user_id"
+    assert snapshot["identity"] == {
+        "resolver_authority": "server",
+        "telegram_ai_auth_required": True,
+        "client_canonical_user_authority": False,
+    }
     assert OWNER not in repr(snapshot)
     assert "configured-secret" not in repr(snapshot)
