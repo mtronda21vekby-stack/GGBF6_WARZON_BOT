@@ -161,24 +161,13 @@ def test_readiness_exposes_separate_release_build_and_runtime_truth(monkeypatch)
         },
     }
 
-    # Existing identity fields remain stable; Phase 2C adds only additive,
-    # privacy-safe ownership/read-mode metadata.
-    identity = snapshot["identity"]
-    assert {
-        key: identity[key]
-        for key in (
-            "resolver_authority",
-            "telegram_ai_auth_required",
-            "client_canonical_user_authority",
-        )
-    } == {
+    # Authentication identity remains backward-compatible. Product ownership
+    # and read-mode telemetry stay in the dedicated storage/readiness contract.
+    assert snapshot["identity"] == {
         "resolver_authority": "server",
         "telegram_ai_auth_required": True,
         "client_canonical_user_authority": False,
     }
-    assert identity["product_owner_key"] == "black_crown_user_id"
-    assert identity["canonical_read_mode"] == "legacy"
-    assert identity["canonical_read_client_authority"] is False
 
     assert snapshot["entitlements"] == {
         "authority": "server_entitlement_service",
@@ -186,8 +175,13 @@ def test_readiness_exposes_separate_release_build_and_runtime_truth(monkeypatch)
         "client_authority": False,
     }
     assert snapshot["storage"]["recovery"]["primary_available"] is True
-    assert snapshot["storage"]["canonical_read"]["mode"] == "legacy"
+    canonical_read = snapshot["storage"]["canonical_read"]
+    assert canonical_read["schema_version"] == "bco-canonical-read-v1"
+    assert canonical_read["mode"] == "legacy"
+    assert canonical_read["capability_enabled"] is False
+    assert canonical_read["database_flag_enabled"] is False
     assert snapshot["features"]["canonical_owner_legacy_fallback"] is True
+    assert snapshot["features"]["canonical_owner_first_reads"] is False
 
     rendered = repr(snapshot)
     assert "never-expose-openai-secret" not in rendered
