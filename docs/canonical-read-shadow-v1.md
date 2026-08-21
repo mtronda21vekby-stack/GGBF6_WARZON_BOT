@@ -1,165 +1,134 @@
 # BLACK CROWN Canonical Read Shadow v1
 
-## Status
+## Scope
 
-Phase 2C1 introduces a **read-only canonical parity probe**. It does not
-switch product behavior away from legacy keys.
+Phase 2C adds comparison-only canonical reads after Phase 2B dual-write. It does
+not switch product read authority and does not delete or relax any legacy key.
 
-- Audited base `main`: `cbd5cdd68fad984e48bedadbf260c9cf1cbcc278`.
-- Product release remains `44.0.0`.
-- Website, Telegram Bot and Mini App presentation are unchanged.
-- GAME is the only Supabase authority in scope.
-- Legacy reads remain the value returned to the caller.
-- Canonical primary reads remain disabled.
+The established `chat_id` value remains the value returned for:
 
-## Why this phase is separate
-
-Phase 2A added canonical owner columns, backfill, conflict states and coverage.
-Phase 2B added database-enforced canonical dual-write with a rollback flag.
-
-A direct switch to canonical reads would still be premature because current
-tables retain legacy uniqueness and lifecycle semantics. In particular,
-multiple historical rows can legitimately project to one canonical account
-until a later controlled consolidation step. Phase 2C1 measures parity before
-any user-visible read authority changes.
-
-## Runtime flow
-
-For supported persistent read surfaces:
-
-1. execute the existing legacy read;
-2. deterministically sample the read according to server configuration;
-3. resolve eligible canonical candidates through the server-only
-   `black_crown_eligible_identity_candidates` contract;
-4. when exactly one eligible account exists, query the same surface by
-   `black_crown_user_id`;
-5. compare normalized results without logging content or identity values;
-6. emit content-free process telemetry;
-7. return the legacy value regardless of the comparison outcome.
-
-Supported surfaces:
-
-- conversation messages;
-- CROWN profile;
-- summary;
-- derived intelligence / Player Brain projection;
+- conversation history;
+- profile, summary and derived Player Brain intelligence;
 - recurring mistakes;
 - episodes;
 - training sessions;
 - progression events.
 
-Shadow lookup or comparison failure is isolated. It cannot convert a successful
-legacy read into a user-visible error or memory fallback.
+Canonical rows are sampled only to measure migration parity. A match, mismatch,
+unresolved identity, ambiguity or shadow failure never changes the user-visible
+value.
 
-## Identity authority
+## Concurrent-agent integration
 
-The shadow layer never accepts `black_crown_user_id` from a browser, Mini App
-payload, profile JSON, Telegram username or caller argument.
+Another agent added the initial `CanonicalReadShadowStore` and content-free
+`QualityTelemetry` counters to the same feature branch. This integration keeps
+that implementation and adds the missing production controls around it rather
+than replacing the newer files with an older copy.
 
-Canonical candidates are resolved from the Phase 2B server-only function using:
+## Authority and privacy
 
-- provider: `telegram`;
-- verified server-side Telegram subject;
-- identity state: `active` or `provisional`;
-- account state: `active` or `provisional`.
+Canonical owner candidates are resolved through the existing Phase 2B
+service-role function `black_crown_eligible_identity_candidates`. The browser,
+Mini App and Telegram payload cannot submit `black_crown_user_id` as authority.
 
-Zero candidates produce `identity_unresolved`. Multiple candidates produce
-`identity_conflict`. Neither state performs a canonical product-table read.
+The shadow system records only:
 
-The identity cache contains only the internal Telegram numeric key and canonical
-UUID candidates in process memory. It is bounded, TTL-controlled and never
-included in telemetry or health output. Negative results use a short TTL so a
-newly resolved identity can become visible quickly.
+- surface name;
+- outcome classification;
+- latency;
+- legacy/canonical item counts;
+- aggregate comparison totals.
 
-## Parity outcomes
+It does not record prompts, message content, profile values, Telegram IDs,
+canonical IDs, initData, transcripts, tokens or secrets. The bounded identity
+cache is process-local and is never logged or exposed by readiness.
 
-Telemetry distinguishes:
+## Independent controls
 
-- `match`;
-- `canonical_only`;
-- `canonical_empty`;
-- `canonical_superset`;
-- `canonical_subset`;
-- `mismatch`;
-- `canonical_ambiguous`;
-- `identity_unresolved`;
-- `identity_conflict`;
-- `identity_error`;
-- `canonical_error`;
-- `sample_skipped`.
+Two database flags are independent:
 
-Singleton profile rows are considered ambiguous when one canonical account has
-multiple different values. Ambiguity never changes the returned value.
+- `canonical_dual_write` controls future owner projection;
+- `canonical_shadow_read` controls comparison-only reads.
 
-## Privacy and observability
+Immediate database rollback:
 
-`/health/details` already exposes `quality_telemetry.snapshot()`. This phase
-adds a nested `quality.canonical_read_shadow` projection containing only:
-
-- enabled state and sample rate;
-- event/comparison counts;
-- average shadow latency;
-- aggregate item counts;
-- surface counters;
-- outcome counters;
-- explicit `returns_legacy=true`;
-- explicit `canonical_primary_enabled=false`.
-
-It never contains:
-
-- Telegram IDs;
-- `black_crown_user_id`;
-- profile values;
-- prompts or answers;
-- message content;
-- transcript/audio;
-- raw identity subjects;
-- Supabase or OpenAI secrets.
-
-Metrics are process-local in this phase. They are suitable for immediate
-release observation and rollback decisions without adding a paid write on every
-read. Durable aggregate parity telemetry can be added after the outcome model is
-proven stable.
-
-## Server configuration and rollback
-
-Environment contract:
-
-```text
-CANONICAL_READ_SHADOW_ENABLED=true
-CANONICAL_READ_SHADOW_SAMPLE_RATE=1.0
-CANONICAL_READ_IDENTITY_CACHE_TTL_S=120
-CANONICAL_READ_IDENTITY_NEGATIVE_CACHE_TTL_S=5
-CANONICAL_READ_IDENTITY_CACHE_MAX_ENTRIES=10000
+```sql
+select public.black_crown_set_ownership_runtime_flag(
+  'canonical_shadow_read',
+  false,
+  'incident reference and operator reason'
+);
 ```
 
-Immediate rollback:
+When disabled, every covered method performs one established legacy read. The
+dual-write flag, existing canonical projections and user data are unchanged.
+
+Process-local controls:
 
 ```text
-CANONICAL_READ_SHADOW_ENABLED=false
+CANONICAL_READ_SHADOW_ENABLED=1
+CANONICAL_READ_SHADOW_SAMPLE_RATE=0.10
+CANONICAL_READ_SHADOW_FLAG_TTL_S=30
+CANONICAL_READ_SHADOW_IDENTITY_TTL_S=120
+CANONICAL_READ_SHADOW_NEGATIVE_TTL_S=5
+CANONICAL_READ_SHADOW_CACHE_MAX_ENTRIES=10000
 ```
 
-This restores the exact pre-Phase-2C read cost and behavior without schema
-rollback, data mutation or deletion.
+The default sample rate is intentionally 10% to limit additional database
+latency during the observation window. Sampling is deterministic by legacy
+subject and surface.
 
-Reducing the sample rate is also non-destructive. Invalid numeric values fail at
-normal settings validation during startup; runtime clamps sample rate and cache
-bounds to safe ranges.
+## Failure behavior
 
-## Promotion gates for canonical-first reads
+The control and comparison layers fail closed to the established read:
 
-Canonical primary reads must remain disabled until all of the following are
-demonstrated:
+- database flag lookup error -> legacy only;
+- shadow flag disabled -> legacy only;
+- identity lookup error -> legacy only;
+- no identity candidate -> legacy only;
+- multiple candidates -> legacy only;
+- canonical query error -> legacy only;
+- canonical ambiguity -> legacy only;
+- mismatch -> legacy only.
 
-1. no identity conflicts or merge-pending states;
-2. no unexplained singleton ambiguity;
-3. parity is stable per surface;
-4. canonical-only/superset outcomes are understood and intentional;
-5. clear/reset/purge semantics are canonical-account safe;
-6. entitlement and privacy lifecycle behavior is verified;
-7. rollback can restore legacy reads without data loss;
-8. Required Gate, Intelligence CI, Compatibility Contracts and CodeQL are green;
-9. Render reports the exact merge SHA and health evidence.
+Shadow failures are absorbed inside the wrapper and are not converted into
+persistent-primary failures or recovery-outbox writes.
 
-A later Phase 2C2 PR may introduce canonical-first reads with legacy fallback.
-This phase intentionally does not contain that switch.
+## Canonical identity through resilient storage
+
+Phase 2C also exposes the existing server identity resolver through
+`PersistentResilientStore`. Before this change, `ProfileService` received the
+resilient wrapper while the resolver existed only on the inner Supabase adapter.
+The memory fallback returns an empty projection and never manufactures an
+account.
+
+This repairs canonical identity projection across Bot and trusted Mini App
+contexts without changing their profile mutation contract.
+
+## Readiness
+
+`/health/details` already publishes `quality_telemetry.snapshot()`. The canonical
+block now includes:
+
+- local enabled state;
+- database enabled state;
+- sample rate;
+- sanitized control reason and check timestamp;
+- control error count;
+- comparison totals and outcomes;
+- aggregate surfaces;
+- `read_authority=legacy`;
+- `canonical_returned_to_callers=false`.
+
+No identity or player payload can enter this response.
+
+The service-role database view
+`black_crown_canonical_read_runtime_status` reports the two independent flags
+and aggregate migration-state counts.
+
+## Promotion boundary
+
+Canonical-first reads remain prohibited until a separate phase proves sustained
+parity, acceptable latency, sufficient ownership coverage, explicit semantics
+for multi-identity accounts, zero unexplained conflicts, rollback, and
+cross-client behavioral synchronization.

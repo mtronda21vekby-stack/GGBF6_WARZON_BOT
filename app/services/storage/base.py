@@ -5,6 +5,9 @@ from typing import Any, Mapping, Protocol
 
 
 class Storage(Protocol):
+    # Canonical identity
+    def resolve_telegram_identity(self, telegram_user_id: int) -> dict[str, Any]: ...
+
     # Working memory
     def add(self, chat_id: int, role: str, content: Any) -> None: ...
     def get(self, chat_id: int) -> list[dict]: ...
