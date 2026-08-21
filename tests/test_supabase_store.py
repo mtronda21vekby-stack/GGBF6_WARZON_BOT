@@ -30,7 +30,7 @@ def test_supabase_profile_patch_uses_server_authenticated_rpc():
         store.close()
 
 
-def test_supabase_purge_uses_dedicated_server_rpc():
+def test_supabase_purge_uses_canonical_lifecycle_server_rpc():
     seen = []
 
     def handler(request: httpx.Request):
@@ -45,7 +45,12 @@ def test_supabase_purge_uses_dedicated_server_rpc():
     store._client = httpx.Client(transport=httpx.MockTransport(handler))
     try:
         store.purge_player(7)
-        assert seen[0].url.path.endswith("/rest/v1/rpc/bco_purge_player")
-        assert json.loads(seen[0].content.decode("utf-8")) == {"p_chat_id": 7}
+        assert len(seen) == 1
+        assert seen[0].url.path.endswith(
+            "/rest/v1/rpc/black_crown_purge_product_data"
+        )
+        assert json.loads(seen[0].content.decode("utf-8")) == {
+            "p_telegram_user_id": 7
+        }
     finally:
         store.close()
