@@ -13,6 +13,9 @@ RELEASE_CONTRACT = "bco-aaa-war-room-alerts-v44"
 # values describe the current production boot truth; they do not imply that the
 # layered Mini App runtime has already been consolidated.
 API_CONTRACT_VERSION = "webapp-api-v1"
+CROWN_CORE_VERSION = "crown-core-v1"
+NATIVE_API_CONTRACT_VERSION = "crown-native-api-v1"
+CROWN_REALTIME_PROTOCOL = "crown-realtime-v1"
 TELEGRAM_AUTH_CONTRACT = "telegram-init-data-v1"
 MINI_APP_RUNTIME = "bco-layered-runtime-v65"
 VOICE_RUNTIME = "bco.voice-v65"

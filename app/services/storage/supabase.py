@@ -40,7 +40,81 @@ class SupabaseStore:
         migration window. No player data is moved or deleted here.
         """
         rows = self._rows(self._request("POST", "rpc/black_crown_resolve_telegram_identity", json={"p_telegram_user_id": int(telegram_user_id)}))
-        return dict(rows[0]) if rows else {}
+        result = dict(rows[0]) if rows else {}
+        if result:
+            result["legacy_owner_id"] = int(telegram_user_id)
+        return result
+
+    def resolve_canonical_identity(self, provider: str, provider_subject: str) -> dict[str, Any]:
+        """Resolve an authenticated provider identity to the legacy-compatible owner.
+
+        The canonical UUID is authoritative. The Telegram subject is selected only
+        as the compatibility key for existing bco_* tables during the additive
+        ownership migration. No identity or account is created by this read path.
+        """
+        name = str(provider or "").strip().lower()
+        subject = str(provider_subject or "").strip()
+        if name not in {"apple", "website_auth", "telegram"} or not subject:
+            return {}
+        identities = self._rows(self._request(
+            "GET",
+            "black_crown_identities",
+            params={
+                "provider": f"eq.{name}",
+                "provider_subject": f"eq.{subject}",
+                "status": "eq.active",
+                "select": "black_crown_user_id,status",
+                "limit": "2",
+            },
+        ))
+        if len(identities) != 1:
+            return {}
+        canonical = str(identities[0].get("black_crown_user_id") or "")
+        accounts = self._rows(self._request(
+            "GET",
+            "black_crown_accounts",
+            params={
+                "black_crown_user_id": f"eq.{canonical}",
+                "select": "account_status",
+                "limit": "1",
+            },
+        ))
+        telegram = self._rows(self._request(
+            "GET",
+            "black_crown_identities",
+            params={
+                "black_crown_user_id": f"eq.{canonical}",
+                "provider": "eq.telegram",
+                "status": "eq.active",
+                "select": "provider_subject",
+                "limit": "2",
+            },
+        ))
+        if len(accounts) != 1 or len(telegram) != 1:
+            return {}
+        try:
+            owner = int(str(telegram[0].get("provider_subject") or ""))
+        except ValueError:
+            return {}
+        return {
+            "black_crown_user_id": canonical,
+            "identity_status": str(identities[0].get("status") or ""),
+            "account_status": str(accounts[0].get("account_status") or ""),
+            "legacy_owner_id": owner,
+        }
+
+    def list_canonical_entitlements(self, black_crown_user_id: str) -> list[dict[str, Any]]:
+        return self._rows(self._request(
+            "GET",
+            "blackcrown_entitlements",
+            params={
+                "black_crown_user_id": f"eq.{str(black_crown_user_id)}",
+                "status": "eq.active",
+                "select": "entitlement_key,status,source,valid_until",
+                "order": "updated_at.asc",
+                "limit": "100",
+            },
+        ))
 
     def _count(self, table: str, chat_id: int) -> int:
         response = self._request("GET", table, params={"chat_id": f"eq.{int(chat_id)}", "select": "id", "limit": "1"}, extra_headers={"Prefer": "count=exact"})

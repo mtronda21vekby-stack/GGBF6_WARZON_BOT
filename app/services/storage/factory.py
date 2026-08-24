@@ -74,6 +74,27 @@ class PersistentResilientStore(ResilientStore):
             or {}
         )
 
+    def resolve_canonical_identity(self, provider: str, provider_subject: str) -> dict[str, Any]:
+        """Canonical authorization fails closed; it never falls back to process memory."""
+        try:
+            return dict(
+                self.primary.resolve_canonical_identity(provider, provider_subject)
+                or {}
+            )
+        except Exception as exc:
+            self._remember_failure("resolve_canonical_identity", exc)
+            return {}
+
+    def list_canonical_entitlements(self, black_crown_user_id: str) -> list[dict[str, Any]]:
+        try:
+            return list(
+                self.primary.list_canonical_entitlements(black_crown_user_id)
+                or []
+            )
+        except Exception as exc:
+            self._remember_failure("list_canonical_entitlements", exc)
+            return []
+
     def canonical_read_shadow_status(self) -> dict[str, Any]:
         status = getattr(self.primary, "canonical_read_shadow_status", None)
         if not callable(status):

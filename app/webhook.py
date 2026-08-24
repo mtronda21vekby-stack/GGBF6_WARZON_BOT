@@ -12,6 +12,8 @@ from app.adapters.telegram.client import TelegramClient
 from app.adapters.telegram.types import Update
 from app.config import get_settings
 from app.core.router import Router
+from app.crown_core.api import NativeCrownAPI
+from app.crown_core.service import CrownCore
 from app.observability.log import get_logger, setup_logging
 from app.observability.readiness import readiness_snapshot
 from app.release import APP_VERSION, RELEASE_CONTRACT
@@ -117,7 +119,23 @@ def create_app() -> FastAPI:
     app.include_router(site_entitlement_bridge.router)
 
     core_brain = BrainEngine(store=store, profiles=profiles, settings=settings)
-    conversation = ConversationService(brain=core_brain, store=store, profiles=profiles, usage_guard=usage_guard)
+    legacy_conversation = ConversationService(
+        brain=core_brain,
+        store=store,
+        profiles=profiles,
+        usage_guard=usage_guard,
+    )
+    conversation = CrownCore(
+        conversation=legacy_conversation,
+        store=store,
+        profiles=profiles,
+    )
+    native_api = NativeCrownAPI(
+        settings=settings,
+        core=conversation,
+        store=store,
+    )
+    app.include_router(native_api.router)
     command_console = CommandConsoleController(
         tg=tg, profiles=profiles, store=store, entitlements=entitlement_service, settings=settings
     )
@@ -138,7 +156,7 @@ def create_app() -> FastAPI:
         vod=vod_service,
         profiles=profiles,
         store=store,
-        player_memory=conversation.player_memory,
+        player_memory=legacy_conversation.player_memory,
         usage_guard=usage_guard,
         enabled=settings.vod_enabled,
         max_bytes=settings.vod_max_bytes,
