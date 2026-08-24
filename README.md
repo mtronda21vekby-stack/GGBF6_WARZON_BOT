@@ -5,6 +5,13 @@ main.py
 requirements.txt
 render.yaml 
 .python-version
+
+Shared runtime documentation:
+
+- `docs/CROWN_CORE.md`
+- `docs/NATIVE_CLIENT_API.md`
+- `docs/IDENTITY.md`
+- `docs/STREAMING_PROTOCOL.md`
 ⸻
 
 👑 BLACK CROWN OPS
