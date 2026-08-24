@@ -15,18 +15,19 @@ The client must never send or choose `black_crown_user_id`.
 - `POST /turn` starts an SSE stream. The request uses the typed iOS `schemaVersion=1` envelope.
 - `POST /cancel` cancels an active owner-matched session/turn.
 - `GET /brain` returns a bounded Player Brain projection.
+- `GET /skills/{skill_id}` returns one allow-listed, owner-scoped read projection. Available IDs are `player_brain_read`, `game_intel_read`, `loadout_read`, `training_summary_read`, and `history_summary_read`.
 - `PATCH /brain` accepts only the controlled profile fields `current_goal`, `training_focus`, `weekly_focus`, and `playstyle`, and requires an `Idempotency-Key` UUID.
 
-Native brain writes are value-setting operations and therefore idempotent for the same payload. Persistent mutation receipts are not yet implemented; non-idempotent skills remain unavailable to native clients.
+Native brain writes are value-setting operations. A bounded owner-scoped replay registry prevents a repeated idempotency key from executing twice and returns `X-Crown-Replay: 1`. Persistent cross-instance mutation receipts are not yet implemented; non-idempotent and sensitive skills remain unavailable to native clients.
 
 ## Fail-closed behavior
 
 - missing/invalid/expired session: `401`;
 - authenticated identity not linked to a canonical account: `403 canonical_link_required`;
 - ownership mismatch: `403`;
+- unlisted or mutation skill: `404 capability_unavailable`;
 - active duplicate turn: `409`;
 - schema mismatch: `409 protocol_mismatch`;
 - provider/internal generation failure: typed `turnFailed` without stack trace.
 
 No service-role key, model credential or universal bearer token is returned to the iPhone.
-

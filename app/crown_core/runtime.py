@@ -63,3 +63,37 @@ class ActiveTurnRegistry:
         with self._lock:
             value = self._completed.get((canonical_user_id, session_id, turn_id))
             return tuple(dict(event) for event in value) if value is not None else None
+
+
+class MutationReplayRegistry:
+    """Small process-local idempotency cache for bounded native mutations."""
+
+    def __init__(self, limit: int = 256) -> None:
+        self._lock = threading.RLock()
+        self._items: OrderedDict[tuple[UUID, UUID, str], dict] = OrderedDict()
+        self._inflight: set[tuple[UUID, UUID, str]] = set()
+        self._limit = max(16, int(limit))
+
+    def begin(self, canonical_user_id: UUID, key: UUID, operation: str) -> tuple[str, dict | None]:
+        cache_key = (canonical_user_id, key, operation)
+        with self._lock:
+            value = self._items.get(cache_key)
+            if value is not None:
+                return "replay", dict(value)
+            if cache_key in self._inflight:
+                return "in_progress", None
+            self._inflight.add(cache_key)
+            return "claimed", None
+
+    def finish(self, canonical_user_id: UUID, key: UUID, operation: str, result: dict) -> None:
+        cache_key = (canonical_user_id, key, operation)
+        with self._lock:
+            self._inflight.discard(cache_key)
+            self._items[cache_key] = dict(result)
+            self._items.move_to_end(cache_key)
+            while len(self._items) > self._limit:
+                self._items.popitem(last=False)
+
+    def abort(self, canonical_user_id: UUID, key: UUID, operation: str) -> None:
+        with self._lock:
+            self._inflight.discard((canonical_user_id, key, operation))

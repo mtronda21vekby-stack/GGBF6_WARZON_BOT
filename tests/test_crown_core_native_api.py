@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -12,9 +13,10 @@ from fastapi.testclient import TestClient
 from app.crown_core.api import NativeCrownAPI, PROTOCOL_VERSION, SupabaseNativeAuthenticator
 from app.crown_core.contracts import CrownPrincipal, CrownSurface, CrownTurnResult
 from app.crown_core.response import SpokenSentenceAccumulator, spoken_text
-from app.crown_core.runtime import ActiveTurnRegistry
+from app.crown_core.runtime import ActiveTurnRegistry, MutationReplayRegistry
 from app.crown_core.service import CrownCore
 from app.crown_core.skills import CrownSkillRegistry
+from app.services.conversation.service import ConversationService
 
 
 OWNER = UUID("11111111-1111-4111-8111-111111111111")
@@ -64,6 +66,10 @@ class FakeStore:
         assert owner == str(OWNER)
         return [{"entitlement_key": "pro", "status": "active"}]
 
+    def list_training_sessions(self, owner):
+        assert owner == PRINCIPAL.legacy_owner_id
+        return [{"focus": "aim", "chat_id": owner, "source": "approved"}]
+
 
 class FakeCore:
     def __init__(self):
@@ -78,6 +84,10 @@ class FakeCore:
         assert principal == PRINCIPAL
         self.patches.append({key: value for key, value in patch.items() if key == "training_focus"})
         return self.brain_snapshot(principal)
+
+    def read_skill(self, principal, identifier):
+        assert principal == PRINCIPAL
+        return {"fixture": identifier}
 
     async def execute_turn_async(self, request, *, on_partial=None):
         self.turns.append(request)
@@ -133,7 +143,14 @@ def test_native_bootstrap_returns_only_server_resolved_canonical_identity():
         "black_crown_user_id": str(OWNER),
         "player_brain": {"profile": {"game": "Warzone"}, "summary": "same brain", "derived": {}},
         "entitlements": [{"entitlement_key": "pro", "status": "active"}],
-        "capabilities": ["conversation", "player_brain", "game_intelligence"],
+        "capabilities": [
+            "conversation",
+            "player_brain_read",
+            "game_intel_read",
+            "loadout_read",
+            "training_summary_read",
+            "history_summary_read",
+        ],
         "server": {"protocol_version": PROTOCOL_VERSION},
     }
 
@@ -294,6 +311,56 @@ def test_safe_brain_patch_requires_idempotency_and_never_accepts_owner_id():
     assert core.patches == [{"training_focus": "aim"}]
 
 
+def test_safe_brain_patch_replays_same_idempotency_key_without_duplicate_mutation():
+    core = FakeCore()
+    client, _ = app_client(core=core)
+    key = str(uuid4())
+    headers = {"Authorization": "Bearer fixture", "Idempotency-Key": key}
+    first = client.patch("/api/v1/crown/brain", headers=headers, json={"patch": {"training_focus": "aim"}})
+    second = client.patch("/api/v1/crown/brain", headers=headers, json={"patch": {"training_focus": "movement"}})
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert first.headers["x-crown-replay"] == "0"
+    assert second.headers["x-crown-replay"] == "1"
+    assert core.patches == [{"training_focus": "aim"}]
+
+
+def test_mutation_idempotency_rejects_concurrent_duplicate_and_recovers_after_abort():
+    registry = MutationReplayRegistry()
+    key = uuid4()
+    assert registry.begin(OWNER, key, "brain.patch") == ("claimed", None)
+    assert registry.begin(OWNER, key, "brain.patch") == ("in_progress", None)
+    registry.abort(OWNER, key, "brain.patch")
+    assert registry.begin(OWNER, key, "brain.patch") == ("claimed", None)
+    registry.finish(OWNER, key, "brain.patch", {"ok": True})
+    assert registry.begin(OWNER, key, "brain.patch") == ("replay", {"ok": True})
+
+
+def test_native_read_skills_are_authenticated_allow_listed_and_owner_scoped():
+    client, _ = app_client()
+    unauthenticated = client.get("/api/v1/crown/skills/player_brain_read")
+    assert unauthenticated.status_code == 401
+
+    response = client.get(
+        "/api/v1/crown/skills/training_summary_read",
+        headers={"Authorization": "Bearer fixture"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "schema_version": 1,
+        "capability": "training_summary_read",
+        "black_crown_user_id": str(OWNER),
+        "data": {"fixture": "training_summary_read"},
+    }
+
+    denied = client.get(
+        "/api/v1/crown/skills/player_brain_write",
+        headers={"Authorization": "Bearer fixture"},
+    )
+    assert denied.status_code == 404
+    assert denied.json()["detail"] == "capability_unavailable"
+
+
 def test_spoken_projection_removes_markup_urls_and_preserves_sentence_order():
     display = "**CROWN**: [смотри](https://example.com) план. `Aim` дальше!"
     assert spoken_text(display) == "CROWN: смотри план. Aim дальше!"
@@ -307,8 +374,11 @@ def test_spoken_projection_removes_markup_urls_and_preserves_sentence_order():
 def test_native_skill_registry_exposes_only_explicit_read_only_core_capabilities():
     assert CrownSkillRegistry().capabilities(CrownSurface.IOS) == (
         "conversation",
-        "player_brain",
-        "game_intelligence",
+        "player_brain_read",
+        "game_intel_read",
+        "loadout_read",
+        "training_summary_read",
+        "history_summary_read",
     )
 
 
@@ -351,10 +421,99 @@ class SharedStoreProbe:
     def get_derived_intelligence(self, owner):
         return {}
 
+    def list_training_sessions(self, owner):
+        return [{"focus": "aim", "chat_id": owner}]
+
 
 def test_ios_adapter_enters_same_conversation_core_as_telegram_and_web_compatibility():
     conversation = ConversationProbe()
     core = CrownCore(conversation=conversation, store=SharedStoreProbe(), profiles=ProfileProbe())
+    assert core.reply(text="telegram", profile={}, history=[]) == "shared"
     assert core.reply(text="web", profile={}, history=[]) == "shared"
     principal = core.principal_for_authenticated_identity("apple", str(uuid4()))
     assert principal is not None and principal.black_crown_user_id == OWNER
+    turn = asyncio.run(
+        core.execute_turn_async(
+            SimpleNamespace(
+                principal=principal,
+                text="ios",
+            )
+        )
+    )
+    assert turn.display_text == "shared"
+    assert [call["text"] for call in conversation.calls] == ["telegram", "web", "ios"]
+
+
+def test_production_wiring_injects_one_core_into_all_three_surface_adapters():
+    source = Path("app/webhook.py").read_text(encoding="utf-8")
+    assert "conversation = CrownCore(" in source
+    assert "NativeCrownAPI(\n        settings=settings,\n        core=conversation" in source
+    assert "Router(tg=tg, brain=conversation" in source
+    assert "webapp_bind_runtime(\n                brain=conversation" in source
+
+    contracts = Path("app/crown_core/contracts.py").read_text(encoding="utf-8")
+    assert "telegram.Update" not in contracts
+    assert "telegram.Message" not in contracts
+    assert "fastapi" not in contracts
+
+
+def test_shared_read_skills_use_only_the_server_resolved_canonical_owner():
+    core = CrownCore(conversation=ConversationProbe(), store=SharedStoreProbe(), profiles=ProfileProbe())
+    principal = core.principal_for_authenticated_identity("apple", str(uuid4()))
+    assert principal is not None
+    training = core.read_skill(principal, "training_summary_read")
+    assert training == {"sessions": [{"focus": "aim"}]}
+    history = core.read_skill(principal, "history_summary_read")
+    assert history == {
+        "messages": [{"role": "assistant", "content": "context"}],
+        "count": 1,
+    }
+
+
+def test_native_adapter_reuses_the_shared_canonical_rate_limit_boundary():
+    class DeniedGuard:
+        def __init__(self):
+            self.calls = []
+
+        def check(self, owner, capability):
+            self.calls.append((owner, capability))
+            return SimpleNamespace(allowed=False, retry_after_s=7)
+
+    class BrainMustNotRun:
+        settings = None
+
+        def __init__(self):
+            self.calls = 0
+
+        def reply(self, **kwargs):
+            self.calls += 1
+            return "must not run"
+
+    class TrustedProfiles(ProfileProbe):
+        def get(self, owner):
+            return {
+                "_chat_id": owner,
+                "_context_token": "server",
+                "black_crown_user_id": str(OWNER),
+            }
+
+        def is_trusted_context(self, profile):
+            return profile.get("_context_token") == "server"
+
+    guard = DeniedGuard()
+    brain = BrainMustNotRun()
+    profiles = TrustedProfiles()
+    store = SharedStoreProbe()
+    conversation = ConversationService(brain=brain, store=store, profiles=profiles, usage_guard=guard)
+    core = CrownCore(conversation=conversation, store=store, profiles=profiles)
+    client, _ = app_client(core=core)
+
+    response = client.post(
+        "/api/v1/crown/turn",
+        headers={"Authorization": "Bearer fixture"},
+        json=envelope(uuid4(), uuid4()),
+    )
+    assert response.status_code == 200
+    assert guard.calls == [(PRINCIPAL.legacy_owner_id, "ai")]
+    assert brain.calls == 0
+    assert "Слишком много AI-запросов" in response.text

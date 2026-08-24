@@ -7,6 +7,7 @@ from typing import Any
 
 from app.crown_core.contracts import CrownPrincipal, CrownTurnRequest, CrownTurnResult
 from app.crown_core.response import spoken_text
+from app.services.brain.loadouts import ROLE_LOADOUTS
 
 
 PartialCallback = Callable[[str, dict[str, Any]], None]
@@ -107,3 +108,56 @@ class CrownCore:
             raise ValueError("empty_patch")
         self.profiles.patch(principal.legacy_owner_id, clean)
         return self.brain_snapshot(principal)
+
+    def read_skill(self, principal: CrownPrincipal, identifier: str) -> dict[str, Any]:
+        """Return a bounded, read-only projection for an allow-listed native skill."""
+        profile = self.profiles.get(principal.legacy_owner_id)
+        if str(profile.get("black_crown_user_id") or "") != str(principal.black_crown_user_id):
+            raise RuntimeError("canonical_identity_mismatch")
+
+        if identifier == "player_brain_read":
+            return self.brain_snapshot(principal)
+        if identifier == "game_intel_read":
+            return {
+                "game": str(profile.get("game") or "")[:80],
+                "mode": str(profile.get("mode") or "")[:80],
+                "derived": dict(self.store.get_derived_intelligence(principal.legacy_owner_id) or {}),
+            }
+        if identifier == "loadout_read":
+            game = str(profile.get("game") or "warzone").strip().lower()
+            role = str(profile.get("role") or profile.get("playstyle") or "").strip().lower()
+            game_loadouts = ROLE_LOADOUTS.get(game, {})
+            selected = game_loadouts.get(role)
+            return {
+                "game": game,
+                "role": role or None,
+                "selected": dict(selected) if isinstance(selected, dict) else None,
+                "available": {key: dict(value) for key, value in game_loadouts.items()},
+            }
+        if identifier == "training_summary_read":
+            reader = getattr(self.store, "list_training_sessions", None)
+            sessions = list(reader(principal.legacy_owner_id) or [])[:10] if callable(reader) else []
+            return {"sessions": [self._safe_record(item) for item in sessions]}
+        if identifier == "history_summary_read":
+            history = list(self.store.get(principal.legacy_owner_id) or [])[-20:]
+            messages = []
+            for item in history:
+                if not isinstance(item, dict):
+                    continue
+                role = str(item.get("role") or "").lower()
+                content = str(item.get("content") or item.get("text") or "").strip()
+                if role in {"user", "assistant"} and content:
+                    messages.append({"role": role, "content": content[:2000]})
+            return {"messages": messages, "count": len(messages)}
+        raise ValueError("skill_not_available")
+
+    @staticmethod
+    def _safe_record(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        blocked = {"black_crown_user_id", "telegram_user_id", "chat_id", "provider_subject"}
+        return {
+            str(key): item
+            for key, item in value.items()
+            if str(key) not in blocked and not str(key).startswith("_")
+        }

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.crown_core.contracts import CrownCoreFailure, CrownPrincipal, CrownSurface, CrownTurnRequest
 from app.crown_core.response import SpokenSentenceAccumulator
-from app.crown_core.runtime import ActiveTurn, ActiveTurnRegistry
+from app.crown_core.runtime import ActiveTurn, ActiveTurnRegistry, MutationReplayRegistry
 from app.crown_core.skills import CrownSkillRegistry
 
 
@@ -101,12 +101,14 @@ class NativeCrownAPI:
         store: Any,
         authenticator: Any | None = None,
         turns: ActiveTurnRegistry | None = None,
+        mutations: MutationReplayRegistry | None = None,
         skills: CrownSkillRegistry | None = None,
     ) -> None:
         self.core = core
         self.store = store
         self.authenticator = authenticator or SupabaseNativeAuthenticator(settings=settings, core=core)
         self.turns = turns or ActiveTurnRegistry()
+        self.mutations = mutations or MutationReplayRegistry()
         self.skills = skills or CrownSkillRegistry()
         self.router = APIRouter(prefix="/api/v1/crown", tags=["CROWN native"])
         self._bind_routes()
@@ -190,6 +192,25 @@ class NativeCrownAPI:
             snapshot = await asyncio.to_thread(self.core.brain_snapshot, principal)
             return {"black_crown_user_id": str(principal.black_crown_user_id), **snapshot}
 
+        @self.router.get("/skills/{skill_id}")
+        async def read_skill(
+            skill_id: str,
+            authorization: str | None = Header(default=None),
+        ):
+            principal = await self._principal(authorization)
+            if not self.skills.permits_read(skill_id, CrownSurface.IOS):
+                raise HTTPException(status_code=404, detail="capability_unavailable")
+            try:
+                result = await asyncio.to_thread(self.core.read_skill, principal, skill_id)
+            except ValueError:
+                raise HTTPException(status_code=404, detail="capability_unavailable") from None
+            return {
+                "schema_version": 1,
+                "capability": skill_id,
+                "black_crown_user_id": str(principal.black_crown_user_id),
+                "data": result,
+            }
+
         @self.router.patch("/brain")
         async def patch_brain(
             body: NativeBrainPatch,
@@ -198,14 +219,29 @@ class NativeCrownAPI:
         ):
             principal = await self._principal(authorization)
             try:
-                UUID(str(idempotency_key or ""))
+                mutation_key = UUID(str(idempotency_key or ""))
             except ValueError:
                 raise HTTPException(status_code=400, detail="idempotency_key_required") from None
+            replay_state, replay = self.mutations.begin(
+                principal.black_crown_user_id,
+                mutation_key,
+                "brain.patch",
+            )
+            if replay_state == "replay" and replay is not None:
+                return JSONResponse(replay, headers={"X-Crown-Replay": "1"})
+            if replay_state == "in_progress":
+                raise HTTPException(status_code=409, detail="idempotency_in_progress")
             try:
                 snapshot = await asyncio.to_thread(self.core.patch_brain, principal, body.patch)
             except ValueError:
+                self.mutations.abort(principal.black_crown_user_id, mutation_key, "brain.patch")
                 raise HTTPException(status_code=400, detail="invalid_brain_patch") from None
-            return {"black_crown_user_id": str(principal.black_crown_user_id), **snapshot}
+            except Exception:
+                self.mutations.abort(principal.black_crown_user_id, mutation_key, "brain.patch")
+                raise
+            result = {"black_crown_user_id": str(principal.black_crown_user_id), **snapshot}
+            self.mutations.finish(principal.black_crown_user_id, mutation_key, "brain.patch", result)
+            return JSONResponse(result, headers={"X-Crown-Replay": "0"})
 
     async def _event_stream(
         self,
