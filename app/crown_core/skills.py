@@ -43,7 +43,7 @@ class CrownSkillRegistry:
             ),
             CrownSkill(
                 "game_intel_read",
-                CrownSkillKind.SERVER_TOOL,
+                CrownSkillKind.CORE_READ,
                 True,
                 frozenset(CrownSurface),
             ),
