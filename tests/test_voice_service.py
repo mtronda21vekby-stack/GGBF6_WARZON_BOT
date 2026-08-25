@@ -7,6 +7,8 @@ import wave
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from app.services.voice.service import TTSMode, VoiceService, normalize_tts_mode
 
 
@@ -162,3 +164,29 @@ def test_voice_service_respects_disabled_switch():
         raise AssertionError("expected disabled voice to fail")
     except RuntimeError as exc:
         assert "disabled" in str(exc).lower()
+
+
+def test_surface_neutral_wave_reuses_cloud_and_russian_piper_fallback():
+    cloud_service = VoiceService(_settings(), backend=FakeBackend(), cloud_backend=FakeCloud())
+    cloud = asyncio.run(cloud_service.synthesize_wave("One. Two.", {"language": "en"}))
+    try:
+        assert cloud.path.read_bytes()[:4] == b"RIFF"
+        assert cloud.quality == "canonical"
+        assert cloud.provider == "openai"
+    finally:
+        cloud.cleanup()
+
+    local_service = VoiceService(_settings(), backend=FakeBackend())
+    local = asyncio.run(local_service.synthesize_wave("Первое. Второе.", {"language": "ru"}))
+    try:
+        assert local.path.read_bytes()[:4] == b"RIFF"
+        assert local.quality == "fallback"
+        assert local.provider == "piper"
+    finally:
+        local.cleanup()
+
+
+def test_local_russian_voice_does_not_falsely_claim_english_support():
+    service = VoiceService(_settings(), backend=FakeBackend())
+    with pytest.raises(RuntimeError, match="English fallback"):
+        asyncio.run(service.synthesize_wave("One. Two.", {"language": "en"}))

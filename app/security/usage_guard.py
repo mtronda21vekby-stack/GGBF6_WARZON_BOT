@@ -119,6 +119,16 @@ class UsageGuard:
                     _limit("voice_global_rate_limit_1h", 1200, 3600),
                 )),
             ),
+            "skill": GuardRule(
+                subject_limits=_limits((
+                    _limit("skill_rate_limit_1m", 30, 60),
+                    _limit("skill_rate_limit_1h", 300, 3600),
+                )),
+                global_limits=_limits((
+                    _limit("skill_global_rate_limit_1m", 600, 60),
+                    _limit("skill_global_rate_limit_1h", 6000, 3600),
+                )),
+            ),
         }
         return cls(
             enabled=bool(getattr(settings, "usage_guard_enabled", True)),

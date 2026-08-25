@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,14 @@ from app.crown_core.contracts import CrownCoreFailure, CrownPrincipal, CrownSurf
 from app.crown_core.response import SpokenSentenceAccumulator
 from app.crown_core.runtime import ActiveTurn, ActiveTurnRegistry, MutationReplayRegistry
 from app.crown_core.skills import CrownSkillRegistry
+from app.crown_core.voice import (
+    VOICE_PROTOCOL_VERSION,
+    ActiveVoiceSynthesis,
+    NativeVoiceRegistry,
+    native_voice_profile,
+    pcm_s16_chunks,
+    voice_profile_for,
+)
 
 
 log = logging.getLogger("crown.native")
@@ -92,6 +100,22 @@ class NativeBrainPatch(BaseModel):
     patch: dict[str, Any]
 
 
+class NativeVoiceBody(BaseModel):
+    schemaVersion: int = Field(default=1)
+    sessionID: str | dict[str, Any]
+    turnID: str | dict[str, Any]
+    speechGenerationID: str | dict[str, Any]
+    requestID: str | dict[str, Any]
+    segmentIndex: int = Field(default=0, ge=0, le=512)
+    locale: str = Field(default="ru-RU", min_length=2, max_length=24)
+    text: str = Field(min_length=1, max_length=4096)
+
+
+class NativeVoiceCancelBody(BaseModel):
+    sessionID: str | dict[str, Any]
+    speechGenerationID: str | dict[str, Any]
+
+
 class NativeCrownAPI:
     def __init__(
         self,
@@ -103,6 +127,9 @@ class NativeCrownAPI:
         turns: ActiveTurnRegistry | None = None,
         mutations: MutationReplayRegistry | None = None,
         skills: CrownSkillRegistry | None = None,
+        voice: Any | None = None,
+        voice_generations: NativeVoiceRegistry | None = None,
+        usage_guard: Any | None = None,
     ) -> None:
         self.core = core
         self.store = store
@@ -110,6 +137,9 @@ class NativeCrownAPI:
         self.turns = turns or ActiveTurnRegistry()
         self.mutations = mutations or MutationReplayRegistry()
         self.skills = skills or CrownSkillRegistry()
+        self.voice = voice
+        self.voice_generations = voice_generations or NativeVoiceRegistry()
+        self.usage_guard = usage_guard
         self.router = APIRouter(prefix="/api/v1/crown", tags=["CROWN native"])
         self._bind_routes()
 
@@ -196,20 +226,102 @@ class NativeCrownAPI:
         async def read_skill(
             skill_id: str,
             authorization: str | None = Header(default=None),
+            cursor: str | None = Query(default=None, max_length=32),
+            limit: int = Query(default=20, ge=1, le=50),
+            x_crown_request_id: str | None = Header(default=None, alias="X-Crown-Request-ID"),
         ):
             principal = await self._principal(authorization)
+            self._enforce_usage(principal, "skill")
+            try:
+                skill_request_id = UUID(str(x_crown_request_id or ""))
+            except ValueError:
+                skill_request_id = uuid4()
             if not self.skills.permits_read(skill_id, CrownSurface.IOS):
                 raise HTTPException(status_code=404, detail="capability_unavailable")
             try:
-                result = await asyncio.to_thread(self.core.read_skill, principal, skill_id)
+                result = await asyncio.to_thread(
+                    self.core.skill_result,
+                    principal,
+                    skill_id,
+                    cursor=cursor,
+                    limit=limit,
+                )
             except ValueError:
                 raise HTTPException(status_code=404, detail="capability_unavailable") from None
+            log.info(
+                "native skill complete surface=ios owner=%s skill=%s request=%s",
+                principal.black_crown_user_id,
+                skill_id,
+                skill_request_id,
+            )
             return {
                 "schema_version": 1,
+                "request_id": str(skill_request_id),
                 "capability": skill_id,
                 "black_crown_user_id": str(principal.black_crown_user_id),
-                "data": result,
+                **result.projection(),
             }
+
+        @self.router.get("/voice/profile")
+        async def voice_profile(authorization: str | None = Header(default=None)):
+            await self._principal(authorization)
+            if self.voice is None or not bool(getattr(self.voice, "enabled", False)):
+                raise HTTPException(status_code=503, detail="speech_synthesis_unavailable")
+            return voice_profile_for(self.voice)
+
+        @self.router.post("/voice/synthesize")
+        async def synthesize_voice(
+            body: NativeVoiceBody,
+            authorization: str | None = Header(default=None),
+        ):
+            principal = await self._principal(authorization)
+            if body.schemaVersion != 1:
+                raise HTTPException(status_code=409, detail="protocol_mismatch")
+            if self.voice is None or not bool(getattr(self.voice, "enabled", False)):
+                raise HTTPException(status_code=503, detail="speech_synthesis_unavailable")
+            self._enforce_usage(principal, "voice")
+            session_id = _uuid(body.sessionID)
+            turn_id = _uuid(body.turnID)
+            generation_id = _uuid(body.speechGenerationID)
+            request_id = _uuid(body.requestID)
+            try:
+                control = self.voice_generations.start(
+                    principal.black_crown_user_id,
+                    session_id,
+                    turn_id,
+                    generation_id,
+                    request_id,
+                )
+            except CrownCoreFailure as failure:
+                status = 403 if failure.code == "ownership_mismatch" else 409
+                raise HTTPException(status_code=status, detail=failure.code) from None
+            return StreamingResponse(
+                self._voice_stream(body, principal, control),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Accel-Buffering": "no",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-Crown-Protocol": VOICE_PROTOCOL_VERSION,
+                    "X-Crown-Speech-Generation-ID": str(generation_id),
+                },
+            )
+
+        @self.router.post("/voice/cancel")
+        async def cancel_voice(
+            body: NativeVoiceCancelBody,
+            authorization: str | None = Header(default=None),
+        ):
+            principal = await self._principal(authorization)
+            try:
+                cancelled = self.voice_generations.cancel(
+                    principal.black_crown_user_id,
+                    _uuid(body.sessionID),
+                    _uuid(body.speechGenerationID),
+                )
+            except CrownCoreFailure as failure:
+                raise HTTPException(status_code=403, detail=failure.code) from None
+            return {"ok": True, "cancelled": cancelled}
 
         @self.router.patch("/brain")
         async def patch_brain(
@@ -242,6 +354,129 @@ class NativeCrownAPI:
             result = {"black_crown_user_id": str(principal.black_crown_user_id), **snapshot}
             self.mutations.finish(principal.black_crown_user_id, mutation_key, "brain.patch", result)
             return JSONResponse(result, headers={"X-Crown-Replay": "0"})
+
+    def _enforce_usage(self, principal: CrownPrincipal, category: str) -> None:
+        if self.usage_guard is None:
+            return
+        decision = self.usage_guard.check(principal.legacy_owner_id, category)
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail="rate_limited",
+                headers={"Retry-After": str(decision.retry_after_s)},
+            )
+
+    async def _voice_stream(
+        self,
+        body: NativeVoiceBody,
+        principal: CrownPrincipal,
+        control: ActiveVoiceSynthesis,
+    ) -> AsyncIterator[bytes]:
+        task = asyncio.current_task()
+        if task is not None:
+            self.voice_generations.attach(control, task)
+        sequence = 0
+        artifact = None
+
+        def envelope(event_type: str, **fields: Any) -> dict[str, Any]:
+            nonlocal sequence
+            sequence += 1
+            return {
+                "schema_version": 1,
+                "protocol_version": VOICE_PROTOCOL_VERSION,
+                "type": event_type,
+                "session_id": str(control.session_id),
+                "turn_id": str(control.turn_id),
+                "speech_generation_id": str(control.generation_id),
+                "request_id": str(control.request_id),
+                "event_id": str(uuid4()),
+                "sequence": sequence,
+                "timestamp": time.time(),
+                "segment_index": int(body.segmentIndex),
+                **fields,
+            }
+
+        completed = False
+        try:
+            log.info(
+                "native voice start surface=ios owner=%s session=%s turn=%s generation=%s request=%s",
+                principal.black_crown_user_id,
+                control.session_id,
+                control.turn_id,
+                control.generation_id,
+                control.request_id,
+            )
+            profile = await asyncio.to_thread(
+                native_voice_profile,
+                principal,
+                self.core,
+                body.locale,
+            )
+            artifact = await self.voice.synthesize_wave(body.text, profile)
+            yield _sse(
+                envelope(
+                    "voice.started",
+                    profile_id="black-crown-canonical-v1",
+                    quality=artifact.quality,
+                    spoken_length=len(artifact.spoken_text),
+                )
+            )
+            chunks = iter(pcm_s16_chunks(artifact.path))
+            current = next(chunks, None)
+            while current is not None:
+                following = next(chunks, None)
+                yield _sse(
+                    envelope(
+                        "voice.audio",
+                        **current,
+                        is_final=following is None,
+                    )
+                )
+                current = following
+                await asyncio.sleep(0)
+            completed = True
+            yield _sse(envelope("voice.completed", quality=artifact.quality, is_final=True))
+            log.info(
+                "native voice complete surface=ios session=%s turn=%s generation=%s request=%s",
+                control.session_id,
+                control.turn_id,
+                control.generation_id,
+                control.request_id,
+            )
+        except asyncio.CancelledError:
+            log.info(
+                "native voice cancelled surface=ios session=%s turn=%s generation=%s request=%s",
+                control.session_id,
+                control.turn_id,
+                control.generation_id,
+                control.request_id,
+            )
+            yield _sse(envelope("voice.cancelled", failure_code="cancelled", is_final=True))
+        except ValueError:
+            yield _sse(
+                envelope(
+                    "voice.failed",
+                    failure_code="invalid_spoken_content",
+                    is_final=True,
+                )
+            )
+        except Exception as exc:
+            log.warning(
+                "native voice failed request=%s error=%s",
+                control.request_id,
+                type(exc).__name__,
+            )
+            yield _sse(
+                envelope(
+                    "voice.failed",
+                    failure_code="speech_synthesis_unavailable",
+                    is_final=True,
+                )
+            )
+        finally:
+            if artifact is not None:
+                artifact.cleanup()
+            self.voice_generations.finish(control, completed=completed)
 
     async def _event_stream(
         self,
@@ -411,7 +646,8 @@ def _uuid(value: Any) -> UUID:
 
 def _sse(payload: dict[str, Any]) -> bytes:
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    return f"id: {payload.get('eventID', '')}\nevent: {payload.get('type', 'message')}\ndata: {data}\n\n".encode()
+    event_id = payload.get("eventID") or payload.get("event_id") or ""
+    return f"id: {event_id}\nevent: {payload.get('type', 'message')}\ndata: {data}\n\n".encode()
 
 
 async def _replay(events: tuple[dict, ...]) -> AsyncIterator[bytes]:

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+import struct
+import tempfile
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -11,11 +15,19 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.crown_core.api import NativeCrownAPI, PROTOCOL_VERSION, SupabaseNativeAuthenticator
-from app.crown_core.contracts import CrownPrincipal, CrownSurface, CrownTurnResult
+from app.crown_core.contracts import (
+    CrownPrincipal,
+    CrownSkillBlock,
+    CrownSkillResult,
+    CrownSurface,
+    CrownTurnResult,
+)
 from app.crown_core.response import SpokenSentenceAccumulator, spoken_text
 from app.crown_core.runtime import ActiveTurnRegistry, MutationReplayRegistry
 from app.crown_core.service import CrownCore
 from app.crown_core.skills import CrownSkillRegistry
+from app.crown_core.voice import VOICE_PROTOCOL_VERSION, NativeVoiceRegistry
+from app.services.voice.service import WaveVoiceArtifact
 from app.services.conversation.service import ConversationService
 
 
@@ -89,6 +101,21 @@ class FakeCore:
         assert principal == PRINCIPAL
         return {"fixture": identifier}
 
+    def profile_for(self, principal):
+        assert principal == PRINCIPAL
+        return {"black_crown_user_id": str(OWNER), "voice": "TEAMMATE"}
+
+    def skill_result(self, principal, identifier, *, cursor=None, limit=20):
+        assert principal == PRINCIPAL
+        return CrownSkillResult(
+            skill_id=identifier,
+            title="Fixture",
+            summary="Fixture summary",
+            blocks=(CrownSkillBlock("text", {"text": "fixture"}),),
+            data={"fixture": identifier},
+            freshness_timestamp="2026-08-24T00:00:00Z",
+        )
+
     async def execute_turn_async(self, request, *, on_partial=None):
         self.turns.append(request)
         on_partial("Первое предложение. ", {"phase": "generating"})
@@ -99,7 +126,32 @@ class FakeCore:
         )
 
 
-def app_client(*, auth=None, core=None, registry=None):
+class FakeNativeVoice:
+    enabled = True
+    high_fidelity_active = True
+    _local_fallback_enabled = True
+    backend = object()
+
+    def __init__(self):
+        self.calls = []
+
+    async def synthesize_wave(self, text, profile):
+        self.calls.append((text, dict(profile)))
+        temp_dir = Path(tempfile.mkdtemp(prefix="voice-native-test-"))
+        path = temp_dir / "reply.wav"
+        rate = 16_000
+        with wave.open(str(path), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(rate)
+            samples = bytearray()
+            for index in range(rate // 20):
+                samples.extend(struct.pack("<h", int(3000 * math.sin(2 * math.pi * 220 * index / rate))))
+            output.writeframes(bytes(samples))
+        return WaveVoiceArtifact(path, text, temp_dir, "openai", "marin", "canonical")
+
+
+def app_client(*, auth=None, core=None, registry=None, voice=None, voice_registry=None, usage_guard=None):
     app = FastAPI()
     api = NativeCrownAPI(
         settings=SimpleNamespace(supabase_url="", supabase_service_role_key=""),
@@ -107,6 +159,9 @@ def app_client(*, auth=None, core=None, registry=None):
         store=FakeStore(),
         authenticator=auth or FakeAuthenticator(),
         turns=registry,
+        voice=voice,
+        voice_generations=voice_registry,
+        usage_guard=usage_guard,
     )
     app.include_router(api.router)
     return TestClient(app), api
@@ -348,9 +403,17 @@ def test_native_read_skills_are_authenticated_allow_listed_and_owner_scoped():
     assert response.status_code == 200
     assert response.json() == {
         "schema_version": 1,
+        "request_id": response.json()["request_id"],
         "capability": "training_summary_read",
         "black_crown_user_id": str(OWNER),
+        "skill_id": "training_summary_read",
+        "title": "Fixture",
+        "summary": "Fixture summary",
+        "blocks": [{"type": "text", "text": "fixture"}],
         "data": {"fixture": "training_summary_read"},
+        "freshness_timestamp": "2026-08-24T00:00:00Z",
+        "warnings": [],
+        "next_cursor": None,
     }
 
     denied = client.get(
@@ -359,6 +422,106 @@ def test_native_read_skills_are_authenticated_allow_listed_and_owner_scoped():
     )
     assert denied.status_code == 404
     assert denied.json()["detail"] == "capability_unavailable"
+
+
+def test_native_voice_profile_is_canonical_safe_and_authenticated():
+    voice = FakeNativeVoice()
+    client, _ = app_client(voice=voice)
+    assert client.get("/api/v1/crown/voice/profile").status_code == 401
+    response = client.get(
+        "/api/v1/crown/voice/profile",
+        headers={"Authorization": "Bearer fixture"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["profile_id"] == "black-crown-canonical-v1"
+    assert body["protocol_version"] == VOICE_PROTOCOL_VERSION
+    assert body["supported_languages"] == ["ru-RU", "en-US"]
+    assert body["output_codecs"] == ["pcm_s16le"]
+    assert "marin" not in response.text.casefold()
+
+
+@pytest.mark.parametrize("locale", ["ru-RU", "en-US"])
+def test_native_voice_stream_is_ordered_complete_and_owner_scoped(locale):
+    voice = FakeNativeVoice()
+    client, _ = app_client(voice=voice)
+    session_id, turn_id, generation_id, request_id = uuid4(), uuid4(), uuid4(), uuid4()
+    payload = {
+        "schemaVersion": 1,
+        "sessionID": str(session_id),
+        "turnID": str(turn_id),
+        "speechGenerationID": str(generation_id),
+        "requestID": str(request_id),
+        "segmentIndex": 0,
+        "locale": locale,
+        "text": "Первое предложение. Второе предложение.",
+    }
+    response = client.post(
+        "/api/v1/crown/voice/synthesize",
+        headers={"Authorization": "Bearer fixture"},
+        json=payload,
+    )
+    assert response.status_code == 200
+    events = sse_payloads(response)
+    assert events[0]["type"] == "voice.started"
+    assert events[-1]["type"] == "voice.completed"
+    assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+    audio = [event for event in events if event["type"] == "voice.audio"]
+    assert audio and audio[-1]["is_final"] is True
+    assert all(event["codec"] == "pcm_s16le" for event in audio)
+    assert all(event["speech_generation_id"] == str(generation_id) for event in events)
+    assert voice.calls[0][1]["language"] == ("en" if locale.startswith("en") else "ru")
+    assert "black_crown_user_id" not in voice.calls[0][1]
+
+    payload["speechGenerationID"] = str(uuid4())
+    payload["text"] = "duplicate"
+    duplicate = client.post(
+        "/api/v1/crown/voice/synthesize",
+        headers={"Authorization": "Bearer fixture"},
+        json=payload,
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == "voice_request_completed"
+
+
+def test_native_voice_cancellation_is_idempotent_and_cross_user_safe():
+    registry = NativeVoiceRegistry()
+    session_id, turn_id, generation_id, request_id = uuid4(), uuid4(), uuid4(), uuid4()
+    control = registry.start(OWNER, session_id, turn_id, generation_id, request_id)
+    assert registry.cancel(OWNER, session_id, generation_id) is True
+    assert registry.cancel(OWNER, session_id, generation_id) is True
+    with pytest.raises(Exception, match="ownership_mismatch"):
+        registry.cancel(uuid4(), session_id, generation_id)
+    registry.finish(control, completed=False)
+    assert registry.cancel(OWNER, session_id, generation_id) is False
+
+
+def test_native_voice_and_skill_routes_enforce_shared_rate_limits():
+    class DeniedGuard:
+        def check(self, owner, category):
+            assert owner == PRINCIPAL.legacy_owner_id
+            return SimpleNamespace(allowed=False, retry_after_s=9)
+
+    client, _ = app_client(voice=FakeNativeVoice(), usage_guard=DeniedGuard())
+    skill = client.get(
+        "/api/v1/crown/skills/player_brain_read",
+        headers={"Authorization": "Bearer fixture"},
+    )
+    assert skill.status_code == 429
+    assert skill.headers["retry-after"] == "9"
+    voice = client.post(
+        "/api/v1/crown/voice/synthesize",
+        headers={"Authorization": "Bearer fixture"},
+        json={
+            "sessionID": str(uuid4()),
+            "turnID": str(uuid4()),
+            "speechGenerationID": str(uuid4()),
+            "requestID": str(uuid4()),
+            "locale": "ru-RU",
+            "text": "test",
+        },
+    )
+    assert voice.status_code == 429
 
 
 def test_spoken_projection_removes_markup_urls_and_preserves_sentence_order():
@@ -468,6 +631,52 @@ def test_shared_read_skills_use_only_the_server_resolved_canonical_owner():
         "messages": [{"role": "assistant", "content": "context"}],
         "count": 1,
     }
+
+
+@pytest.mark.parametrize(
+    "skill_id,block_type",
+    [
+        ("player_brain_read", "text"),
+        ("game_intel_read", "metric"),
+        ("loadout_read", "loadout"),
+        ("training_summary_read", "timeline"),
+        ("history_summary_read", "timeline"),
+    ],
+)
+def test_shared_read_skills_return_typed_surface_neutral_results(skill_id, block_type):
+    core = CrownCore(conversation=ConversationProbe(), store=SharedStoreProbe(), profiles=ProfileProbe())
+    principal = core.principal_for_authenticated_identity("apple", str(uuid4()))
+    assert principal is not None
+    result = core.skill_result(principal, skill_id)
+    projection = result.projection()
+    assert projection["skill_id"] == skill_id
+    assert projection["blocks"][0]["type"] == block_type
+    assert projection["freshness_timestamp"].endswith("Z")
+    assert "telegram" not in json.dumps(projection).casefold()
+
+
+def test_history_summary_is_bounded_and_cursor_paginated():
+    class HistoryStore(SharedStoreProbe):
+        def get(self, owner):
+            return [
+                {"role": "user" if index % 2 == 0 else "assistant", "content": f"message-{index}"}
+                for index in range(75)
+            ]
+
+    core = CrownCore(conversation=ConversationProbe(), store=HistoryStore(), profiles=ProfileProbe())
+    principal = core.principal_for_authenticated_identity("apple", str(uuid4()))
+    first = core.read_skill(principal, "history_summary_read", limit=20)
+    second = core.read_skill(
+        principal,
+        "history_summary_read",
+        cursor=first["next_cursor"],
+        limit=20,
+    )
+    assert first["count"] == second["count"] == 20
+    assert first["messages"][-1]["content"] == "message-74"
+    assert second["messages"][-1]["content"] == "message-54"
+    assert first["next_cursor"] == "20"
+    assert second["next_cursor"] == "40"
 
 
 def test_native_adapter_reuses_the_shared_canonical_rate_limit_boundary():

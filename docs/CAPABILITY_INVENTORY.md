@@ -17,7 +17,7 @@ Audit scope: the production FastAPI/Telegram/Web runtime under `app/`. Classific
 | Account identity, merge/link and canonical resolution | `SENSITIVE` | Supabase GAME plus server identity services | resolution only; verified external link flow required |
 | VOD upload, frame analysis and evidence fusion | `SERVER_TOOL` | VOD services and Telegram/Web ingress | not exposed |
 | LLM generation and official-game-data fetches | `SERVER_TOOL` | server settings, AI hook/client and knowledge services | only through Core conversation |
-| Voice STT/TTS/Piper/provider audio | `SERVER_TOOL` | voice services and Web/Telegram adapters | voice profile contract only; native audio remains client-side |
+| Canonical TTS selection, spoken normalization and PCM transport | `SERVER_TOOL` | shared `VoiceService`, OpenAI high-fidelity provider, Piper RU fallback, surface adapters | authenticated profile/synthesize/cancel |
 | Operator intelligence, missions, longitudinal strategy | `SERVER_TOOL` | operator-intelligence services | context may inform Core; direct tools not exposed |
 | Rate limiting, replay guards, policy and observability | `SERVER_TOOL` | security/observability services | enforced server-side |
 | Telegram commands, callbacks, keyboards and rich messages | `TELEGRAM_PRESENTATION` | router, use cases, UI, Telegram adapters | never |
@@ -32,3 +32,5 @@ Audit scope: the production FastAPI/Telegram/Web runtime under `app/`. Classific
 The native API never dynamically imports a handler by client input. `GET /api/v1/crown/skills/{skill_id}` first checks `CrownSkillRegistry`, then resolves data through the authenticated `CrownPrincipal`. Every projection uses `principal.legacy_owner_id` only after verifying the profile projects the same server-resolved `black_crown_user_id`. Unknown, write, sensitive and presentation capabilities fail closed.
 
 No capability in this inventory authorizes a client-supplied canonical user ID, service-role credential, provider token or arbitrary tool execution.
+
+Native read results are typed `CrownSkillResult` projections with freshness metadata. History is capped and cursor-paginated. Skills share the server `skill` rate-limit category; voice uses the existing independent `voice` cost category. No safe-read result contains Telegram SDK objects or presentation markup.

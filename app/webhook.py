@@ -107,6 +107,10 @@ def create_app() -> FastAPI:
                 await entitlement_service.close()
             except Exception as exc:
                 log.warning("entitlement service shutdown failed: %s", type(exc).__name__)
+            try:
+                await voice_service.close()
+            except Exception as exc:
+                log.warning("voice service shutdown failed: %s", type(exc).__name__)
             await tg.close()
             close_store = getattr(store, "close", None)
             if callable(close_store):
@@ -130,17 +134,19 @@ def create_app() -> FastAPI:
         store=store,
         profiles=profiles,
     )
+    voice_service = VoiceService(settings=settings)
     native_api = NativeCrownAPI(
         settings=settings,
         core=conversation,
         store=store,
+        voice=voice_service,
+        usage_guard=usage_guard,
     )
     app.include_router(native_api.router)
     command_console = CommandConsoleController(
         tg=tg, profiles=profiles, store=store, entitlements=entitlement_service, settings=settings
     )
 
-    voice_service = VoiceService(settings=settings)
     voice_controller = VoiceTelegramController(
         tg=tg, profiles=profiles, store=store, voice=voice_service, usage_guard=usage_guard
     )

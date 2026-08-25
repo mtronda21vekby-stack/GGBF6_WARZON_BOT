@@ -55,6 +55,21 @@ class VoiceArtifact:
 
 
 @dataclass
+class WaveVoiceArtifact:
+    """Surface-neutral synthesis result before Telegram/Web transcoding."""
+
+    path: Path
+    spoken_text: str
+    temp_dir: Path
+    provider: str = "unknown"
+    voice_name: str = ""
+    quality: str = "degraded"
+
+    def cleanup(self) -> None:
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+@dataclass
 class VoiceService:
     settings: Any
     backend: Any = None
@@ -208,7 +223,17 @@ class VoiceService:
         duplex_limit = max(500, min(int(getattr(self.settings, "voice_duplex_max_chars", 1800) or 1800), 3000))
         return min(full_limit, duplex_limit)
 
-    async def synthesize(self, text: str, profile: Mapping[str, Any] | None = None) -> VoiceArtifact:
+    async def synthesize_wave(
+        self,
+        text: str,
+        profile: Mapping[str, Any] | None = None,
+    ) -> WaveVoiceArtifact:
+        """Synthesize once through the canonical provider/fallback policy.
+
+        Native clients consume this surface-neutral WAV result. Telegram and
+        Web continue to call ``synthesize`` and apply their existing OGG/Opus
+        presentation adapter afterwards.
+        """
         if not self.enabled:
             raise RuntimeError("Voice/TTS is disabled")
         data = dict(profile or {})
@@ -218,46 +243,66 @@ class VoiceService:
 
         temp_dir = Path(tempfile.mkdtemp(prefix="bco-voice-"))
         wav_path = temp_dir / "reply.wav"
-        ogg_path = temp_dir / "reply.ogg"
         provider = "piper"
-        mastering = "piper-rescue-v2"
         voice_name = self.voice_name_for(data)
         try:
             async with self._lock:
                 cloud_ok = await self._cloud_wav(spoken, wav_path, data)
                 if cloud_ok:
                     provider = "openai"
-                    mastering = "natural-v3"
                     voice_name = self.voice_name_for(data)
-                    await asyncio.to_thread(
-                        wav_to_natural_ogg_opus,
-                        wav_path,
-                        ogg_path,
-                        bitrate_kbps=self._opus_bitrate_kbps,
-                    )
                 else:
+                    locale = str(data.get("language") or data.get("locale") or "ru").casefold()
+                    if locale.startswith("en"):
+                        raise RuntimeError("English fallback voice is unavailable")
                     await self._local_wav(spoken, wav_path, data)
                     provider = "piper"
-                    mastering = "piper-rescue-v2"
                     local_name = getattr(self.backend, "model_name", None)
                     if local_name:
                         voice_name = str(local_name)
-                    await asyncio.to_thread(
-                        wav_to_ogg_opus,
-                        wav_path,
-                        ogg_path,
-                        data,
-                        self._opus_bitrate_kbps,
-                    )
-            return VoiceArtifact(
-                path=ogg_path,
+            return WaveVoiceArtifact(
+                path=wav_path,
                 spoken_text=spoken,
                 temp_dir=temp_dir,
                 provider=provider,
                 voice_name=voice_name,
+                quality="canonical" if provider == "openai" else "fallback",
+            )
+        except Exception:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
+
+    async def synthesize(self, text: str, profile: Mapping[str, Any] | None = None) -> VoiceArtifact:
+        wave = await self.synthesize_wave(text, profile)
+        ogg_path = wave.temp_dir / "reply.ogg"
+        data = dict(profile or {})
+        try:
+            if wave.provider == "openai":
+                mastering = "natural-v3"
+                await asyncio.to_thread(
+                    wav_to_natural_ogg_opus,
+                    wave.path,
+                    ogg_path,
+                    bitrate_kbps=self._opus_bitrate_kbps,
+                )
+            else:
+                mastering = "piper-rescue-v2"
+                await asyncio.to_thread(
+                    wav_to_ogg_opus,
+                    wave.path,
+                    ogg_path,
+                    data,
+                    self._opus_bitrate_kbps,
+                )
+            return VoiceArtifact(
+                path=ogg_path,
+                spoken_text=wave.spoken_text,
+                temp_dir=wave.temp_dir,
+                provider=wave.provider,
+                voice_name=wave.voice_name,
                 mastering=mastering,
                 opus_bitrate_kbps=self._opus_bitrate_kbps,
             )
         except Exception:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            wave.cleanup()
             raise
