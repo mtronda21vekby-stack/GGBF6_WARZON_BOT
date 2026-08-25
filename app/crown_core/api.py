@@ -145,6 +145,11 @@ class NativeCrownAPI:
         self.skills = skills or CrownSkillRegistry()
         self.voice = voice
         self.voice_generations = voice_generations or NativeVoiceRegistry()
+        self.voice_generation_max_characters = max(
+            500,
+            min(int(getattr(settings, "voice_duplex_max_chars", 1800) or 1800), 3000),
+        )
+        self.voice_generation_max_segments = 32
         self.usage_guard = usage_guard
         self.account_links = account_links
         self.router = APIRouter(prefix="/api/v1/crown", tags=["CROWN native"])
@@ -359,7 +364,6 @@ class NativeCrownAPI:
                 raise HTTPException(status_code=409, detail="protocol_mismatch")
             if self.voice is None or not bool(getattr(self.voice, "enabled", False)):
                 raise HTTPException(status_code=503, detail="speech_synthesis_unavailable")
-            self._enforce_usage(principal, "voice")
             session_id = _uuid(body.sessionID)
             turn_id = _uuid(body.turnID)
             generation_id = _uuid(body.speechGenerationID)
@@ -371,9 +375,21 @@ class NativeCrownAPI:
                     turn_id,
                     generation_id,
                     request_id,
+                    segment_index=body.segmentIndex,
+                    text_length=len(body.text),
+                    maximum_segments=self.voice_generation_max_segments,
+                    maximum_characters=self.voice_generation_max_characters,
+                    on_generation_start=lambda: self._enforce_usage(principal, "voice"),
                 )
             except CrownCoreFailure as failure:
-                status = 403 if failure.code == "ownership_mismatch" else 409
+                if failure.code == "ownership_mismatch":
+                    status = 403
+                elif failure.code == "voice_generation_too_large":
+                    status = 413
+                elif failure.code == "voice_capacity_exhausted":
+                    status = 503
+                else:
+                    status = 409
                 raise HTTPException(status_code=status, detail=failure.code) from None
             return StreamingResponse(
                 self._voice_stream(body, principal, control),

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import struct
 import threading
+import time
 import wave
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -55,14 +56,32 @@ class ActiveVoiceSynthesis:
     task: asyncio.Task[Any] | None = None
 
 
+@dataclass
+class VoiceGenerationBudget:
+    owner: UUID
+    turn_id: UUID
+    next_segment_index: int
+    character_count: int
+    updated_at: float
+    cancelled: bool = False
+
+
 class NativeVoiceRegistry:
     """Owner-scoped generation authority for native speech cancellation."""
 
-    def __init__(self, completed_limit: int = 256) -> None:
+    def __init__(
+        self,
+        completed_limit: int = 256,
+        generation_limit: int = 1024,
+        generation_ttl_s: float = 900.0,
+    ) -> None:
         self._lock = threading.RLock()
         self._active: dict[tuple[UUID, UUID], ActiveVoiceSynthesis] = {}
         self._completed: OrderedDict[tuple[UUID, UUID], None] = OrderedDict()
         self._completed_limit = max(16, int(completed_limit))
+        self._generations: OrderedDict[tuple[UUID, UUID], VoiceGenerationBudget] = OrderedDict()
+        self._generation_limit = max(32, int(generation_limit))
+        self._generation_ttl_s = max(30.0, float(generation_ttl_s))
 
     def start(
         self,
@@ -71,10 +90,17 @@ class NativeVoiceRegistry:
         turn_id: UUID,
         generation_id: UUID,
         request_id: UUID,
+        *,
+        segment_index: int = 0,
+        text_length: int = 0,
+        maximum_segments: int = 32,
+        maximum_characters: int = 1800,
+        on_generation_start: Any | None = None,
     ) -> ActiveVoiceSynthesis:
         key = (session_id, generation_id)
         request_key = (owner, request_id)
         with self._lock:
+            self._prune_generations(time.monotonic())
             if request_key in self._completed:
                 raise CrownCoreFailure("voice_request_completed")
             existing = self._active.get(key)
@@ -82,6 +108,35 @@ class NativeVoiceRegistry:
                 if existing.owner != owner:
                     raise CrownCoreFailure("ownership_mismatch")
                 raise CrownCoreFailure("voice_generation_in_progress")
+
+            now = time.monotonic()
+            budget = self._generations.get(key)
+            if budget is None:
+                if segment_index != 0:
+                    raise CrownCoreFailure("voice_segment_out_of_order")
+                if callable(on_generation_start):
+                    on_generation_start()
+                budget = VoiceGenerationBudget(owner, turn_id, 0, 0, now)
+                self._generations[key] = budget
+            else:
+                if budget.owner != owner:
+                    raise CrownCoreFailure("ownership_mismatch")
+                if budget.turn_id != turn_id:
+                    raise CrownCoreFailure("voice_generation_conflict")
+                if budget.cancelled:
+                    raise CrownCoreFailure("voice_generation_cancelled")
+                self._generations.move_to_end(key)
+
+            if segment_index != budget.next_segment_index:
+                raise CrownCoreFailure("voice_segment_out_of_order")
+            if segment_index >= max(1, int(maximum_segments)):
+                raise CrownCoreFailure("voice_generation_too_large")
+            next_character_count = budget.character_count + max(0, int(text_length))
+            if next_character_count > max(1, int(maximum_characters)):
+                raise CrownCoreFailure("voice_generation_too_large")
+            budget.next_segment_index += 1
+            budget.character_count = next_character_count
+            budget.updated_at = now
             control = ActiveVoiceSynthesis(owner, session_id, turn_id, generation_id, request_id)
             self._active[key] = control
             return control
@@ -93,9 +148,16 @@ class NativeVoiceRegistry:
 
     def cancel(self, owner: UUID, session_id: UUID, generation_id: UUID) -> bool:
         with self._lock:
+            key = (session_id, generation_id)
+            budget = self._generations.get(key)
+            if budget is not None:
+                if budget.owner != owner:
+                    raise CrownCoreFailure("ownership_mismatch")
+                budget.cancelled = True
+                budget.updated_at = time.monotonic()
             control = self._active.get((session_id, generation_id))
             if control is None:
-                return False
+                return budget is not None
             if control.owner != owner:
                 raise CrownCoreFailure("ownership_mismatch")
             task = control.task
@@ -114,6 +176,19 @@ class NativeVoiceRegistry:
                 self._completed.move_to_end(request_key)
                 while len(self._completed) > self._completed_limit:
                     self._completed.popitem(last=False)
+
+    def _prune_generations(self, now: float) -> None:
+        expired_before = now - self._generation_ttl_s
+        for key, budget in list(self._generations.items()):
+            if budget.updated_at >= expired_before:
+                continue
+            if key not in self._active:
+                self._generations.pop(key, None)
+        while len(self._generations) >= self._generation_limit:
+            victim = next((key for key in self._generations if key not in self._active), None)
+            if victim is None:
+                raise CrownCoreFailure("voice_capacity_exhausted")
+            self._generations.pop(victim, None)
 
 
 def voice_profile_for(service: Any) -> dict[str, Any]:

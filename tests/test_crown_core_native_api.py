@@ -573,7 +573,8 @@ def test_native_voice_cancellation_is_idempotent_and_cross_user_safe():
     with pytest.raises(Exception, match="ownership_mismatch"):
         registry.cancel(uuid4(), session_id, generation_id)
     registry.finish(control, completed=False)
-    assert registry.cancel(OWNER, session_id, generation_id) is False
+    assert registry.cancel(OWNER, session_id, generation_id) is True
+    assert registry.cancel(OWNER, session_id, uuid4()) is False
 
 
 def test_native_voice_and_skill_routes_enforce_shared_rate_limits():
@@ -602,6 +603,96 @@ def test_native_voice_and_skill_routes_enforce_shared_rate_limits():
         },
     )
     assert voice.status_code == 429
+
+
+def test_native_voice_rate_limit_is_charged_once_per_bounded_generation():
+    class OneGenerationGuard:
+        def __init__(self):
+            self.calls = 0
+
+        def check(self, owner, category):
+            assert owner == PRINCIPAL.legacy_owner_id
+            assert category == "voice"
+            self.calls += 1
+            return SimpleNamespace(allowed=self.calls == 1, retry_after_s=11)
+
+    guard = OneGenerationGuard()
+    client, _ = app_client(voice=FakeNativeVoice(), usage_guard=guard)
+    session_id, turn_id, generation_id = uuid4(), uuid4(), uuid4()
+
+    for segment_index in range(3):
+        response = client.post(
+            "/api/v1/crown/voice/synthesize",
+            headers={"Authorization": "Bearer fixture"},
+            json={
+                "sessionID": str(session_id),
+                "turnID": str(turn_id),
+                "speechGenerationID": str(generation_id),
+                "requestID": str(uuid4()),
+                "segmentIndex": segment_index,
+                "locale": "ru-RU",
+                "text": f"Сегмент {segment_index}.",
+            },
+        )
+        assert response.status_code == 200
+
+    assert guard.calls == 1
+    next_generation = client.post(
+        "/api/v1/crown/voice/synthesize",
+        headers={"Authorization": "Bearer fixture"},
+        json={
+            "sessionID": str(session_id),
+            "turnID": str(uuid4()),
+            "speechGenerationID": str(uuid4()),
+            "requestID": str(uuid4()),
+            "segmentIndex": 0,
+            "locale": "ru-RU",
+            "text": "Новый ответ.",
+        },
+    )
+    assert next_generation.status_code == 429
+    assert next_generation.headers["retry-after"] == "11"
+    assert guard.calls == 2
+
+
+def test_native_voice_generation_rejects_gaps_replay_and_post_cancel_segments():
+    client, _ = app_client(voice=FakeNativeVoice())
+    session_id, turn_id, generation_id = uuid4(), uuid4(), uuid4()
+
+    def synthesize(segment_index):
+        return client.post(
+            "/api/v1/crown/voice/synthesize",
+            headers={"Authorization": "Bearer fixture"},
+            json={
+                "sessionID": str(session_id),
+                "turnID": str(turn_id),
+                "speechGenerationID": str(generation_id),
+                "requestID": str(uuid4()),
+                "segmentIndex": segment_index,
+                "locale": "en-US",
+                "text": "Bounded segment.",
+            },
+        )
+
+    assert synthesize(1).json()["detail"] == "voice_segment_out_of_order"
+    assert synthesize(0).status_code == 200
+    replay = synthesize(0)
+    assert replay.status_code == 409
+    assert replay.json()["detail"] == "voice_segment_out_of_order"
+    gap = synthesize(2)
+    assert gap.status_code == 409
+    assert gap.json()["detail"] == "voice_segment_out_of_order"
+
+    cancelled = client.post(
+        "/api/v1/crown/voice/cancel",
+        headers={"Authorization": "Bearer fixture"},
+        json={"sessionID": str(session_id), "speechGenerationID": str(generation_id)},
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json() == {"ok": True, "cancelled": True}
+    stale = synthesize(1)
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "voice_generation_cancelled"
 
 
 def test_spoken_projection_removes_markup_urls_and_preserves_sentence_order():
