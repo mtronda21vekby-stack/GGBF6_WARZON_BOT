@@ -496,6 +496,7 @@ class NativeCrownAPI:
             }
 
         completed = False
+        phase = "profile"
         try:
             log.info(
                 "native voice start surface=ios owner=%s session=%s turn=%s generation=%s request=%s",
@@ -511,6 +512,7 @@ class NativeCrownAPI:
                 self.core,
                 body.locale,
             )
+            phase = "synthesis"
             # Cloud synthesis produces a complete WAV before PCM framing. Keep
             # the authenticated SSE transport alive while that bounded server
             # operation runs; otherwise a healthy provider response slightly
@@ -540,6 +542,7 @@ class NativeCrownAPI:
                     spoken_length=len(artifact.spoken_text),
                 )
             )
+            phase = "pcm_contract"
             chunks = iter(pcm_s16_chunks(artifact.path))
             current = next(chunks, None)
             while current is not None:
@@ -572,10 +575,15 @@ class NativeCrownAPI:
             )
             yield _sse(envelope("voice.cancelled", failure_code="cancelled", is_final=True))
         except ValueError:
+            failure_code = (
+                "invalid_spoken_content"
+                if phase == "synthesis"
+                else f"{phase}_invalid"
+            )
             yield _sse(
                 envelope(
                     "voice.failed",
-                    failure_code="invalid_spoken_content",
+                    failure_code=failure_code,
                     is_final=True,
                 )
             )
@@ -601,7 +609,7 @@ class NativeCrownAPI:
             yield _sse(
                 envelope(
                     "voice.failed",
-                    failure_code="speech_synthesis_unavailable",
+                    failure_code=f"{phase}_unavailable",
                     is_final=True,
                 )
             )
