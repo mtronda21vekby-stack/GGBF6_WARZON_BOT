@@ -732,6 +732,8 @@ def test_spoken_projection_removes_markup_urls_and_preserves_sentence_order():
     delta2, speech2 = accumulator.update("Первое. Второе.")
     assert delta1 + delta2 == "Первое. Второе."
     assert speech1 + speech2 == ["Первое.", "Второе."]
+    assert spoken_text("👑. BLACK CROWN OPS.\nНужный ответ.") == "Нужный ответ."
+    assert spoken_text("```private code.```\nОтвет.") == "Ответ."
 
 
 def test_native_skill_registry_exposes_only_explicit_read_only_core_capabilities():

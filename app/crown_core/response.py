@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 
 _MARKDOWN_LINK = re.compile(r"\[([^\]]+)\]\([^\)]+\)")
+_CODE_BLOCK = re.compile(r"```.*?(?:```|$)", re.DOTALL)
 _MARKDOWN = re.compile(r"(?:```|`|\*\*|__|~~|^#{1,6}\s*)", re.MULTILINE)
 _URL = re.compile(r"https?://\S+")
 _SPACE = re.compile(r"\s+")
@@ -13,11 +15,28 @@ _SENTENCE = re.compile(r".+?(?:[.!?…]+(?:[\"'»)]*)|$)(?:\s+|$)", re.DOTALL)
 def spoken_text(display_text: str) -> str:
     """Conservative, language-neutral projection for client speech synthesis."""
 
-    value = _MARKDOWN_LINK.sub(r"\1", str(display_text or ""))
+    value = _CODE_BLOCK.sub(" ", str(display_text or ""))
+    value = _MARKDOWN_LINK.sub(r"\1", value)
     value = _URL.sub(" ", value)
     value = _MARKDOWN.sub("", value)
     value = value.replace("•", ". ").replace("—", " — ")
-    return _SPACE.sub(" ", value).strip()
+    safe_lines: list[str] = []
+    for source_line in value.splitlines():
+        line = source_line.strip()
+        upper = line.upper()
+        if upper in {"— BCO", "- BCO"}:
+            continue
+        line = re.sub(r"BLACK\s+CROWN\s+OPS", " ", line, flags=re.IGNORECASE)
+        if line and set(line) <= {"━", "─", "-", "_", "=", " "}:
+            continue
+        line = "".join(
+            character
+            for character in line
+            if unicodedata.category(character) not in {"So", "Cs", "Co"}
+        )
+        if any(character.isalnum() for character in line):
+            safe_lines.append(line)
+    return _SPACE.sub(" ", " ".join(safe_lines)).strip()
 
 
 class SpokenSentenceAccumulator:
