@@ -4,6 +4,7 @@ import asyncio
 
 from app.services.entitlements.service import EntitlementStatus, LinkChallenge
 from app.services.entitlements.telegram import EntitlementTelegramController
+from app.services.identity.apple_link import AppleIdentityLinkStatus
 
 
 class FakeTelegram:
@@ -38,6 +39,17 @@ class FakeService:
         self.unlinked.append(user_id)
         self.status = EntitlementStatus()
         return True
+
+
+class FakeAppleLinks:
+    configured = True
+
+    def __init__(self):
+        self.completions: list[dict] = []
+
+    async def complete_from_telegram(self, **kwargs):
+        self.completions.append(kwargs)
+        return AppleIdentityLinkStatus(status="linked")
 
 
 def update(text: str, *, chat_type: str = "private", user_id: int = 123, chat_id: int | None = None):
@@ -125,3 +137,46 @@ def test_unlink_requires_explicit_confirmation():
 def test_unrelated_message_passes_to_existing_router():
     controller = EntitlementTelegramController(tg=FakeTelegram(), service=FakeService())
     assert run(controller.maybe_handle_command(update("Почему я умер на ротации?"))) is False
+
+
+def test_apple_link_deep_link_uses_private_server_observed_telegram_sender():
+    tg = FakeTelegram()
+    apple_links = FakeAppleLinks()
+    controller = EntitlementTelegramController(
+        tg=tg,
+        service=FakeService(),
+        apple_links=apple_links,
+    )
+
+    assert run(
+        controller.maybe_handle_command(
+            update("/start crownlink_" + "A" * 32, user_id=8275036156)
+        )
+    ) is True
+    assert apple_links.completions == [
+        {"code": "A" * 32, "telegram_user_id": 8275036156}
+    ]
+    assert "Apple привязан" in tg.messages[-1][1]
+
+
+def test_apple_link_deep_link_is_rejected_outside_private_chat():
+    tg = FakeTelegram()
+    apple_links = FakeAppleLinks()
+    controller = EntitlementTelegramController(
+        tg=tg,
+        service=FakeService(),
+        apple_links=apple_links,
+    )
+
+    assert run(
+        controller.maybe_handle_command(
+            update(
+                "/start crownlink_" + "A" * 32,
+                chat_type="group",
+                user_id=123,
+                chat_id=-100500,
+            )
+        )
+    ) is True
+    assert apple_links.completions == []
+    assert "только в личном чате" in tg.messages[-1][1]

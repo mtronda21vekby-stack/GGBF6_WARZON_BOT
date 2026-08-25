@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.services.entitlements.service import EntitlementStatus, PremiumEntitlementService
+from app.services.identity.apple_link import AppleIdentityLinkRejected, AppleIdentityLinkService
 from app.ui.entitlement_kb import kb_premium_bridge, kb_premium_unlink_confirm
 
 log = logging.getLogger("bco.entitlements.telegram")
@@ -70,7 +71,55 @@ def _status_lines(status: EntitlementStatus) -> list[str]:
 class EntitlementTelegramController:
     tg: Any
     service: PremiumEntitlementService
+    apple_links: AppleIdentityLinkService | None = None
     pending_unlink: dict[int, float] = field(default_factory=dict)
+
+    async def _complete_apple_link(
+        self,
+        chat_id: int,
+        user_id: int,
+        chat_type: str,
+        code: str,
+    ) -> None:
+        if chat_type != "private":
+            await self._private_required(chat_id)
+            return
+        if self.apple_links is None or not self.apple_links.configured:
+            await self.tg.send_message(
+                chat_id,
+                "⚠️ Привязка Apple сейчас недоступна. Вернись в приложение и повтори позже.",
+                kb_premium_bridge(),
+            )
+            return
+        try:
+            result = await self.apple_links.complete_from_telegram(
+                code=code,
+                telegram_user_id=user_id,
+            )
+        except AppleIdentityLinkRejected as failure:
+            if failure.reason in {"link_expired", "invalid_or_expired_code"}:
+                message = "⏳ Ссылка истекла или уже отменена. Создай новую в приложении BLACK CROWN."
+            elif failure.reason == "apple_identity_conflict":
+                message = "⚠️ Apple уже связан с другим аккаунтом. Автоматическая смена владельца запрещена."
+            else:
+                message = "⚠️ Не удалось подтвердить существующий аккаунт. Привязка не выполнена."
+            await self.tg.send_message(chat_id, message, kb_premium_bridge())
+            return
+        except Exception as exc:
+            log.warning("Apple identity link failed error=%s", type(exc).__name__)
+            await self.tg.send_message(
+                chat_id,
+                "⚠️ Сервер привязки временно недоступен. Ни один аккаунт не был изменён.",
+                kb_premium_bridge(),
+            )
+            return
+        suffix = " Повторный запрос безопасно распознан." if result.replayed else ""
+        await self.tg.send_message(
+            chat_id,
+            "✅ Apple привязан к существующему аккаунту BLACK CROWN.\n\n"
+            "Вернись в приложение — проверка завершится автоматически." + suffix,
+            kb_premium_bridge(),
+        )
 
     async def _send_hub(self, chat_id: int, user_id: int, prefix: str = "") -> None:
         try:
@@ -189,6 +238,16 @@ class EntitlementTelegramController:
         chat_id, user_id, username, chat_type, text = _extract(raw)
         if chat_id is None or user_id is None or not text:
             return False
+
+        apple_prefix = "/start crownlink_"
+        if text.startswith(apple_prefix):
+            await self._complete_apple_link(
+                chat_id,
+                user_id,
+                chat_type,
+                text[len(apple_prefix):].strip(),
+            )
+            return True
 
         if text in _OPEN_COMMANDS or text in _STATUS_COMMANDS:
             await self._send_hub(chat_id, user_id)

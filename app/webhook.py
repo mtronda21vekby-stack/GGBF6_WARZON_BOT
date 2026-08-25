@@ -23,6 +23,7 @@ from app.services.conversation.service import ConversationService
 from app.services.entitlements.service import PremiumEntitlementService
 from app.services.entitlements.site_bridge import SiteEntitlementBridgeAPI
 from app.services.entitlements.telegram import EntitlementTelegramController
+from app.services.identity.apple_link import AppleIdentityLinkService
 from app.services.profiles.service import ProfileService
 from app.services.storage.factory import build_store
 from app.services.telegram.command_console import CommandConsoleController
@@ -44,7 +45,12 @@ def create_app() -> FastAPI:
     store = build_store(settings)
     profiles = ProfileService(store=store)
     entitlement_service = PremiumEntitlementService(settings)
-    entitlement_controller = EntitlementTelegramController(tg=tg, service=entitlement_service)
+    apple_link_service = AppleIdentityLinkService(settings)
+    entitlement_controller = EntitlementTelegramController(
+        tg=tg,
+        service=entitlement_service,
+        apple_links=apple_link_service,
+    )
     site_entitlement_bridge = SiteEntitlementBridgeAPI(settings=settings, entitlements=entitlement_service)
     usage_guard = UsageGuard.from_settings(settings)
     replay_guard = UpdateReplayGuard(
@@ -108,6 +114,10 @@ def create_app() -> FastAPI:
             except Exception as exc:
                 log.warning("entitlement service shutdown failed: %s", type(exc).__name__)
             try:
+                await apple_link_service.close()
+            except Exception as exc:
+                log.warning("Apple link service shutdown failed: %s", type(exc).__name__)
+            try:
                 await voice_service.close()
             except Exception as exc:
                 log.warning("voice service shutdown failed: %s", type(exc).__name__)
@@ -141,6 +151,7 @@ def create_app() -> FastAPI:
         store=store,
         voice=voice_service,
         usage_guard=usage_guard,
+        account_links=apple_link_service,
     )
     app.include_router(native_api.router)
     command_console = CommandConsoleController(

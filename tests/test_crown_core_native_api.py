@@ -47,6 +47,12 @@ class FakeAuthenticator:
             raise self.failure
         return self.principal
 
+    async def authenticate_identity(self, authorization):
+        self.seen.append(authorization)
+        if self.failure:
+            raise self.failure
+        return self.principal.provider_subject
+
 
 class FakeAuthResponse:
     def __init__(self, status_code, payload):
@@ -151,7 +157,7 @@ class FakeNativeVoice:
         return WaveVoiceArtifact(path, text, temp_dir, "openai", "marin", "canonical")
 
 
-def app_client(*, auth=None, core=None, registry=None, voice=None, voice_registry=None, usage_guard=None):
+def app_client(*, auth=None, core=None, registry=None, voice=None, voice_registry=None, usage_guard=None, account_links=None):
     app = FastAPI()
     api = NativeCrownAPI(
         settings=SimpleNamespace(supabase_url="", supabase_service_role_key=""),
@@ -162,6 +168,7 @@ def app_client(*, auth=None, core=None, registry=None, voice=None, voice_registr
         voice=voice,
         voice_generations=voice_registry,
         usage_guard=usage_guard,
+        account_links=account_links,
     )
     app.include_router(api.router)
     return TestClient(app), api
@@ -283,6 +290,79 @@ def test_supabase_authenticator_resolves_apple_subject_server_side(monkeypatch):
 
     assert asyncio.run(authenticator.authenticate("Bearer " + "x" * 32)) == PRINCIPAL
     assert seen == [("apple", str(subject))]
+
+
+def test_native_bootstrap_reports_canonical_link_required_for_unlinked_apple(monkeypatch):
+    import app.crown_core.api as api_module
+
+    subject = uuid4()
+    settings = SimpleNamespace(
+        supabase_url="https://wqriwhciqvrbhkkiuhxb.supabase.co",
+        supabase_service_role_key="server-only-fixture",
+    )
+    authenticator = SupabaseNativeAuthenticator(
+        settings=settings,
+        core=SimpleNamespace(principal_for_authenticated_identity=lambda *_: None),
+    )
+    monkeypatch.setattr(api_module.httpx, "AsyncClient", FakeAuthHTTPClient)
+    FakeAuthHTTPClient.response = FakeAuthResponse(
+        200,
+        {"id": str(subject), "app_metadata": {"provider": "apple", "providers": ["apple"]}},
+    )
+
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(authenticator.authenticate("Bearer " + "x" * 32))
+    assert failure.value.status_code == 403
+    assert failure.value.detail == "canonical_link_required"
+
+
+def test_account_link_start_uses_authenticated_apple_subject_only():
+    class Links:
+        configured = True
+        seen = None
+
+        async def start(self, subject):
+            self.seen = subject
+            return SimpleNamespace(
+                link_id=UUID("22222222-2222-4222-8222-222222222222"),
+                verification_url="https://t.me/GGBF6_WARZON_BOT?start=crownlink_fixture",
+                expires_at="2026-08-25T16:00:00Z",
+            )
+
+    links = Links()
+    client, _ = app_client(account_links=links)
+    denied = client.post("/api/v1/crown/account-link/start")
+    assert denied.status_code == 401
+    response = client.post(
+        "/api/v1/crown/account-link/start",
+        headers={"Authorization": "Bearer fixture", "X-Crown-Correlation-ID": str(uuid4())},
+        json={"black_crown_user_id": str(uuid4())},
+    )
+    assert response.status_code == 200
+    assert links.seen == PRINCIPAL.provider_subject
+    assert "black_crown_user_id" not in response.json()
+    assert response.json()["link_method"] == "telegram"
+
+
+def test_account_link_status_is_bound_to_the_same_apple_subject():
+    class Links:
+        configured = True
+        seen = None
+
+        async def status(self, *, link_id, apple_subject):
+            self.seen = (link_id, apple_subject)
+            return SimpleNamespace(status="linked", expires_at="2026-08-25T16:00:00Z")
+
+    links = Links()
+    link_id = uuid4()
+    client, _ = app_client(account_links=links)
+    response = client.get(
+        f"/api/v1/crown/account-link/{link_id}/status",
+        headers={"Authorization": "Bearer fixture"},
+    )
+    assert response.status_code == 200
+    assert links.seen == (link_id, PRINCIPAL.provider_subject)
+    assert response.json()["status"] == "linked"
 
 
 def test_native_turn_stream_has_typed_ordered_protocol_and_complete_spoken_content():

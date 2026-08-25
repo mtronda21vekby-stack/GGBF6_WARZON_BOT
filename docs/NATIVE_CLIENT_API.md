@@ -10,6 +10,9 @@ The client must never send or choose `black_crown_user_id`.
 
 ## Routes
 
+- `POST /account-link/start` validates the Apple JWT and returns a short-lived Telegram verification URL without accepting an owner ID.
+- `GET /account-link/{link_id}/status` is bound to the same authenticated Apple subject and returns `pending`, `linked`, `expired`, `cancelled`, or `conflict`.
+- `DELETE /account-link/{link_id}` safely cancels a pending challenge owned by the authenticated Apple subject.
 - `POST /bootstrap` returns canonical account ID, bounded Player Brain, entitlements, allowed capabilities and protocol version.
 - `POST /session` creates or validates a client session identifier.
 - `POST /turn` starts an SSE stream. The request uses the typed iOS `schemaVersion=1` envelope.
@@ -27,6 +30,8 @@ Native brain writes are value-setting operations. A bounded owner-scoped replay 
 
 - missing/invalid/expired session: `401`;
 - authenticated identity not linked to a canonical account: `403 canonical_link_required`;
+- account-link ownership conflict: `409 account_link_conflict`;
+- expired account-link challenge: `410 account_link_expired`;
 - ownership mismatch: `403`;
 - unlisted or mutation skill: `404 capability_unavailable`;
 - active duplicate turn: `409`;

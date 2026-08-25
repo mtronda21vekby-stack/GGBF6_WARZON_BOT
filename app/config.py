@@ -161,6 +161,15 @@ class Settings(BaseSettings):
     entitlement_timeout_s: float = float(
         os.getenv("ENTITLEMENT_TIMEOUT_S", "8")
     )
+    telegram_bot_username: str = os.getenv(
+        "TELEGRAM_BOT_USERNAME", "GGBF6_WARZON_BOT"
+    )
+    apple_account_link_ttl_s: int = int(
+        os.getenv("APPLE_ACCOUNT_LINK_TTL_S", "600")
+    )
+    apple_account_link_timeout_s: float = float(
+        os.getenv("APPLE_ACCOUNT_LINK_TIMEOUT_S", "8")
+    )
 
     # Live official game intelligence
     live_knowledge_enabled: bool = _env_on("LIVE_KNOWLEDGE_ENABLED")

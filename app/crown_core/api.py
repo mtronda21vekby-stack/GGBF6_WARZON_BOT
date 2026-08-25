@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, NoReturn
 from uuid import UUID, uuid4
 
 import httpx
@@ -25,6 +25,7 @@ from app.crown_core.voice import (
     pcm_s16_chunks,
     voice_profile_for,
 )
+from app.services.identity.apple_link import AppleIdentityLinkRejected
 
 
 log = logging.getLogger("crown.native")
@@ -39,7 +40,7 @@ class SupabaseNativeAuthenticator:
         self._server_key = str(getattr(settings, "supabase_service_role_key", "") or "")
         self._core = core
 
-    async def authenticate(self, authorization: str) -> CrownPrincipal:
+    async def authenticate_identity(self, authorization: str) -> str:
         token = _bearer(authorization)
         if not self._url or not self._server_key:
             raise HTTPException(status_code=503, detail="identity_unavailable")
@@ -65,6 +66,10 @@ class SupabaseNativeAuthenticator:
             raise HTTPException(status_code=401, detail="invalid_session") from None
         if "apple" not in providers:
             raise HTTPException(status_code=403, detail="apple_identity_required")
+        return subject
+
+    async def authenticate(self, authorization: str) -> CrownPrincipal:
+        subject = await self.authenticate_identity(authorization)
         principal = await asyncio.to_thread(
             self._core.principal_for_authenticated_identity,
             "apple",
@@ -130,6 +135,7 @@ class NativeCrownAPI:
         voice: Any | None = None,
         voice_generations: NativeVoiceRegistry | None = None,
         usage_guard: Any | None = None,
+        account_links: Any | None = None,
     ) -> None:
         self.core = core
         self.store = store
@@ -140,6 +146,7 @@ class NativeCrownAPI:
         self.voice = voice
         self.voice_generations = voice_generations or NativeVoiceRegistry()
         self.usage_guard = usage_guard
+        self.account_links = account_links
         self.router = APIRouter(prefix="/api/v1/crown", tags=["CROWN native"])
         self._bind_routes()
 
@@ -148,7 +155,80 @@ class NativeCrownAPI:
             raise HTTPException(status_code=401, detail="authentication_required")
         return await self.authenticator.authenticate(authorization)
 
+    async def _apple_identity(self, authorization: str | None) -> str:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="authentication_required")
+        authenticate_identity = getattr(self.authenticator, "authenticate_identity", None)
+        if not callable(authenticate_identity):
+            raise HTTPException(status_code=503, detail="identity_unavailable")
+        return str(await authenticate_identity(authorization))
+
     def _bind_routes(self) -> None:
+        @self.router.post("/account-link/start")
+        async def start_account_link(
+            authorization: str | None = Header(default=None),
+            x_crown_correlation_id: str | None = Header(default=None, alias="X-Crown-Correlation-ID"),
+        ):
+            subject = await self._apple_identity(authorization)
+            if self.account_links is None or not bool(getattr(self.account_links, "configured", False)):
+                raise HTTPException(status_code=503, detail="account_link_unavailable")
+            request_id = _safe_request_id(x_crown_correlation_id)
+            try:
+                challenge = await self.account_links.start(subject)
+            except AppleIdentityLinkRejected as failure:
+                _raise_account_link_failure(failure.reason)
+            except Exception:
+                log.exception("account link start failed request=%s", request_id)
+                raise HTTPException(status_code=503, detail="account_link_unavailable") from None
+            log.info("account link started method=telegram request=%s link=%s", request_id, challenge.link_id)
+            return {
+                "schema_version": 1,
+                "link_id": str(challenge.link_id),
+                "verification_url": challenge.verification_url,
+                "expires_at": challenge.expires_at,
+                "link_method": "telegram",
+            }
+
+        @self.router.get("/account-link/{link_id}/status")
+        async def account_link_status(
+            link_id: UUID,
+            authorization: str | None = Header(default=None),
+            x_crown_correlation_id: str | None = Header(default=None, alias="X-Crown-Correlation-ID"),
+        ):
+            subject = await self._apple_identity(authorization)
+            if self.account_links is None:
+                raise HTTPException(status_code=503, detail="account_link_unavailable")
+            request_id = _safe_request_id(x_crown_correlation_id)
+            try:
+                result = await self.account_links.status(link_id=link_id, apple_subject=subject)
+            except AppleIdentityLinkRejected as failure:
+                _raise_account_link_failure(failure.reason)
+            except Exception:
+                log.exception("account link status failed request=%s link=%s", request_id, link_id)
+                raise HTTPException(status_code=503, detail="account_link_unavailable") from None
+            return {
+                "schema_version": 1,
+                "link_id": str(link_id),
+                "status": result.status,
+                "expires_at": result.expires_at,
+            }
+
+        @self.router.delete("/account-link/{link_id}")
+        async def cancel_account_link(
+            link_id: UUID,
+            authorization: str | None = Header(default=None),
+        ):
+            subject = await self._apple_identity(authorization)
+            if self.account_links is None:
+                raise HTTPException(status_code=503, detail="account_link_unavailable")
+            try:
+                result = await self.account_links.cancel(link_id=link_id, apple_subject=subject)
+            except AppleIdentityLinkRejected as failure:
+                _raise_account_link_failure(failure.reason)
+            except Exception:
+                raise HTTPException(status_code=503, detail="account_link_unavailable") from None
+            return {"schema_version": 1, "link_id": str(link_id), "status": result.status}
+
         @self.router.post("/bootstrap")
         async def bootstrap(authorization: str | None = Header(default=None)):
             principal = await self._principal(authorization)
@@ -624,6 +704,27 @@ def _turn_request(body: NativeTurnBody, principal: CrownPrincipal) -> CrownTurnR
         route=route,
         client_context=safe_context,
     )
+
+
+def _safe_request_id(value: str | None) -> UUID:
+    try:
+        return UUID(str(value or ""))
+    except ValueError:
+        return uuid4()
+
+
+def _raise_account_link_failure(reason: str) -> NoReturn:
+    if reason in {"apple_identity_conflict", "challenge_conflict"}:
+        raise HTTPException(status_code=409, detail="account_link_conflict")
+    if reason == "apple_identity_already_linked":
+        raise HTTPException(status_code=409, detail="account_link_already_completed")
+    if reason in {"link_expired", "invalid_or_expired_code"}:
+        raise HTTPException(status_code=410, detail="account_link_expired")
+    if reason in {"link_cancelled", "link_not_found"}:
+        raise HTTPException(status_code=404, detail="account_link_not_found")
+    if reason in {"invalid_apple_identity", "invalid_telegram_identity"}:
+        raise HTTPException(status_code=403, detail="invalid_identity_provider")
+    raise HTTPException(status_code=403, detail="account_link_rejected")
 
 
 def _bearer(value: str) -> str:
