@@ -157,6 +157,12 @@ class FakeNativeVoice:
         return WaveVoiceArtifact(path, text, temp_dir, "openai", "marin", "canonical")
 
 
+class DelayedNativeVoice(FakeNativeVoice):
+    async def synthesize_wave(self, text, profile):
+        await asyncio.sleep(0.08)
+        return await super().synthesize_wave(text, profile)
+
+
 def app_client(*, auth=None, core=None, registry=None, voice=None, voice_registry=None, usage_guard=None, account_links=None):
     app = FastAPI()
     api = NativeCrownAPI(
@@ -562,6 +568,29 @@ def test_native_voice_stream_is_ordered_complete_and_owner_scoped(locale):
     )
     assert duplicate.status_code == 409
     assert duplicate.json()["detail"] == "voice_request_completed"
+
+
+def test_native_voice_stream_keeps_transport_alive_while_wav_is_buffered():
+    client, api = app_client(voice=DelayedNativeVoice())
+    api.voice_stream_keepalive_s = 0.005
+    response = client.post(
+        "/api/v1/crown/voice/synthesize",
+        headers={"Authorization": "Bearer fixture"},
+        json={
+            "sessionID": str(uuid4()),
+            "turnID": str(uuid4()),
+            "speechGenerationID": str(uuid4()),
+            "requestID": str(uuid4()),
+            "segmentIndex": 0,
+            "locale": "ru-RU",
+            "text": "Буферизованный ответ.",
+        },
+    )
+    assert response.status_code == 200
+    assert ": crown-voice-keepalive" in response.text
+    events = sse_payloads(response)
+    assert events[0]["type"] == "voice.started"
+    assert events[-1]["type"] == "voice.completed"
 
 
 def test_native_voice_cancellation_is_idempotent_and_cross_user_safe():

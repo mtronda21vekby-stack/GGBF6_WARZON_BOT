@@ -150,6 +150,7 @@ class NativeCrownAPI:
             min(int(getattr(settings, "voice_duplex_max_chars", 1800) or 1800), 3000),
         )
         self.voice_generation_max_segments = 32
+        self.voice_stream_keepalive_s = 4.0
         self.usage_guard = usage_guard
         self.account_links = account_links
         self.router = APIRouter(prefix="/api/v1/crown", tags=["CROWN native"])
@@ -473,6 +474,7 @@ class NativeCrownAPI:
             self.voice_generations.attach(control, task)
         sequence = 0
         artifact = None
+        synthesis_task: asyncio.Task[Any] | None = None
 
         def envelope(event_type: str, **fields: Any) -> dict[str, Any]:
             nonlocal sequence
@@ -508,7 +510,27 @@ class NativeCrownAPI:
                 self.core,
                 body.locale,
             )
-            artifact = await self.voice.synthesize_wave(body.text, profile)
+            # Cloud synthesis produces a complete WAV before PCM framing. Keep
+            # the authenticated SSE transport alive while that bounded server
+            # operation runs; otherwise a healthy provider response slightly
+            # beyond the client's idle timeout is misclassified as unavailable.
+            synthesis_task = asyncio.create_task(self.voice.synthesize_wave(body.text, profile))
+            keepalive_count = 0
+            while not synthesis_task.done():
+                done, _ = await asyncio.wait(
+                    {synthesis_task},
+                    timeout=max(0.05, float(self.voice_stream_keepalive_s)),
+                )
+                if not done:
+                    keepalive_count += 1
+                    yield b": crown-voice-keepalive\n\n"
+            artifact = synthesis_task.result()
+            log.info(
+                "native voice synthesis ready surface=ios generation=%s request=%s keepalives=%s",
+                control.generation_id,
+                control.request_id,
+                keepalive_count,
+            )
             yield _sse(
                 envelope(
                     "voice.started",
@@ -570,6 +592,12 @@ class NativeCrownAPI:
                 )
             )
         finally:
+            if synthesis_task is not None and not synthesis_task.done():
+                synthesis_task.cancel()
+                try:
+                    await synthesis_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             if artifact is not None:
                 artifact.cleanup()
             self.voice_generations.finish(control, completed=completed)
