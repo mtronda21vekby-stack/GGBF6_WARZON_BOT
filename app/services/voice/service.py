@@ -10,12 +10,22 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
+import httpx
+
 from app.services.voice.audio import clean_tts_text, wav_to_ogg_opus
 from app.services.voice.natural_audio import wav_to_natural_ogg_opus
 from app.services.voice.openai_backend import OpenAITTSBackend, normalize_tts_voice
 from app.services.voice.piper_backend import PiperBackend, PiperModelManager
 
 log = logging.getLogger("bco.voice.service")
+
+
+class VoiceSynthesisUnavailable(RuntimeError):
+    """Carries a bounded, non-secret provider failure classification."""
+
+    def __init__(self, code: str) -> None:
+        self.code = str(code or "speech_synthesis_unavailable")
+        super().__init__(self.code)
 
 
 class TTSMode(str, Enum):
@@ -108,6 +118,7 @@ class VoiceService:
             self._owns_cloud_backend = True
 
         self._lock = asyncio.Lock()
+        self._last_cloud_failure_code = "none"
 
     def _should_configure_cloud(self) -> bool:
         if not self._high_fidelity_enabled:
@@ -201,10 +212,31 @@ class VoiceService:
             result = synthesize(text, wav_path, profile)
             if asyncio.iscoroutine(result):
                 await result
+            self._last_cloud_failure_code = "none"
             return wav_path.exists() and wav_path.stat().st_size > 44
         except Exception as exc:
+            self._last_cloud_failure_code = self._safe_cloud_failure_code(exc)
             log.warning("natural cloud voice failed; using local fallback error=%s", type(exc).__name__)
             return False
+
+    @staticmethod
+    def _safe_cloud_failure_code(exc: Exception) -> str:
+        if isinstance(exc, httpx.HTTPStatusError):
+            status = int(exc.response.status_code)
+            if status in {401, 403}:
+                return "cloud_authentication"
+            if status == 429:
+                return "cloud_rate_limited"
+            if status == 400:
+                return "cloud_request_rejected"
+            if status >= 500:
+                return "cloud_service_unavailable"
+            return "cloud_http_failure"
+        if isinstance(exc, httpx.TimeoutException):
+            return "cloud_timeout"
+        if isinstance(exc, httpx.NetworkError):
+            return "cloud_transport"
+        return "cloud_runtime_failure"
 
     async def _local_wav(
         self,
@@ -255,7 +287,17 @@ class VoiceService:
                     locale = str(data.get("language") or data.get("locale") or "ru").casefold()
                     if locale.startswith("en"):
                         raise RuntimeError("English fallback voice is unavailable")
-                    await self._local_wav(spoken, wav_path, data)
+                    try:
+                        await self._local_wav(spoken, wav_path, data)
+                    except Exception as exc:
+                        log.warning(
+                            "local fallback voice failed error=%s cloud_failure=%s",
+                            type(exc).__name__,
+                            self._last_cloud_failure_code,
+                        )
+                        raise VoiceSynthesisUnavailable(
+                            f"{self._last_cloud_failure_code}_local_runtime_failure"
+                        ) from exc
                     provider = "piper"
                     local_name = getattr(self.backend, "model_name", None)
                     if local_name:

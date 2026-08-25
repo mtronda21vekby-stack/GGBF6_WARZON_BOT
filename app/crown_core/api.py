@@ -26,6 +26,7 @@ from app.crown_core.voice import (
     voice_profile_for,
 )
 from app.services.identity.apple_link import AppleIdentityLinkRejected
+from app.services.voice.service import VoiceSynthesisUnavailable
 
 
 log = logging.getLogger("crown.native")
@@ -575,6 +576,19 @@ class NativeCrownAPI:
                 envelope(
                     "voice.failed",
                     failure_code="invalid_spoken_content",
+                    is_final=True,
+                )
+            )
+        except VoiceSynthesisUnavailable as exc:
+            log.warning(
+                "native voice unavailable request=%s failure_code=%s",
+                control.request_id,
+                exc.code,
+            )
+            yield _sse(
+                envelope(
+                    "voice.failed",
+                    failure_code=exc.code,
                     is_final=True,
                 )
             )

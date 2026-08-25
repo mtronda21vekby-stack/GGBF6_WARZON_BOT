@@ -9,7 +9,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.voice.service import TTSMode, VoiceService, normalize_tts_mode
+from app.services.voice.service import (
+    TTSMode,
+    VoiceService,
+    VoiceSynthesisUnavailable,
+    normalize_tts_mode,
+)
 
 
 def _write_wav(path: Path, frequency: float = 330.0) -> Path:
@@ -34,6 +39,13 @@ class FakeBackend:
     def synthesize_wav(self, text: str, output_path: str | Path, profile=None):
         self.calls.append((text, dict(profile or {})))
         return _write_wav(Path(output_path), 330.0)
+
+
+class FailingBackend:
+    model_name = "ru_RU-test-medium"
+
+    def synthesize_wav(self, text: str, output_path: str | Path, profile=None):
+        raise RuntimeError("local details must not cross the API boundary")
 
 
 class FakeCloud:
@@ -155,6 +167,20 @@ def test_cloud_failure_falls_back_to_local_voice_without_losing_reply():
         assert len(local.calls) == 1
     finally:
         artifact.cleanup()
+
+
+def test_total_provider_failure_uses_bounded_safe_classification():
+    service = VoiceService(
+        _settings(),
+        backend=FailingBackend(),
+        cloud_backend=FakeCloud(fail=True),
+    )
+
+    with pytest.raises(VoiceSynthesisUnavailable) as captured:
+        asyncio.run(service.synthesize_wave("Проверка.", {"language": "ru"}))
+
+    assert captured.value.code == "cloud_runtime_failure_local_runtime_failure"
+    assert "details" not in str(captured.value)
 
 
 def test_voice_service_respects_disabled_switch():
