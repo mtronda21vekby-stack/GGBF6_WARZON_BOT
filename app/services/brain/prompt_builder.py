@@ -60,6 +60,7 @@ class PromptBuilder:
             "training_focus", "weekly_focus", "strengths", "weaknesses", "recurring_mistakes",
             "last_session_summary", "progress_notes", "memory_summary", "top_mistakes",
             "recent_training", "recent_progression", "derived_intelligence",
+            "analysis_report",
         )
         has_operator_context = isinstance(profile.get("operator_context"), Mapping)
         parts: list[str] = []

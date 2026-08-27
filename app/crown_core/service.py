@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.crown_core.contracts import (
+    CrownAnalyzeReport,
     CrownPrincipal,
     CrownSkillBlock,
     CrownSkillResult,
@@ -27,6 +28,7 @@ class CrownCore:
     conversation: Any
     store: Any
     profiles: Any
+    analyzer: Any | None = None
 
     # Compatibility adapter used by established Telegram and Mini App routes.
     # Their server-resolved profile already contains the canonical identity.
@@ -75,11 +77,22 @@ class CrownCore:
             if on_partial is not None:
                 on_partial(text, meta)
 
+        reply_arguments: dict[str, Any] = {
+            "text": request.text,
+            "profile": profile,
+            "history": history,
+            "on_partial": guarded_partial if on_partial is not None else None,
+        }
+        analysis_report_id = getattr(request, "analysis_report_id", None)
+        if analysis_report_id is not None:
+            report = self.analysis_report(request.principal, analysis_report_id)
+            if report is None:
+                raise RuntimeError("analysis_report_not_found")
+            reply_arguments["server_context"] = {
+                "analysis_report": self._discussion_context(report)
+            }
         result = self.reply(
-            text=request.text,
-            profile=profile,
-            history=history,
-            on_partial=guarded_partial if on_partial is not None else None,
+            **reply_arguments,
         )
         return CrownTurnResult(display_text=result, spoken_text=spoken_text(result))
 
@@ -121,6 +134,122 @@ class CrownCore:
             raise ValueError("empty_patch")
         self.profiles.patch(principal.legacy_owner_id, clean)
         return self.brain_snapshot(principal)
+
+    def analyze_image(
+        self,
+        principal: CrownPrincipal,
+        *,
+        payload: bytes,
+        declared_mime: str,
+        question: str,
+        locale: str,
+        report_id: Any,
+    ) -> CrownAnalyzeReport:
+        if self.analyzer is None:
+            from app.services.analyze import AnalyzeFailure
+
+            raise AnalyzeFailure("service_unavailable")
+        existing = self.analysis_report(principal, report_id)
+        if existing is not None:
+            return self._report_from_projection(existing)
+        report = self.analyzer.analyze(
+            payload=payload,
+            declared_mime=declared_mime,
+            profile=self.profile_for(principal),
+            question=question,
+            locale=locale,
+            report_id=report_id,
+        )
+        self.store.add_episode(
+            principal.legacy_owner_id,
+            {"kind": "analyze_report", "report": report.projection()},
+        )
+        return report
+
+    def list_analysis_reports(
+        self,
+        principal: CrownPrincipal,
+        *,
+        cursor: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        try:
+            offset = max(0, int(cursor or "0"))
+        except ValueError:
+            raise ValueError("invalid_cursor") from None
+        page_limit = max(1, min(int(limit), 20))
+        episodes = list(self.store.list_episodes(principal.legacy_owner_id, 100) or [])
+        reports = [
+            dict(item.get("report") or {})
+            for item in episodes
+            if isinstance(item, dict)
+            and item.get("kind") == "analyze_report"
+            and isinstance(item.get("report"), dict)
+        ]
+        page = reports[offset: offset + page_limit]
+        next_cursor = str(offset + len(page)) if offset + len(page) < len(reports) else None
+        return {"reports": page, "next_cursor": next_cursor}
+
+    def analysis_report(self, principal: CrownPrincipal, report_id: Any) -> dict[str, Any] | None:
+        expected = str(report_id)
+        episodes = list(self.store.list_episodes(principal.legacy_owner_id, 100) or [])
+        for item in episodes:
+            if not isinstance(item, dict) or item.get("kind") != "analyze_report":
+                continue
+            report = item.get("report")
+            if isinstance(report, dict) and str(report.get("id") or "") == expected:
+                return dict(report)
+        return None
+
+    @staticmethod
+    def _discussion_context(report: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": str(report.get("id") or ""),
+            "summary": str(report.get("summary") or "")[:2400],
+            "findings": list(report.get("findings") or [])[:12],
+            "recommendations": list(report.get("recommendations") or [])[:10],
+            "warnings": list(report.get("warnings") or [])[:8],
+            "evidence": list(report.get("evidence") or [])[:12],
+        }
+
+    @staticmethod
+    def _report_from_projection(value: dict[str, Any]) -> CrownAnalyzeReport:
+        from uuid import UUID
+        from app.crown_core.contracts import CrownAnalyzeEvidence, CrownAnalyzeItem
+
+        def items(key: str) -> tuple[CrownAnalyzeItem, ...]:
+            return tuple(
+                CrownAnalyzeItem(
+                    str(item.get("title") or "")[:180],
+                    str(item.get("detail") or "")[:1600],
+                    str(item.get("category") or "unknown")[:48],
+                )
+                for item in list(value.get(key) or [])[:12]
+                if isinstance(item, dict)
+            )
+
+        evidence = tuple(
+            CrownAnalyzeEvidence(
+                str(item.get("observation") or "")[:1200],
+                str(item.get("visible_region") or "")[:160],
+            )
+            for item in list(value.get("evidence") or [])[:12]
+            if isinstance(item, dict)
+        )
+        return CrownAnalyzeReport(
+            report_id=UUID(str(value.get("id") or "")),
+            created_at=str(value.get("created_at") or ""),
+            media_kind=str(value.get("media_kind") or "image"),
+            summary=str(value.get("summary") or "")[:2400],
+            findings=items("findings"),
+            recommendations=items("recommendations"),
+            warnings=tuple(str(item)[:600] for item in list(value.get("warnings") or [])[:8]),
+            evidence=evidence,
+            follow_up_suggestions=tuple(
+                str(item)[:300] for item in list(value.get("follow_up_suggestions") or [])[:6]
+            ),
+            question=str(value.get("question") or "")[:500],
+        )
 
     def read_skill(
         self,

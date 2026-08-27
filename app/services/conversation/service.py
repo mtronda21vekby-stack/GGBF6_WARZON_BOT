@@ -96,6 +96,7 @@ class ConversationService:
         profile: dict,
         history: list[dict],
         on_partial: PartialCallback | None = None,
+        server_context: dict[str, Any] | None = None,
     ) -> str:
         trusted = False
         chat_id = None
@@ -146,6 +147,11 @@ class ConversationService:
                 player_context["operator_context"] = self.operator_context.context(chat_id)
             except Exception:
                 pass
+
+        if isinstance(server_context, dict):
+            analysis_report = server_context.get("analysis_report")
+            if isinstance(analysis_report, dict):
+                player_context["analysis_report"] = dict(analysis_report)
 
         brain_kwargs: dict[str, Any] = {
             "text": text,

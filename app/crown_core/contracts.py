@@ -32,6 +32,59 @@ class CrownTurnRequest:
     locale: str
     route: str
     client_context: tuple[dict[str, Any], ...] = ()
+    analysis_report_id: UUID | None = None
+
+
+@dataclass(frozen=True)
+class CrownAnalyzeItem:
+    title: str
+    detail: str
+    category: str = "general"
+
+    def projection(self) -> dict[str, str]:
+        return {"title": self.title, "detail": self.detail, "category": self.category}
+
+
+@dataclass(frozen=True)
+class CrownAnalyzeEvidence:
+    observation: str
+    visible_region: str = ""
+
+    def projection(self) -> dict[str, str]:
+        result = {"observation": self.observation}
+        if self.visible_region:
+            result["visible_region"] = self.visible_region
+        return result
+
+
+@dataclass(frozen=True)
+class CrownAnalyzeReport:
+    report_id: UUID
+    created_at: str
+    media_kind: str
+    summary: str
+    findings: tuple[CrownAnalyzeItem, ...]
+    recommendations: tuple[CrownAnalyzeItem, ...]
+    warnings: tuple[str, ...]
+    evidence: tuple[CrownAnalyzeEvidence, ...]
+    follow_up_suggestions: tuple[str, ...]
+    question: str = ""
+
+    def projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "id": str(self.report_id),
+            "created_at": self.created_at,
+            "media_kind": self.media_kind,
+            "summary": self.summary,
+            "findings": [item.projection() for item in self.findings],
+            "recommendations": [item.projection() for item in self.recommendations],
+            "warnings": list(self.warnings),
+            "evidence": [item.projection() for item in self.evidence],
+            "follow_up_suggestions": list(self.follow_up_suggestions),
+            "question": self.question,
+            "provenance": {"response_source": "REAL_BACKEND", "provider_path": "shared_crown_multimodal"},
+        }
 
 
 @dataclass(frozen=True)

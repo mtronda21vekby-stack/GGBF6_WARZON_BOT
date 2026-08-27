@@ -28,6 +28,7 @@ from app.services.profiles.service import ProfileService
 from app.services.storage.factory import build_store
 from app.services.telegram.command_console import CommandConsoleController
 from app.services.vod.service import VODAnalysisService
+from app.services.analyze import ImageAnalyzeService
 from app.services.vod.telegram import VODTelegramIngress
 from app.services.voice.ingress import TelegramVoiceIngress
 from app.services.voice.service import VoiceService
@@ -139,10 +140,17 @@ def create_app() -> FastAPI:
         profiles=profiles,
         usage_guard=usage_guard,
     )
+    image_analyzer = ImageAnalyzeService(
+        api_key=settings.openai_api_key,
+        model=settings.analyze_model,
+        max_bytes=settings.analyze_image_max_bytes,
+        max_dimension=settings.analyze_image_max_dimension,
+    )
     conversation = CrownCore(
         conversation=legacy_conversation,
         store=store,
         profiles=profiles,
+        analyzer=image_analyzer,
     )
     voice_service = VoiceService(settings=settings)
     native_api = NativeCrownAPI(

@@ -9,7 +9,7 @@ from typing import Any, NoReturn
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,7 @@ from app.crown_core.voice import (
     voice_profile_for,
 )
 from app.services.identity.apple_link import AppleIdentityLinkRejected
+from app.services.analyze import AnalyzeFailure
 from app.services.voice.service import VoiceSynthesisUnavailable
 
 
@@ -154,6 +155,10 @@ class NativeCrownAPI:
         self.voice_stream_keepalive_s = 4.0
         self.usage_guard = usage_guard
         self.account_links = account_links
+        analyzer = getattr(core, "analyzer", None)
+        self.analyze_max_bytes = int(
+            getattr(analyzer, "max_bytes", getattr(settings, "analyze_image_max_bytes", 8 * 1024 * 1024))
+        )
         self.router = APIRouter(prefix="/api/v1/crown", tags=["CROWN native"])
         self._bind_routes()
 
@@ -308,6 +313,105 @@ class NativeCrownAPI:
             principal = await self._principal(authorization)
             snapshot = await asyncio.to_thread(self.core.brain_snapshot, principal)
             return {"black_crown_user_id": str(principal.black_crown_user_id), **snapshot}
+
+        @self.router.post("/analyze/image")
+        async def analyze_image(
+            image: UploadFile = File(...),
+            question: str = Form(default="", max_length=500),
+            locale: str = Form(default="ru-RU", max_length=24),
+            authorization: str | None = Header(default=None),
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+            x_crown_correlation_id: str | None = Header(default=None, alias="X-Crown-Correlation-ID"),
+        ):
+            principal = await self._principal(authorization)
+            request_id = _safe_request_id(x_crown_correlation_id)
+            try:
+                report_id = UUID(str(idempotency_key or ""))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="idempotency_key_required") from None
+            mime = str(image.content_type or "").split(";", 1)[0].strip().lower()
+            if mime not in {"image/jpeg", "image/png"}:
+                raise HTTPException(status_code=415, detail="unsupported_media")
+            started = time.monotonic()
+            payload = await image.read(self.analyze_max_bytes + 1)
+            await image.close()
+            if len(payload) > self.analyze_max_bytes:
+                raise HTTPException(status_code=413, detail="image_too_large")
+            replay_state, replay = self.mutations.begin(
+                principal.black_crown_user_id,
+                report_id,
+                "analyze.image",
+            )
+            if replay_state == "replay" and replay is not None:
+                return JSONResponse(replay, headers={"X-Crown-Replay": "1"})
+            if replay_state == "in_progress":
+                raise HTTPException(status_code=409, detail="analysis_in_progress")
+            self._enforce_usage(principal, "vod")
+            log.info(
+                "native analyze start surface=ios owner=%s request=%s report=%s bytes=%s mime=%s",
+                principal.black_crown_user_id,
+                request_id,
+                report_id,
+                len(payload),
+                mime,
+            )
+            try:
+                report = await asyncio.to_thread(
+                    self.core.analyze_image,
+                    principal,
+                    payload=payload,
+                    declared_mime=mime,
+                    question=str(question or "").strip()[:500],
+                    locale=str(locale or "ru-RU")[:24],
+                    report_id=report_id,
+                )
+            except AnalyzeFailure as failure:
+                self.mutations.abort(principal.black_crown_user_id, report_id, "analyze.image")
+                _raise_analyze_failure(failure.code)
+            except Exception:
+                self.mutations.abort(principal.black_crown_user_id, report_id, "analyze.image")
+                log.exception("native analyze failed request=%s report=%s", request_id, report_id)
+                raise HTTPException(status_code=503, detail="analysis_failed") from None
+            result = report.projection()
+            self.mutations.finish(principal.black_crown_user_id, report_id, "analyze.image", result)
+            log.info(
+                "native analyze complete surface=ios owner=%s request=%s report=%s elapsed_ms=%s findings=%s",
+                principal.black_crown_user_id,
+                request_id,
+                report_id,
+                int((time.monotonic() - started) * 1000),
+                len(report.findings),
+            )
+            return JSONResponse(result, headers={"X-Crown-Replay": "0"})
+
+        @self.router.get("/analyze/reports")
+        async def analyze_reports(
+            authorization: str | None = Header(default=None),
+            cursor: str | None = Query(default=None, max_length=16),
+            limit: int = Query(default=10, ge=1, le=20),
+        ):
+            principal = await self._principal(authorization)
+            try:
+                result = await asyncio.to_thread(
+                    self.core.list_analysis_reports,
+                    principal,
+                    cursor=cursor,
+                    limit=limit,
+                )
+            except ValueError:
+                raise HTTPException(status_code=400, detail="invalid_cursor") from None
+            return {"schema_version": 1, **result}
+
+        @self.router.get("/analyze/reports/{report_id}")
+        async def analyze_report(
+            report_id: UUID,
+            authorization: str | None = Header(default=None),
+        ):
+            principal = await self._principal(authorization)
+            report = await asyncio.to_thread(self.core.analysis_report, principal, report_id)
+            if report is None:
+                raise HTTPException(status_code=404, detail="report_not_found")
+            return report
 
         @self.router.get("/skills/{skill_id}")
         async def read_skill(
@@ -760,6 +864,10 @@ def _turn_request(body: NativeTurnBody, principal: CrownPrincipal) -> CrownTurnR
         raise HTTPException(status_code=400, detail="invalid_personality")
     messages = body.context.get("messages") if isinstance(body.context, dict) else []
     safe_context = tuple(item for item in messages[-20:] if isinstance(item, dict)) if isinstance(messages, list) else ()
+    analysis_report_id = None
+    raw_report_id = body.context.get("analysisReportID") if isinstance(body.context, dict) else None
+    if raw_report_id is not None:
+        analysis_report_id = _uuid(raw_report_id)
     return CrownTurnRequest(
         principal=principal,
         surface=CrownSurface.IOS,
@@ -769,7 +877,22 @@ def _turn_request(body: NativeTurnBody, principal: CrownPrincipal) -> CrownTurnR
         locale=str(body.conversationLocaleIdentifier or "ru-RU")[:32],
         route=route,
         client_context=safe_context,
+        analysis_report_id=analysis_report_id,
     )
+
+
+def _raise_analyze_failure(code: str) -> NoReturn:
+    mapping = {
+        "unsupported_media": (415, "unsupported_media"),
+        "image_too_large": (413, "image_too_large"),
+        "image_decode_failed": (422, "image_decode_failed"),
+        "rate_limited": (429, "rate_limited"),
+        "service_unavailable": (503, "service_unavailable"),
+        "analysis_failed": (503, "analysis_failed"),
+        "invalid_response": (502, "invalid_response"),
+    }
+    status, detail = mapping.get(str(code), (503, "analysis_failed"))
+    raise HTTPException(status_code=status, detail=detail)
 
 
 def _safe_request_id(value: str | None) -> UUID:

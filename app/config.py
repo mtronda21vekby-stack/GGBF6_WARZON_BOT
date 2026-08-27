@@ -194,6 +194,16 @@ class Settings(BaseSettings):
         "VOD_VISION_MODEL",
         os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
     )
+    analyze_image_max_bytes: int = int(
+        os.getenv("ANALYZE_IMAGE_MAX_BYTES", str(8 * 1024 * 1024))
+    )
+    analyze_image_max_dimension: int = int(
+        os.getenv("ANALYZE_IMAGE_MAX_DIMENSION", "2400")
+    )
+    analyze_model: str = os.getenv(
+        "ANALYZE_MODEL",
+        os.getenv("VOD_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini")),
+    )
 
     # Duplex voice input: Telegram voice/audio/video-note ->
     # confidence-aware STT -> same Intelligence Core.
