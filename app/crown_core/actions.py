@@ -134,7 +134,7 @@ def _validate_arguments(action_id: str, value: Any) -> dict[str, Any]:
     if action_id == "memory.propose_save":
         field = str(value.get("field") or "").strip()
         text = str(value.get("value") or "").strip()
-        if field not in _ALLOWED_MEMORY_FIELDS or not text or len(text) > 500:
+        if field not in _ALLOWED_MEMORY_FIELDS or not text or len(text) > 240:
             raise ActionValidationFailure("invalid_memory_proposal")
         return {"field": field, "value": text}
 
