@@ -60,47 +60,118 @@ class CrownActionPlanner:
         if not any(marker in lower for marker in ("напомни", "напоминание", "remind me", "reminder")):
             return None
 
-        # V1 only executes unambiguous relative numeric schedules. Calendar
-        # expressions such as "tomorrow evening" remain clarification-only
-        # until the device-local timezone/date resolver is in the loop.
+        relative = self._relative_reminder_schedule(lower)
+        if relative is not None:
+            schedule, matched = relative
+            title = self._reminder_title(text, matched.group(0))
+            return self._proposal(
+                action_id="reminder.create",
+                arguments={"title": title, "schedule": schedule},
+                source_turn_id=source_turn_id,
+                rationale="User explicitly requested a reminder with an unambiguous relative schedule.",
+            )
+
+        local = self._local_reminder_schedule(lower)
+        if local is not None:
+            schedule, matched_phrase = local
+            title = self._reminder_title(text, matched_phrase)
+            return self._proposal(
+                action_id="reminder.create",
+                arguments={"title": title, "schedule": schedule},
+                source_turn_id=source_turn_id,
+                rationale=(
+                    "User explicitly requested a reminder with an unambiguous local calendar day and clock time. "
+                    "The device resolves the final date in its current calendar and timezone."
+                ),
+            )
+
+        # Expressions without both a resolvable day and clock time remain
+        # clarification-only. The model is never allowed to guess the user's
+        # local timezone or silently choose an hour.
+        return None
+
+    @staticmethod
+    def _relative_reminder_schedule(lower: str) -> tuple[dict[str, Any], re.Match[str]] | None:
         patterns = (
             (r"(?:через|in)\s+(\d{1,4})\s*(?:минут(?:у|ы)?|мин\.?|minutes?|mins?)\b", 60),
             (r"(?:через|in)\s+(\d{1,3})\s*(?:час(?:а|ов)?|ч\.?|hours?|hrs?)\b", 3600),
             (r"(?:через|in)\s+(\d{1,2})\s*(?:дн(?:я|ей)?|days?)\b", 86400),
         )
-        seconds: int | None = None
-        matched: re.Match[str] | None = None
         for pattern, multiplier in patterns:
             candidate = re.search(pattern, lower, flags=re.IGNORECASE)
+            if candidate is None:
+                continue
+            calculated = int(candidate.group(1)) * multiplier
+            if 0 < calculated <= 31_536_000:
+                return {"kind": "relative", "seconds": calculated}, candidate
+        return None
+
+    @staticmethod
+    def _local_reminder_schedule(lower: str) -> tuple[dict[str, Any], str] | None:
+        day_patterns = (
+            (r"\b(?:завтра|tomorrow)\b", 1),
+            (r"\b(?:сегодня|today)\b", 0),
+        )
+        day_match: re.Match[str] | None = None
+        days_from_today: int | None = None
+        for pattern, offset in day_patterns:
+            candidate = re.search(pattern, lower, flags=re.IGNORECASE)
             if candidate is not None:
-                value = int(candidate.group(1))
-                calculated = value * multiplier
-                if 0 < calculated <= 31_536_000:
-                    seconds = calculated
-                    matched = candidate
-                    break
-        if seconds is None or matched is None:
+                day_match = candidate
+                days_from_today = offset
+                break
+        if day_match is None or days_from_today is None:
             return None
 
-        title = text
-        title = re.sub(r"^\s*(?:напомни(?:\s+мне)?|создай\s+напоминание|remind\s+me|create\s+(?:a\s+)?reminder)\s*", "", title, flags=re.IGNORECASE)
-        relative_phrase = text[matched.start():matched.end()]
-        title = title.replace(relative_phrase, " ")
+        # Require an explicit clock marker. Accept "в 20", "в 20:30",
+        # "at 8 pm" and "at 20:00". Bare numbers are intentionally ignored.
+        clock = re.search(
+            r"(?:\bв\s+|\bat\s+)(\d{1,2})(?::([0-5]\d))?\s*(am|pm)?\b",
+            lower,
+            flags=re.IGNORECASE,
+        )
+        if clock is None:
+            return None
+        hour = int(clock.group(1))
+        minute = int(clock.group(2) or 0)
+        meridiem = str(clock.group(3) or "").lower()
+        if meridiem:
+            if not 1 <= hour <= 12:
+                return None
+            if meridiem == "pm" and hour != 12:
+                hour += 12
+            elif meridiem == "am" and hour == 12:
+                hour = 0
+        elif not 0 <= hour <= 23:
+            return None
+
+        start = min(day_match.start(), clock.start())
+        end = max(day_match.end(), clock.end())
+        matched_phrase = lower[start:end]
+        return (
+            {
+                "kind": "local",
+                "days_from_today": days_from_today,
+                "hour": hour,
+                "minute": minute,
+            },
+            matched_phrase,
+        )
+
+    @staticmethod
+    def _reminder_title(text: str, schedule_phrase: str) -> str:
+        title = re.sub(
+            r"^\s*(?:напомни(?:\s+мне)?|создай\s+напоминание|remind\s+me|create\s+(?:a\s+)?reminder)\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if schedule_phrase:
+            title = re.sub(re.escape(schedule_phrase), " ", title, count=1, flags=re.IGNORECASE)
         title = re.sub(r"\s+", " ", title).strip(" ,.:;—-")
         if not title:
             title = "BLACK CROWN reminder"
-        if len(title) > 160:
-            title = title[:160].rstrip()
-
-        return self._proposal(
-            action_id="reminder.create",
-            arguments={
-                "title": title,
-                "schedule": {"kind": "relative", "seconds": seconds},
-            },
-            source_turn_id=source_turn_id,
-            rationale="User explicitly requested a reminder with an unambiguous relative schedule.",
-        )
+        return title[:160].rstrip()
 
     def _memory_save(self, text: str, source_turn_id: UUID) -> dict[str, Any] | None:
         lower = text.lower()
