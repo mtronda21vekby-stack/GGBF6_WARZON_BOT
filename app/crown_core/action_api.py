@@ -15,6 +15,7 @@ from app.crown_core.action_stream import proposals_from_provider_metadata, realt
 from app.crown_core.actions import ActionValidationFailure
 from app.crown_core.api import NativeCrownAPI, PROTOCOL_VERSION, _sse
 from app.crown_core.contracts import CrownTurnRequest
+from app.crown_core.memory_actions import CrownMemoryActionFailure, forget_canonical_memory_field
 from app.crown_core.response import SpokenSentenceAccumulator
 from app.crown_core.runtime import ActiveTurn
 
@@ -29,10 +30,8 @@ class ActionNativeCrownAPI(NativeCrownAPI):
     may propose only explicit, high-confidence V1 actions when provider-native
     tool metadata is absent. Both sources still pass through the exact same
     closed crown-actions-v1 registry before anything reaches the device. This
-    boundary never executes an action.
+    boundary never executes an action on model authority.
     """
-
-    MEMORY_FIELDS = frozenset({"current_goal", "training_focus", "weekly_focus", "playstyle"})
 
     def _bind_routes(self) -> None:
         super()._bind_routes()
@@ -45,17 +44,16 @@ class ActionNativeCrownAPI(NativeCrownAPI):
         ):
             principal = await self._principal(authorization)
             normalized = str(field or "").strip().lower()
-            if normalized not in self.MEMORY_FIELDS:
-                raise HTTPException(status_code=400, detail="invalid_brain_field")
             try:
                 mutation_key = UUID(str(idempotency_key or ""))
             except ValueError:
                 raise HTTPException(status_code=400, detail="idempotency_key_required") from None
 
+            operation = f"brain.forget.{normalized}"
             replay_state, replay = self.mutations.begin(
                 principal.black_crown_user_id,
                 mutation_key,
-                f"brain.forget.{normalized}",
+                operation,
             )
             if replay_state == "replay" and replay is not None:
                 return JSONResponse(replay, headers={"X-Crown-Replay": "1"})
@@ -63,21 +61,24 @@ class ActionNativeCrownAPI(NativeCrownAPI):
                 raise HTTPException(status_code=409, detail="idempotency_in_progress")
 
             try:
-                # Profile storage currently uses merge-patch semantics. The
-                # canonical representation of a forgotten optional field is an
-                # empty value, which every Brain/read/intelligence consumer
-                # treats as absent. The client cannot select arbitrary keys.
-                await asyncio.to_thread(
-                    self.core.profiles.patch,
-                    principal.legacy_owner_id,
-                    {normalized: ""},
+                snapshot = await asyncio.to_thread(
+                    forget_canonical_memory_field,
+                    self.core,
+                    principal,
+                    normalized,
                 )
-                snapshot = await asyncio.to_thread(self.core.brain_snapshot, principal)
+            except CrownMemoryActionFailure:
+                self.mutations.abort(
+                    principal.black_crown_user_id,
+                    mutation_key,
+                    operation,
+                )
+                raise HTTPException(status_code=400, detail="invalid_brain_field") from None
             except Exception:
                 self.mutations.abort(
                     principal.black_crown_user_id,
                     mutation_key,
-                    f"brain.forget.{normalized}",
+                    operation,
                 )
                 log.exception(
                     "canonical memory forget failed owner=%s field=%s",
@@ -86,11 +87,6 @@ class ActionNativeCrownAPI(NativeCrownAPI):
                 )
                 raise HTTPException(status_code=503, detail="brain_mutation_failed") from None
 
-            profile = snapshot.get("profile")
-            if isinstance(profile, dict):
-                profile = dict(profile)
-                profile.pop(normalized, None)
-                snapshot = {**snapshot, "profile": profile}
             result = {
                 "schema_version": 1,
                 "black_crown_user_id": str(principal.black_crown_user_id),
@@ -100,10 +96,10 @@ class ActionNativeCrownAPI(NativeCrownAPI):
             self.mutations.finish(
                 principal.black_crown_user_id,
                 mutation_key,
-                f"brain.forget.{normalized}",
+                operation,
                 result,
             )
-            return result
+            return JSONResponse(result, headers={"X-Crown-Replay": "0"})
 
     async def _event_stream(
         self,
@@ -142,9 +138,6 @@ class ActionNativeCrownAPI(NativeCrownAPI):
             if control.cancellation.is_set():
                 raise asyncio.CancelledError()
 
-            # Preserve only the action metadata envelope. Validation remains at
-            # the crown-actions-v1 normalization boundary below. Do not log or
-            # otherwise expose proposal arguments here.
             if isinstance(meta, dict) and "action_proposals" in meta:
                 provider_action_metadata = {
                     "action_proposals": meta.get("action_proposals")
@@ -224,9 +217,6 @@ class ActionNativeCrownAPI(NativeCrownAPI):
                 else provider_action_metadata
             )
             if not action_metadata:
-                # V1 deterministic fallback: only explicit commands with a
-                # fully resolvable bounded schema become proposals. Ambiguous
-                # dates, memory targets, destinations, etc. yield no action.
                 action_metadata = CrownActionPlanner().propose(
                     text=request.text,
                     source_turn_id=request.turn_id,
@@ -239,9 +229,6 @@ class ActionNativeCrownAPI(NativeCrownAPI):
                     source_turn_id=request.turn_id,
                 )
             except ActionValidationFailure as failure:
-                # A malformed model/planner proposal must never poison a valid
-                # text response and must never reach an executor. Fail closed by
-                # dropping the entire action set for this turn.
                 rejection_code = str(failure)[:80] or "invalid_action_proposal"
                 log.warning(
                     "native action proposal rejected surface=ios turn=%s code=%s",
