@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from app.crown_core.actions import CrownActionRegistry
+from app.crown_core.actions import ActionValidationFailure, CrownActionRegistry
 from app.crown_core.contracts import CrownPrincipal
 
 
@@ -40,7 +40,10 @@ def normalize_action_result(raw: Any) -> dict[str, Any]:
         raise CrownActionResultFailure("invalid_action_result_identifier") from None
 
     action_id = str(raw.get("action_id") or "").strip()
-    CrownActionRegistry.definition(action_id)
+    try:
+        CrownActionRegistry.definition(action_id)
+    except ActionValidationFailure as failure:
+        raise CrownActionResultFailure(failure.code) from None
     if str(raw.get("status") or "") != "succeeded":
         raise CrownActionResultFailure("unsupported_action_result_status")
 
