@@ -117,5 +117,5 @@ def test_analyze_result_requires_owner_scoped_report():
 
 
 def test_unknown_action_result_is_never_accepted():
-    with pytest.raises(Exception):
+    with pytest.raises(CrownActionResultFailure, match="unknown_action"):
         normalize_action_result(result_body("shell.execute", {}))
