@@ -49,14 +49,20 @@ def test_navigation_rejects_arbitrary_destinations():
         proposal("app.navigate", {"destination": "https://example.com"})
 
 
-def test_memory_is_allowlisted_and_bounded():
+def test_memory_is_allowlisted_and_bounded_to_canonical_patch_contract():
     normalized = proposal(
         "memory.propose_save",
         {"field": "current_goal", "value": "Тренироваться каждый день"},
     )
     assert normalized.arguments["field"] == "current_goal"
+    assert len(proposal(
+        "memory.propose_save",
+        {"field": "current_goal", "value": "x" * 240},
+    ).arguments["value"]) == 240
     with pytest.raises(ActionValidationFailure, match="invalid_memory_proposal"):
         proposal("memory.propose_save", {"field": "service_role_key", "value": "x"})
+    with pytest.raises(ActionValidationFailure, match="invalid_memory_proposal"):
+        proposal("memory.propose_save", {"field": "current_goal", "value": "x" * 241})
 
 
 def test_forget_rejects_unknown_memory_target():
