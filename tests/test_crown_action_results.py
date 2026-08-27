@@ -85,6 +85,23 @@ def result_body(action_id: str, result: dict, *, proposal_id=None):
     }
 
 
+def outcome_body(proposal, *, status: str, failure_code: str | None = None, **extra):
+    body = {
+        "protocol_version": "crown-actions-v1",
+        "proposal_id": str(proposal.proposal_id),
+        "action_id": proposal.action_id,
+        "source_turn_id": str(proposal.source_turn_id),
+        "correlation_id": str(proposal.correlation_id),
+        "status": status,
+        "result": {"arbitrary": "must be stripped"},
+        "detail": "private client prose must never enter canonical context",
+        **extra,
+    }
+    if failure_code is not None:
+        body["failure_code"] = failure_code
+    return body
+
+
 def test_reminder_result_strips_device_identifier_and_arbitrary_text():
     body = result_body(
         "reminder.create",
@@ -96,6 +113,55 @@ def test_reminder_result_strips_device_identifier_and_arbitrary_text():
     )
     normalized = normalize_action_result(body)
     assert normalized["result"] == {"scheduled_at": "2026-08-28T20:00:00-04:00"}
+
+
+def test_non_success_result_keeps_only_closed_status_and_failure_code():
+    proposal, _ = proposal_and_result(
+        "app.navigate",
+        {"destination": "brain"},
+        {"destination": "brain"},
+    )
+    normalized = normalize_action_result(
+        outcome_body(
+            proposal,
+            status="failed",
+            failure_code="execution_failed",
+            secret="do-not-store",
+        )
+    )
+    assert normalized["status"] == "failed"
+    assert normalized["failure_code"] == "execution_failed"
+    assert normalized["result"] == {}
+    assert "detail" not in normalized
+    assert "secret" not in normalized
+
+
+def test_non_success_failure_code_is_closed_allowlist():
+    proposal, _ = proposal_and_result(
+        "app.navigate",
+        {"destination": "brain"},
+        {"destination": "brain"},
+    )
+    with pytest.raises(CrownActionResultFailure, match="invalid_action_failure_code"):
+        normalize_action_result(
+            outcome_body(
+                proposal,
+                status="failed",
+                failure_code="shell_output:/private/path",
+            )
+        )
+
+
+def test_rejected_and_cancelled_have_deterministic_codes():
+    proposal, _ = proposal_and_result(
+        "app.navigate",
+        {"destination": "brain"},
+        {"destination": "brain"},
+    )
+    rejected = normalize_action_result(outcome_body(proposal, status="rejected"))
+    cancelled = normalize_action_result(outcome_body(proposal, status="cancelled"))
+    assert rejected["failure_code"] == "confirmation_rejected"
+    assert cancelled["failure_code"] == "cancelled"
 
 
 def test_issued_proposal_proof_omits_sensitive_free_form_arguments():
@@ -132,6 +198,22 @@ def test_action_result_requires_server_issued_proposal():
         record_action_result(core, user, body)
 
 
+def test_non_success_result_also_requires_server_issued_proposal():
+    core = FakeCore()
+    user = principal(103)
+    proposal, _ = proposal_and_result(
+        "app.navigate",
+        {"destination": "brain"},
+        {"destination": "brain"},
+    )
+    with pytest.raises(CrownActionResultFailure, match="action_proposal_not_issued"):
+        record_action_result(
+            core,
+            user,
+            outcome_body(proposal, status="failed", failure_code="execution_failed"),
+        )
+
+
 def test_stale_unrecorded_action_result_is_rejected():
     core = FakeCore()
     user = principal(102)
@@ -152,6 +234,31 @@ def test_stale_unrecorded_action_result_is_rejected():
 
     with pytest.raises(CrownActionResultFailure, match="action_proposal_expired"):
         record_action_result(core, user, body)
+
+
+def test_stale_non_success_outcome_is_rejected():
+    core = FakeCore()
+    user = principal(104)
+    proposal, _ = proposal_and_result(
+        "app.navigate",
+        {"destination": "brain"},
+        {"destination": "brain"},
+    )
+    record_issued_action_proposal(core, user, proposal)
+    issued = next(
+        item["action_proposal"]
+        for item in core.store.episodes[user.legacy_owner_id]
+        if item.get("kind") == "action_proposal_issued"
+    )
+    issued["issued_at"] = (
+        datetime.now(UTC) - timedelta(minutes=16)
+    ).isoformat().replace("+00:00", "Z")
+    with pytest.raises(CrownActionResultFailure, match="action_proposal_expired"):
+        record_action_result(
+            core,
+            user,
+            outcome_body(proposal, status="cancelled"),
+        )
 
 
 def test_memory_save_result_requires_exact_canonical_effect():
@@ -182,6 +289,55 @@ def test_memory_save_result_requires_exact_canonical_effect():
         "validated",
         "succeeded",
     ]
+
+
+def test_non_success_outcomes_are_canonical_and_audited():
+    cases = [
+        ("denied", "unauthorized"),
+        ("rejected", None),
+        ("failed", "execution_failed"),
+        ("cancelled", None),
+    ]
+    for offset, (status, failure_code) in enumerate(cases):
+        core = FakeCore()
+        user = principal(220 + offset)
+        proposal, _ = proposal_and_result(
+            "app.navigate",
+            {"destination": "brain"},
+            {"destination": "brain"},
+        )
+        record_issued_action_proposal(core, user, proposal)
+        recorded = record_action_result(
+            core,
+            user,
+            outcome_body(proposal, status=status, failure_code=failure_code),
+        )
+        assert recorded["status"] == status
+        assert recorded["result"] == {}
+        assert recent_action_results(core, user)[-1]["status"] == status
+        assert [event["outcome"] for event in recent_action_audit(core, user)] == [
+            "proposed",
+            "validated",
+            status,
+        ]
+
+
+def test_non_success_exact_replay_is_idempotent_but_status_flip_conflicts():
+    core = FakeCore()
+    user = principal(230)
+    proposal, _ = proposal_and_result(
+        "app.navigate",
+        {"destination": "brain"},
+        {"destination": "brain"},
+    )
+    record_issued_action_proposal(core, user, proposal)
+    failed = outcome_body(proposal, status="failed", failure_code="execution_failed")
+    first = record_action_result(core, user, failed)
+    replay = record_action_result(core, user, failed)
+    assert replay == first
+
+    with pytest.raises(CrownActionResultFailure, match="action_result_conflict"):
+        record_action_result(core, user, outcome_body(proposal, status="cancelled"))
 
 
 def test_action_result_is_owner_scoped():
