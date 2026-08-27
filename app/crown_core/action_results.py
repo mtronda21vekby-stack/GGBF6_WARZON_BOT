@@ -18,6 +18,22 @@ ACTION_RESULT_ISSUANCE_TTL_SECONDS = 15 * 60
 ACTION_RESULT_CLOCK_SKEW_SECONDS = 30
 _ALLOWED_MEMORY_FIELDS = {"current_goal", "training_focus", "weekly_focus", "playstyle"}
 _ALLOWED_DESTINATIONS = {"live", "war_room", "analyze", "brain", "history", "settings"}
+_ALLOWED_STATUSES = {"succeeded", "denied", "rejected", "failed", "cancelled"}
+_ALLOWED_FAILURE_CODES = {
+    "unknown_action",
+    "invalid_arguments",
+    "unauthorized",
+    "entitlement_required",
+    "permission_denied",
+    "permission_unavailable",
+    "confirmation_required",
+    "confirmation_rejected",
+    "stale_proposal",
+    "execution_failed",
+    "idempotency_conflict",
+    "cancelled",
+    "prohibited_action",
+}
 
 
 class CrownActionResultFailure(ValueError):
@@ -35,7 +51,7 @@ def record_issued_action_proposal(
 
     The proof deliberately omits raw memory values, reminder titles/notes and
     other free-form proposal content. Memory writes carry only a salted digest
-    so a later device result cannot claim success unless canonical state really
+    so a later device success cannot be accepted unless canonical state really
     matches the proposal that CROWN issued.
     """
 
@@ -82,9 +98,10 @@ def record_issued_action_proposal(
 def normalize_action_result(raw: Any) -> dict[str, Any]:
     """Validate device execution truth before it enters canonical context.
 
-    The device may report only the outcome of a server-known action proposal.
-    Raw EventKit identifiers, arbitrary text, secrets and provider metadata are
-    intentionally excluded from this projection.
+    Success carries only action-specific deterministic result fields. Denied,
+    rejected, failed and cancelled outcomes carry only a closed failure code;
+    arbitrary client prose, raw EventKit identifiers and provider metadata are
+    never admitted into canonical context.
     """
 
     if not isinstance(raw, dict):
@@ -104,19 +121,40 @@ def normalize_action_result(raw: Any) -> dict[str, Any]:
         CrownActionRegistry.definition(action_id)
     except ActionValidationFailure as failure:
         raise CrownActionResultFailure(failure.code) from None
-    if str(raw.get("status") or "") != "succeeded":
+
+    status = str(raw.get("status") or "").strip()
+    if status not in _ALLOWED_STATUSES:
         raise CrownActionResultFailure("unsupported_action_result_status")
 
-    payload = _normalize_payload(action_id, raw.get("result"))
-    return {
+    clean: dict[str, Any] = {
         "protocol_version": ACTION_RESULT_PROTOCOL_VERSION,
         "proposal_id": str(proposal_id),
         "action_id": action_id,
         "source_turn_id": str(source_turn_id),
         "correlation_id": str(correlation_id),
-        "status": "succeeded",
-        "result": payload,
+        "status": status,
     }
+    if status == "succeeded":
+        clean["result"] = _normalize_payload(action_id, raw.get("result"))
+        return clean
+
+    raw_code = str(raw.get("failure_code") or "").strip().lower()
+    if status == "rejected":
+        failure_code = raw_code or "confirmation_rejected"
+        if failure_code != "confirmation_rejected":
+            raise CrownActionResultFailure("invalid_action_failure_code")
+    elif status == "cancelled":
+        failure_code = raw_code or "cancelled"
+        if failure_code != "cancelled":
+            raise CrownActionResultFailure("invalid_action_failure_code")
+    else:
+        failure_code = raw_code
+        if failure_code not in _ALLOWED_FAILURE_CODES:
+            raise CrownActionResultFailure("invalid_action_failure_code")
+
+    clean["failure_code"] = failure_code
+    clean["result"] = {}
+    return clean
 
 
 def record_action_result(
@@ -131,7 +169,7 @@ def record_action_result(
         raise CrownActionResultFailure("action_proposal_not_issued")
     _validate_lineage(clean, issued)
 
-    # An already-recorded identical result is an idempotent replay. Return it
+    # An already-recorded identical outcome is an idempotent replay. Return it
     # before re-checking mutable current state or proposal freshness: a later
     # user edit must not turn a previously accepted execution into a conflict.
     for item in episodes:
@@ -148,12 +186,13 @@ def record_action_result(
         return dict(existing)
 
     _validate_issuance_freshness(issued)
-    _validate_effect(core, principal, clean, issued)
 
-    if clean["action_id"] == "analyze.open_report":
-        report_id = clean["result"].get("report_id")
-        if not report_id or core.analysis_report(principal, report_id) is None:
-            raise CrownActionResultFailure("analysis_report_not_found")
+    if clean["status"] == "succeeded":
+        _validate_effect(core, principal, clean, issued)
+        if clean["action_id"] == "analyze.open_report":
+            report_id = clean["result"].get("report_id")
+            if not report_id or core.analysis_report(principal, report_id) is None:
+                raise CrownActionResultFailure("analysis_report_not_found")
 
     recorded = {
         **clean,
@@ -163,7 +202,7 @@ def record_action_result(
         principal.legacy_owner_id,
         {"kind": "action_result", "action_result": recorded},
     )
-    _record_server_audit(core, principal, issued, "succeeded")
+    _record_server_audit(core, principal, issued, clean["status"])
     return recorded
 
 
@@ -275,11 +314,16 @@ def _validate_lineage(clean: dict[str, Any], issued: dict[str, Any]) -> None:
         if str(clean.get(key) or "") != str(issued.get(key) or ""):
             raise CrownActionResultFailure("action_result_lineage_mismatch")
 
+    if clean.get("status") != "succeeded":
+        return
     expected = issued.get("expected_result")
     if not isinstance(expected, dict):
         raise CrownActionResultFailure("action_result_lineage_invalid")
+    result = clean.get("result")
+    if not isinstance(result, dict):
+        raise CrownActionResultFailure("invalid_action_result_payload")
     for key, expected_value in expected.items():
-        if clean["result"].get(key) != expected_value:
+        if result.get(key) != expected_value:
             raise CrownActionResultFailure("action_result_payload_mismatch")
 
 
@@ -342,7 +386,7 @@ def _record_server_audit(
     issued: dict[str, Any],
     outcome: str,
 ) -> None:
-    if outcome not in {"proposed", "validated", "succeeded"}:
+    if outcome not in {"proposed", "validated", "succeeded", "denied", "rejected", "failed", "cancelled"}:
         raise CrownActionResultFailure("invalid_server_audit_outcome")
     event = {
         "proposal_id": str(issued.get("proposal_id") or ""),
