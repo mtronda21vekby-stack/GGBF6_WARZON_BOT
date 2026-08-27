@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import Request
 
+from app.crown_core.action_planner import CrownActionPlanner
 from app.crown_core.action_stream import proposals_from_provider_metadata, realtime_action_payload
 from app.crown_core.actions import ActionValidationFailure
 from app.crown_core.api import NativeCrownAPI, PROTOCOL_VERSION, _sse
@@ -23,10 +24,11 @@ log = logging.getLogger("crown.native.actions")
 class ActionNativeCrownAPI(NativeCrownAPI):
     """Native API variant that projects validated CROWN actions into SSE.
 
-    The language model/provider only supplies untrusted proposal metadata. This
-    boundary never executes an action. It normalizes through the closed
-    crown-actions-v1 registry and emits only validated semantic proposals for
-    the device-side policy/confirmation/execution runtime.
+    Provider/model metadata is always untrusted. A small deterministic planner
+    may propose only explicit, high-confidence V1 actions when provider-native
+    tool metadata is absent. Both sources still pass through the exact same
+    closed crown-actions-v1 registry before anything reaches the device. This
+    boundary never executes an action.
     """
 
     async def _event_stream(
@@ -147,14 +149,24 @@ class ActionNativeCrownAPI(NativeCrownAPI):
                 if isinstance(result.action_metadata, dict)
                 else provider_action_metadata
             )
+            if not action_metadata:
+                # V1 deterministic fallback: only explicit commands with a
+                # fully resolvable bounded schema become proposals. Ambiguous
+                # dates, memory targets, destinations, etc. yield no action.
+                action_metadata = CrownActionPlanner().propose(
+                    text=request.text,
+                    source_turn_id=request.turn_id,
+                    analysis_report_id=request.analysis_report_id,
+                )
+
             try:
                 proposals = proposals_from_provider_metadata(
                     action_metadata,
                     source_turn_id=request.turn_id,
                 )
             except ActionValidationFailure as failure:
-                # A malformed model proposal must never poison a valid text
-                # response and must never reach an executor. Fail closed by
+                # A malformed model/planner proposal must never poison a valid
+                # text response and must never reach an executor. Fail closed by
                 # dropping the entire action set for this turn.
                 rejection_code = str(failure)[:80] or "invalid_action_proposal"
                 log.warning(
