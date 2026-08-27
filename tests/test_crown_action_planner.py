@@ -27,6 +27,31 @@ def test_planner_proposes_relative_reminder_only_for_unambiguous_time():
     assert _proposal("Напомни завтра вечером проверить сборку") is None
 
 
+def test_planner_keeps_tomorrow_clock_time_device_local():
+    proposal = _proposal("Напомни завтра в 20:00 потренироваться")
+    assert proposal is not None
+    assert proposal.action_id == "reminder.create"
+    assert proposal.arguments["schedule"] == {
+        "kind": "local",
+        "days_from_today": 1,
+        "hour": 20,
+        "minute": 0,
+    }
+    assert "потренироваться" in proposal.arguments["title"].lower()
+
+    english = _proposal("Remind me tomorrow at 8 pm to train")
+    assert english is not None
+    assert english.arguments["schedule"] == {
+        "kind": "local",
+        "days_from_today": 1,
+        "hour": 20,
+        "minute": 0,
+    }
+
+    # Day without an explicit clock time remains clarification-only.
+    assert _proposal("Напомни завтра потренироваться") is None
+
+
 def test_planner_proposes_allowlisted_memory_save_and_forget():
     save = _proposal("Запомни мою цель: выйти в топ-250")
     assert save is not None
