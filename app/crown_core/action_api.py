@@ -11,6 +11,7 @@ from fastapi import Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.crown_core.action_planner import CrownActionPlanner
+from app.crown_core.action_results import CrownActionResultFailure, record_action_result
 from app.crown_core.action_stream import proposals_from_provider_metadata, realtime_action_payload
 from app.crown_core.actions import ActionValidationFailure
 from app.crown_core.api import NativeCrownAPI, PROTOCOL_VERSION, _sse
@@ -92,6 +93,75 @@ class ActionNativeCrownAPI(NativeCrownAPI):
                 "black_crown_user_id": str(principal.black_crown_user_id),
                 "forgotten_field": normalized,
                 **snapshot,
+            }
+            self.mutations.finish(
+                principal.black_crown_user_id,
+                mutation_key,
+                operation,
+                result,
+            )
+            return JSONResponse(result, headers={"X-Crown-Replay": "0"})
+
+        @self.router.post("/actions/result")
+        async def action_result(
+            body: dict[str, Any],
+            authorization: str | None = Header(default=None),
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ):
+            principal = await self._principal(authorization)
+            try:
+                proposal_id = UUID(str(body.get("proposal_id") or ""))
+                mutation_key = UUID(str(idempotency_key or ""))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="invalid_action_result_identifier") from None
+            if proposal_id != mutation_key:
+                raise HTTPException(status_code=400, detail="action_result_idempotency_mismatch")
+
+            operation = "action.result"
+            replay_state, replay = self.mutations.begin(
+                principal.black_crown_user_id,
+                mutation_key,
+                operation,
+            )
+            if replay_state == "replay" and replay is not None:
+                return JSONResponse(replay, headers={"X-Crown-Replay": "1"})
+            if replay_state == "in_progress":
+                raise HTTPException(status_code=409, detail="idempotency_in_progress")
+
+            try:
+                recorded = await asyncio.to_thread(
+                    record_action_result,
+                    self.core,
+                    principal,
+                    body,
+                )
+            except CrownActionResultFailure as failure:
+                self.mutations.abort(
+                    principal.black_crown_user_id,
+                    mutation_key,
+                    operation,
+                )
+                status = 404 if failure.code == "analysis_report_not_found" else 400
+                raise HTTPException(status_code=status, detail=failure.code) from None
+            except Exception:
+                self.mutations.abort(
+                    principal.black_crown_user_id,
+                    mutation_key,
+                    operation,
+                )
+                log.exception(
+                    "action result persistence failed owner=%s proposal=%s",
+                    principal.black_crown_user_id,
+                    proposal_id,
+                )
+                raise HTTPException(status_code=503, detail="action_result_unavailable") from None
+
+            result = {
+                "schema_version": 1,
+                "accepted": True,
+                "proposal_id": recorded["proposal_id"],
+                "action_id": recorded["action_id"],
+                "recorded_at": recorded.get("recorded_at"),
             }
             self.mutations.finish(
                 principal.black_crown_user_id,
