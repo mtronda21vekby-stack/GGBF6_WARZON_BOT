@@ -229,8 +229,6 @@ def _expected_result(proposal: CrownActionProposal) -> dict[str, Any]:
     if proposal.action_id == "analyze.open_report":
         return {"report_id": str(arguments.get("report_id") or "")}
     if proposal.action_id == "reminder.create":
-        # The final instant is device-resolved from local Calendar/TimeZone, so
-        # there is no safe server-side equality assertion for scheduled_at.
         return {}
     raise CrownActionResultFailure("unknown_action")
 
