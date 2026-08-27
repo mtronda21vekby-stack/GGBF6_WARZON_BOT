@@ -55,10 +55,11 @@ def test_memory_is_allowlisted_and_bounded_to_canonical_patch_contract():
         {"field": "current_goal", "value": "Тренироваться каждый день"},
     )
     assert normalized.arguments["field"] == "current_goal"
-    assert len(proposal(
+    maximum = proposal(
         "memory.propose_save",
         {"field": "current_goal", "value": "x" * 240},
-    ).arguments["value"]) == 240
+    )
+    assert len(maximum.arguments["value"]) == 240
     with pytest.raises(ActionValidationFailure, match="invalid_memory_proposal"):
         proposal("memory.propose_save", {"field": "service_role_key", "value": "x"})
     with pytest.raises(ActionValidationFailure, match="invalid_memory_proposal"):
