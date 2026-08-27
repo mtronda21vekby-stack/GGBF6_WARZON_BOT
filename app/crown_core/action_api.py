@@ -5,9 +5,10 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from fastapi import Request
+from fastapi import Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from app.crown_core.action_planner import CrownActionPlanner
 from app.crown_core.action_stream import proposals_from_provider_metadata, realtime_action_payload
@@ -30,6 +31,79 @@ class ActionNativeCrownAPI(NativeCrownAPI):
     closed crown-actions-v1 registry before anything reaches the device. This
     boundary never executes an action.
     """
+
+    MEMORY_FIELDS = frozenset({"current_goal", "training_focus", "weekly_focus", "playstyle"})
+
+    def _bind_routes(self) -> None:
+        super()._bind_routes()
+
+        @self.router.delete("/brain/{field}")
+        async def forget_brain_field(
+            field: str,
+            authorization: str | None = Header(default=None),
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ):
+            principal = await self._principal(authorization)
+            normalized = str(field or "").strip().lower()
+            if normalized not in self.MEMORY_FIELDS:
+                raise HTTPException(status_code=400, detail="invalid_brain_field")
+            try:
+                mutation_key = UUID(str(idempotency_key or ""))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="idempotency_key_required") from None
+
+            replay_state, replay = self.mutations.begin(
+                principal.black_crown_user_id,
+                mutation_key,
+                f"brain.forget.{normalized}",
+            )
+            if replay_state == "replay" and replay is not None:
+                return JSONResponse(replay, headers={"X-Crown-Replay": "1"})
+            if replay_state == "in_progress":
+                raise HTTPException(status_code=409, detail="idempotency_in_progress")
+
+            try:
+                # Profile storage currently uses merge-patch semantics. The
+                # canonical representation of a forgotten optional field is an
+                # empty value, which every Brain/read/intelligence consumer
+                # treats as absent. The client cannot select arbitrary keys.
+                await asyncio.to_thread(
+                    self.core.profiles.patch,
+                    principal.legacy_owner_id,
+                    {normalized: ""},
+                )
+                snapshot = await asyncio.to_thread(self.core.brain_snapshot, principal)
+            except Exception:
+                self.mutations.abort(
+                    principal.black_crown_user_id,
+                    mutation_key,
+                    f"brain.forget.{normalized}",
+                )
+                log.exception(
+                    "canonical memory forget failed owner=%s field=%s",
+                    principal.black_crown_user_id,
+                    normalized,
+                )
+                raise HTTPException(status_code=503, detail="brain_mutation_failed") from None
+
+            profile = snapshot.get("profile")
+            if isinstance(profile, dict):
+                profile = dict(profile)
+                profile.pop(normalized, None)
+                snapshot = {**snapshot, "profile": profile}
+            result = {
+                "schema_version": 1,
+                "black_crown_user_id": str(principal.black_crown_user_id),
+                "forgotten_field": normalized,
+                **snapshot,
+            }
+            self.mutations.finish(
+                principal.black_crown_user_id,
+                mutation_key,
+                f"brain.forget.{normalized}",
+                result,
+            )
+            return result
 
     async def _event_stream(
         self,
