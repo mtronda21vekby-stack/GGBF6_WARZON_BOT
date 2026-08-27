@@ -12,7 +12,7 @@ from app.adapters.telegram.client import TelegramClient
 from app.adapters.telegram.types import Update
 from app.config import get_settings
 from app.core.router import Router
-from app.crown_core.api import NativeCrownAPI
+from app.crown_core.action_api import ActionNativeCrownAPI
 from app.crown_core.service import CrownCore
 from app.observability.log import get_logger, setup_logging
 from app.observability.readiness import readiness_snapshot
@@ -153,7 +153,7 @@ def create_app() -> FastAPI:
         analyzer=image_analyzer,
     )
     voice_service = VoiceService(settings=settings)
-    native_api = NativeCrownAPI(
+    native_api = ActionNativeCrownAPI(
         settings=settings,
         core=conversation,
         store=store,
