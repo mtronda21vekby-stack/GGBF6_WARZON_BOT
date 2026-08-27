@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -131,6 +132,28 @@ def test_action_result_requires_server_issued_proposal():
         record_action_result(core, user, body)
 
 
+def test_stale_unrecorded_action_result_is_rejected():
+    core = FakeCore()
+    user = principal(102)
+    proposal, body = proposal_and_result(
+        "app.navigate",
+        {"destination": "brain"},
+        {"destination": "brain"},
+    )
+    record_issued_action_proposal(core, user, proposal)
+    issued = next(
+        item["action_proposal"]
+        for item in core.store.episodes[user.legacy_owner_id]
+        if item.get("kind") == "action_proposal_issued"
+    )
+    issued["issued_at"] = (
+        datetime.now(UTC) - timedelta(minutes=16)
+    ).isoformat().replace("+00:00", "Z")
+
+    with pytest.raises(CrownActionResultFailure, match="action_proposal_expired"):
+        record_action_result(core, user, body)
+
+
 def test_memory_save_result_requires_exact_canonical_effect():
     core = FakeCore()
     user = principal(201)
@@ -147,6 +170,10 @@ def test_memory_save_result_requires_exact_canonical_effect():
 
     core.profiles[user.legacy_owner_id] = {"current_goal": "Top 250"}
     recorded = record_action_result(core, user, body)
+
+    # Once the exact execution result has been accepted, replay remains
+    # idempotent even if the user later edits that memory again.
+    core.profiles[user.legacy_owner_id] = {"current_goal": "Changed later"}
     replay = record_action_result(core, user, body)
     assert replay["proposal_id"] == recorded["proposal_id"]
     assert recent_action_results(core, user)[-1]["proposal_id"] == recorded["proposal_id"]
