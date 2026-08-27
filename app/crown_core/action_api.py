@@ -156,10 +156,11 @@ class ActionNativeCrownAPI(NativeCrownAPI):
                 # A malformed model proposal must never poison a valid text
                 # response and must never reach an executor. Fail closed by
                 # dropping the entire action set for this turn.
+                rejection_code = str(failure)[:80] or "invalid_action_proposal"
                 log.warning(
                     "native action proposal rejected surface=ios turn=%s code=%s",
                     request.turn_id,
-                    failure.code,
+                    rejection_code,
                 )
                 proposals = ()
 
