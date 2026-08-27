@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -30,16 +30,17 @@ class _Core:
         return CrownTurnResult(display_text="Готово.", spoken_text="Готово.")
 
 
-def _request() -> CrownTurnRequest:
+def _request(text: str = "Открой анализ", analysis_report_id=None) -> CrownTurnRequest:
     user_id = uuid4()
     return CrownTurnRequest(
         principal=CrownPrincipal(user_id, "apple", str(uuid4()), 77),
         surface=CrownSurface.IOS,
         session_id=uuid4(),
         turn_id=uuid4(),
-        text="Открой анализ",
+        text=text,
         locale="ru-RU",
         route="fast",
+        analysis_report_id=analysis_report_id,
     )
 
 
@@ -102,7 +103,7 @@ async def test_native_stream_emits_valid_action_before_completion():
 
 @pytest.mark.asyncio
 async def test_native_stream_drops_unknown_action_but_keeps_text_turn():
-    request = _request()
+    request = _request(text="Расскажи о моей текущей тренировке")
     events = await _events(
         _api(
             {
@@ -128,7 +129,7 @@ async def test_native_stream_drops_unknown_action_but_keeps_text_turn():
 
 @pytest.mark.asyncio
 async def test_native_stream_drops_duplicate_action_set_fail_closed():
-    request = _request()
+    request = _request(text="Расскажи о профиле")
     proposal_id = uuid4()
     raw = {
         "proposal_id": str(proposal_id),
@@ -148,8 +149,43 @@ async def test_native_stream_drops_duplicate_action_set_fail_closed():
 
 
 @pytest.mark.asyncio
-async def test_native_stream_without_action_metadata_is_unchanged():
-    request = _request()
+async def test_native_stream_deterministically_plans_explicit_navigation_when_provider_has_no_action():
+    request = _request(text="Открой BRAIN")
+    events = await _events(_api({}), request)
+    types = [event["type"] for event in events]
+    assert "actionProposal" in types
+    action = events[types.index("actionProposal")]["actionProposal"]
+    assert action["action_id"] == "app.navigate"
+    assert action["arguments"] == {"destination": "brain"}
+    assert action["source_turn_id"] == str(request.turn_id)
+    assert types.index("actionProposal") < types.index("turnCompleted")
+
+
+@pytest.mark.asyncio
+async def test_native_stream_deterministically_plans_unambiguous_relative_reminder():
+    request = _request(text="Напомни через 2 часа проверить сборку")
+    events = await _events(_api({}), request)
+    types = [event["type"] for event in events]
+    assert "actionProposal" in types
+    action = events[types.index("actionProposal")]["actionProposal"]
+    assert action["action_id"] == "reminder.create"
+    assert action["arguments"]["schedule"] == {"kind": "relative", "seconds": 7200}
+    assert "проверить сборку" in action["arguments"]["title"].lower()
+
+
+@pytest.mark.asyncio
+async def test_native_stream_ambiguous_reminder_remains_text_only():
+    request = _request(text="Напомни завтра вечером проверить сборку")
+    events = await _events(_api({}), request)
+    types = [event["type"] for event in events]
+    assert "actionProposal" not in types
+    assert "textDelta" in types
+    assert types[-1] == "turnCompleted"
+
+
+@pytest.mark.asyncio
+async def test_native_stream_without_explicit_action_request_is_unchanged():
+    request = _request(text="Что мне тренировать сегодня?")
     events = await _events(_api({}), request)
     types = [event["type"] for event in events]
     assert "actionProposal" not in types
