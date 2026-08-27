@@ -164,6 +164,21 @@ def _validate_arguments(action_id: str, value: Any) -> dict[str, Any]:
             if seconds <= 0 or seconds > 31_536_000:
                 raise ActionValidationFailure("invalid_reminder_schedule")
             normalized_schedule = {"kind": "relative", "seconds": seconds}
+        elif kind == "local":
+            try:
+                days_from_today = int(schedule.get("days_from_today"))
+                hour = int(schedule.get("hour"))
+                minute = int(schedule.get("minute", 0))
+            except (TypeError, ValueError):
+                raise ActionValidationFailure("invalid_reminder_schedule") from None
+            if not 0 <= days_from_today <= 365 or not 0 <= hour <= 23 or not 0 <= minute <= 59:
+                raise ActionValidationFailure("invalid_reminder_schedule")
+            normalized_schedule = {
+                "kind": "local",
+                "days_from_today": days_from_today,
+                "hour": hour,
+                "minute": minute,
+            }
         else:
             raise ActionValidationFailure("invalid_reminder_schedule")
         result: dict[str, Any] = {"title": title, "schedule": normalized_schedule}
