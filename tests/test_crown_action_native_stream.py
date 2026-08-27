@@ -20,9 +20,21 @@ class _ConnectedRequest:
         return False
 
 
+class _Store:
+    def __init__(self):
+        self.episodes: dict[int, list[dict]] = {}
+
+    def list_episodes(self, owner_id: int, _limit: int):
+        return list(self.episodes.get(owner_id, []))
+
+    def add_episode(self, owner_id: int, episode: dict):
+        self.episodes.setdefault(owner_id, []).append(dict(episode))
+
+
 class _Core:
     def __init__(self, metadata):
         self.metadata = metadata
+        self.store = _Store()
 
     async def execute_turn_async(self, request, *, on_partial=None):
         if on_partial is not None:
@@ -69,26 +81,24 @@ async def _events(api, request):
 
 
 @pytest.mark.asyncio
-async def test_native_stream_emits_valid_action_before_completion():
+async def test_native_stream_emits_valid_action_before_completion_and_records_issuance_proof():
     request = _request()
     proposal_id = uuid4()
     report_id = uuid4()
-    events = await _events(
-        _api(
-            {
-                "action_proposals": [
-                    {
-                        "proposal_id": str(proposal_id),
-                        "action_id": "analyze.open_report",
-                        "arguments": {"report_id": str(report_id)},
-                        "rationale": "Открыть уже принадлежащий пользователю отчёт.",
-                        "correlation_id": str(uuid4()),
-                    }
-                ]
-            }
-        ),
-        request,
+    api = _api(
+        {
+            "action_proposals": [
+                {
+                    "proposal_id": str(proposal_id),
+                    "action_id": "analyze.open_report",
+                    "arguments": {"report_id": str(report_id)},
+                    "rationale": "Открыть уже принадлежащий пользователю отчёт.",
+                    "correlation_id": str(uuid4()),
+                }
+            ]
+        }
     )
+    events = await _events(api, request)
 
     types = [event["type"] for event in events]
     assert "actionProposal" in types
@@ -99,6 +109,12 @@ async def test_native_stream_emits_valid_action_before_completion():
     assert action["source_turn_id"] == str(request.turn_id)
     assert action["action_id"] == "analyze.open_report"
     assert action["arguments"] == {"report_id": str(report_id)}
+
+    episodes = api.core.store.list_episodes(request.principal.legacy_owner_id, 100)
+    proof = next(item["action_proposal"] for item in episodes if item.get("kind") == "action_proposal_issued")
+    assert proof["proposal_id"] == str(proposal_id)
+    assert proof["expected_result"] == {"report_id": str(report_id)}
+    assert "rationale" not in proof
 
 
 @pytest.mark.asyncio
