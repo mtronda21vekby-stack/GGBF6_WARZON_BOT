@@ -53,7 +53,12 @@ class CrownActionProposal:
 
 
 class ActionValidationFailure(ValueError):
-    pass
+    """Stable fail-closed code for malformed provider action proposals."""
+
+    def __init__(self, code: str) -> None:
+        normalized = str(code or "invalid_action_proposal").strip()[:80]
+        super().__init__(normalized)
+        self.code = normalized
 
 
 class CrownActionRegistry:
