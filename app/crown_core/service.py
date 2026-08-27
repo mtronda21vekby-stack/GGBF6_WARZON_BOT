@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from app.crown_core.action_planner import CrownActionPlanner
 from app.crown_core.contracts import (
     CrownAnalyzeReport,
     CrownPrincipal,
@@ -91,10 +92,25 @@ class CrownCore:
             reply_arguments["server_context"] = {
                 "analysis_report": self._discussion_context(report)
             }
+
+        # V1 semantic planning is deliberately bounded and deterministic. It
+        # only recognizes high-confidence commands and emits an untrusted
+        # proposal envelope; the closed action registry, device policy,
+        # confirmation and executor remain authoritative.
+        action_metadata = CrownActionPlanner().propose(
+            text=request.text,
+            source_turn_id=request.turn_id,
+            analysis_report_id=analysis_report_id,
+        )
+
         result = self.reply(
             **reply_arguments,
         )
-        return CrownTurnResult(display_text=result, spoken_text=spoken_text(result))
+        return CrownTurnResult(
+            display_text=result,
+            spoken_text=spoken_text(result),
+            action_metadata=action_metadata,
+        )
 
     async def execute_turn_async(
         self,
@@ -397,11 +413,10 @@ class CrownCore:
 
     @staticmethod
     def _safe_record(value: Any) -> dict[str, Any]:
-        if not isinstance(value, dict):
-            return {}
-        blocked = {"black_crown_user_id", "telegram_user_id", "chat_id", "provider_subject"}
-        return {
-            str(key): item
-            for key, item in value.items()
-            if str(key) not in blocked and not str(key).startswith("_")
-        }
+        if isinstance(value, dict):
+            return {
+                str(key): item
+                for key, item in value.items()
+                if not str(key).startswith("_")
+            }
+        return {"value": str(value)[:2000]}
