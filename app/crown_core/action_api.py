@@ -11,7 +11,11 @@ from fastapi import Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.crown_core.action_planner import CrownActionPlanner
-from app.crown_core.action_results import CrownActionResultFailure, record_action_result
+from app.crown_core.action_results import (
+    CrownActionResultFailure,
+    record_action_result,
+    record_issued_action_proposal,
+)
 from app.crown_core.action_stream import proposals_from_provider_metadata, realtime_action_payload
 from app.crown_core.actions import ActionValidationFailure
 from app.crown_core.api import NativeCrownAPI, PROTOCOL_VERSION, _sse
@@ -308,6 +312,30 @@ class ActionNativeCrownAPI(NativeCrownAPI):
                 proposals = ()
 
             for proposal in proposals:
+                try:
+                    await asyncio.to_thread(
+                        record_issued_action_proposal,
+                        self.core,
+                        request.principal,
+                        proposal,
+                    )
+                except CrownActionResultFailure as failure:
+                    log.warning(
+                        "native action proposal proof rejected surface=ios turn=%s code=%s",
+                        request.turn_id,
+                        failure.code,
+                    )
+                    continue
+                except Exception:
+                    # If issuance cannot be durably proven, fail closed for the
+                    # action while preserving the valid text response.
+                    log.exception(
+                        "native action proposal proof unavailable surface=ios turn=%s proposal=%s",
+                        request.turn_id,
+                        proposal.proposal_id,
+                    )
+                    continue
+
                 projected = realtime_action_payload(proposal)
                 event = envelope(
                     "actionProposal",
