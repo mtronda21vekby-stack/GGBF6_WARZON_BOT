@@ -36,6 +36,13 @@ def test_registry_is_closed_and_fixed():
         CrownActionRegistry.definition("shell.exec")
 
 
+def test_validation_failure_exposes_bounded_stable_code():
+    with pytest.raises(ActionValidationFailure) as captured:
+        CrownActionRegistry.definition("shell.exec")
+    assert captured.value.code == "unknown_action"
+    assert str(captured.value) == "unknown_action"
+
+
 def test_navigation_rejects_arbitrary_destinations():
     assert proposal("app.navigate", {"destination": "brain"}).arguments == {"destination": "brain"}
     with pytest.raises(ActionValidationFailure, match="invalid_destination"):
