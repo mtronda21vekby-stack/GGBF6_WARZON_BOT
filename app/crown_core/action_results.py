@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -14,6 +14,8 @@ from app.crown_core.contracts import CrownPrincipal
 
 
 ACTION_RESULT_PROTOCOL_VERSION = "crown-actions-v1"
+ACTION_RESULT_ISSUANCE_TTL_SECONDS = 15 * 60
+ACTION_RESULT_CLOCK_SKEW_SECONDS = 30
 _ALLOWED_MEMORY_FIELDS = {"current_goal", "training_focus", "weekly_focus", "playstyle"}
 _ALLOWED_DESTINATIONS = {"live", "war_room", "analyze", "brain", "history", "settings"}
 
@@ -128,13 +130,10 @@ def record_action_result(
     if issued is None:
         raise CrownActionResultFailure("action_proposal_not_issued")
     _validate_lineage(clean, issued)
-    _validate_effect(core, principal, clean, issued)
 
-    if clean["action_id"] == "analyze.open_report":
-        report_id = clean["result"].get("report_id")
-        if not report_id or core.analysis_report(principal, report_id) is None:
-            raise CrownActionResultFailure("analysis_report_not_found")
-
+    # An already-recorded identical result is an idempotent replay. Return it
+    # before re-checking mutable current state or proposal freshness: a later
+    # user edit must not turn a previously accepted execution into a conflict.
     for item in episodes:
         if not isinstance(item, dict) or item.get("kind") != "action_result":
             continue
@@ -147,6 +146,14 @@ def record_action_result(
         if comparable != clean:
             raise CrownActionResultFailure("action_result_conflict")
         return dict(existing)
+
+    _validate_issuance_freshness(issued)
+    _validate_effect(core, principal, clean, issued)
+
+    if clean["action_id"] == "analyze.open_report":
+        report_id = clean["result"].get("report_id")
+        if not report_id or core.analysis_report(principal, report_id) is None:
+            raise CrownActionResultFailure("analysis_report_not_found")
 
     recorded = {
         **clean,
@@ -274,6 +281,23 @@ def _validate_lineage(clean: dict[str, Any], issued: dict[str, Any]) -> None:
     for key, expected_value in expected.items():
         if clean["result"].get(key) != expected_value:
             raise CrownActionResultFailure("action_result_payload_mismatch")
+
+
+def _validate_issuance_freshness(issued: dict[str, Any]) -> None:
+    raw = str(issued.get("issued_at") or "").strip()
+    if not raw:
+        raise CrownActionResultFailure("action_proposal_issued_at_missing")
+    try:
+        issued_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        raise CrownActionResultFailure("action_proposal_issued_at_invalid") from None
+    if issued_at.tzinfo is None:
+        issued_at = issued_at.replace(tzinfo=UTC)
+    now = datetime.now(UTC)
+    if issued_at > now + timedelta(seconds=ACTION_RESULT_CLOCK_SKEW_SECONDS):
+        raise CrownActionResultFailure("action_proposal_issued_at_invalid")
+    if now - issued_at > timedelta(seconds=ACTION_RESULT_ISSUANCE_TTL_SECONDS):
+        raise CrownActionResultFailure("action_proposal_expired")
 
 
 def _validate_effect(
