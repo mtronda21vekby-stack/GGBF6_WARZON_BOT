@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from app.crown_core.action_api import ActionNativeCrownAPI
+from app.crown_core.action_results import recent_action_audit
 from app.crown_core.contracts import (
     CrownPrincipal,
     CrownSurface,
@@ -81,7 +82,7 @@ async def _events(api, request):
 
 
 @pytest.mark.asyncio
-async def test_native_stream_emits_valid_action_before_completion_and_records_issuance_proof():
+async def test_native_stream_emits_valid_action_before_completion_and_records_issuance_audit():
     request = _request()
     proposal_id = uuid4()
     report_id = uuid4()
@@ -110,11 +111,9 @@ async def test_native_stream_emits_valid_action_before_completion_and_records_is
     assert action["action_id"] == "analyze.open_report"
     assert action["arguments"] == {"report_id": str(report_id)}
 
-    episodes = api.core.store.list_episodes(request.principal.legacy_owner_id, 100)
-    proof = next(item["action_proposal"] for item in episodes if item.get("kind") == "action_proposal_issued")
-    assert proof["proposal_id"] == str(proposal_id)
-    assert proof["expected_result"] == {"report_id": str(report_id)}
-    assert "rationale" not in proof
+    audit = recent_action_audit(api.core, request.principal)
+    assert [event["outcome"] for event in audit] == ["proposed", "validated"]
+    assert all(event["proposal_id"] == str(proposal_id) for event in audit)
 
 
 @pytest.mark.asyncio
