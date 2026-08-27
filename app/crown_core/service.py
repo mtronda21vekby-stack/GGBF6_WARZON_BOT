@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.crown_core.action_planner import CrownActionPlanner
+from app.crown_core.action_results import recent_action_results
 from app.crown_core.contracts import (
     CrownAnalyzeReport,
     CrownPrincipal,
@@ -84,14 +85,23 @@ class CrownCore:
             "history": history,
             "on_partial": guarded_partial if on_partial is not None else None,
         }
+        server_context: dict[str, Any] = {}
         analysis_report_id = getattr(request, "analysis_report_id", None)
         if analysis_report_id is not None:
             report = self.analysis_report(request.principal, analysis_report_id)
             if report is None:
                 raise RuntimeError("analysis_report_not_found")
-            reply_arguments["server_context"] = {
-                "analysis_report": self._discussion_context(report)
-            }
+            server_context["analysis_report"] = self._discussion_context(report)
+
+        # Actual device execution results are canonical context, not model
+        # claims. Only the bounded server-validated projection is exposed to the
+        # next CROWN turn; raw EventKit identifiers and arbitrary client text are
+        # never stored here.
+        action_results = recent_action_results(self, request.principal, limit=5)
+        if action_results:
+            server_context["recent_action_results"] = action_results
+        if server_context:
+            reply_arguments["server_context"] = server_context
 
         # V1 semantic planning is deliberately bounded and deterministic. It
         # only recognizes high-confidence commands and emits an untrusted
