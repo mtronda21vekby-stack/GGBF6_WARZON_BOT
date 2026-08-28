@@ -1,7 +1,7 @@
 name: BCO Required Gate
 on:
   pull_request:
-    branches: [main]
+    branches: [main, phase8-analyze-v1]
   push:
     branches: [main, 'feature/bco-*']
 permissions:

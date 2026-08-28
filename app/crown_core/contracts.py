@@ -91,6 +91,7 @@ class CrownAnalyzeReport:
 class CrownTurnResult:
     display_text: str
     spoken_text: str
+    action_metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

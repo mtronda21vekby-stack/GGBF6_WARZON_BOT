@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from app.crown_core.action_planner import CrownActionPlanner
+from app.crown_core.action_results import recent_action_results
 from app.crown_core.contracts import (
     CrownAnalyzeReport,
     CrownPrincipal,
@@ -83,18 +85,47 @@ class CrownCore:
             "history": history,
             "on_partial": guarded_partial if on_partial is not None else None,
         }
+        server_context: dict[str, Any] = {}
         analysis_report_id = getattr(request, "analysis_report_id", None)
         if analysis_report_id is not None:
             report = self.analysis_report(request.principal, analysis_report_id)
             if report is None:
                 raise RuntimeError("analysis_report_not_found")
-            reply_arguments["server_context"] = {
-                "analysis_report": self._discussion_context(report)
-            }
+            server_context["analysis_report"] = self._discussion_context(report)
+
+        # Actual device execution results are canonical context, not model
+        # claims. Only the bounded server-validated projection is exposed to the
+        # next CROWN turn; raw EventKit identifiers and arbitrary client text are
+        # never stored here.
+        action_results = recent_action_results(self, request.principal, limit=5)
+        if action_results:
+            server_context["recent_action_results"] = action_results
+        if server_context:
+            reply_arguments["server_context"] = server_context
+
+        # V1 semantic planning is deliberately bounded and deterministic. It
+        # only recognizes high-confidence commands and emits an untrusted
+        # proposal envelope; the closed action registry, device policy,
+        # confirmation and executor remain authoritative.
+        source_turn_id = getattr(request, "turn_id", None)
+        action_metadata = (
+            CrownActionPlanner().propose(
+                text=request.text,
+                source_turn_id=source_turn_id,
+                analysis_report_id=analysis_report_id,
+            )
+            if source_turn_id is not None
+            else None
+        )
+
         result = self.reply(
             **reply_arguments,
         )
-        return CrownTurnResult(display_text=result, spoken_text=spoken_text(result))
+        return CrownTurnResult(
+            display_text=result,
+            spoken_text=spoken_text(result),
+            action_metadata=action_metadata,
+        )
 
     async def execute_turn_async(
         self,
@@ -397,11 +428,16 @@ class CrownCore:
 
     @staticmethod
     def _safe_record(value: Any) -> dict[str, Any]:
-        if not isinstance(value, dict):
-            return {}
-        blocked = {"black_crown_user_id", "telegram_user_id", "chat_id", "provider_subject"}
-        return {
-            str(key): item
-            for key, item in value.items()
-            if str(key) not in blocked and not str(key).startswith("_")
-        }
+        if isinstance(value, dict):
+            return {
+                str(key): item
+                for key, item in value.items()
+                if not str(key).startswith("_")
+                and str(key) not in {
+                    "chat_id",
+                    "legacy_owner_id",
+                    "owner_id",
+                    "black_crown_user_id",
+                }
+            }
+        return {"value": str(value)[:2000]}
