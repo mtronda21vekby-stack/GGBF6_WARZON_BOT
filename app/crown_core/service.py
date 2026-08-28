@@ -107,10 +107,15 @@ class CrownCore:
         # only recognizes high-confidence commands and emits an untrusted
         # proposal envelope; the closed action registry, device policy,
         # confirmation and executor remain authoritative.
-        action_metadata = CrownActionPlanner().propose(
-            text=request.text,
-            source_turn_id=request.turn_id,
-            analysis_report_id=analysis_report_id,
+        source_turn_id = getattr(request, "turn_id", None)
+        action_metadata = (
+            CrownActionPlanner().propose(
+                text=request.text,
+                source_turn_id=source_turn_id,
+                analysis_report_id=analysis_report_id,
+            )
+            if source_turn_id is not None
+            else None
         )
 
         result = self.reply(
@@ -428,5 +433,11 @@ class CrownCore:
                 str(key): item
                 for key, item in value.items()
                 if not str(key).startswith("_")
+                and str(key) not in {
+                    "chat_id",
+                    "legacy_owner_id",
+                    "owner_id",
+                    "black_crown_user_id",
+                }
             }
         return {"value": str(value)[:2000]}

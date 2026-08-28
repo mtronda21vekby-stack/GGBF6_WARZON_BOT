@@ -213,7 +213,14 @@ def recent_action_results(
     limit: int = 5,
 ) -> list[dict[str, Any]]:
     bounded = max(1, min(int(limit), 8))
-    episodes = list(core.store.list_episodes(principal.legacy_owner_id, 100) or [])
+    # Not every established CrownCore-compatible surface exposes the Phase 9
+    # action episode store. Conversation must remain available on those legacy
+    # read-only adapters; absence of canonical action history means there is no
+    # action context to project, not that the turn should fail.
+    reader = getattr(core.store, "list_episodes", None)
+    if not callable(reader):
+        return []
+    episodes = list(reader(principal.legacy_owner_id, 100) or [])
     results: list[dict[str, Any]] = []
     for item in episodes:
         if not isinstance(item, dict) or item.get("kind") != "action_result":
